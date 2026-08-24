@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { StockQuoteResponse } from '../types';
-import { resolveNewestCurrentPriceSnapshot } from './currentPriceSnapshot';
+import {
+  resolveNewestCurrentPriceSnapshot,
+  shouldKeepLiveOverlayAfterPersistedRefresh,
+} from './currentPriceSnapshot';
 
 const makeQuote = (overrides: Partial<StockQuoteResponse> = {}): StockQuoteResponse => ({
   symbol: 'TST',
@@ -34,6 +37,61 @@ const makeQuote = (overrides: Partial<StockQuoteResponse> = {}): StockQuoteRespo
   rateSource: 'ecb',
   conversionWarning: null,
   ...overrides,
+});
+
+describe('shouldKeepLiveOverlayAfterPersistedRefresh', () => {
+  const now = Date.parse('2026-08-19T12:00:00Z');
+
+  it('drops equal-timestamp live overlays after authoritative persisted refresh', () => {
+    const keep = shouldKeepLiveOverlayAfterPersistedRefresh(
+      {
+        currentPrice: 150,
+        currentPriceAt: '2026-08-19T10:00:00Z',
+        currentPriceIsDelayed: false,
+        currentPriceDelayWarning: null,
+      },
+      makeQuote({
+        currentPriceEur: 150,
+        priceTimestampUtc: '2026-08-19T10:00:00Z',
+        isStale: false,
+      }),
+      now,
+    );
+
+    expect(keep).toBe(false);
+  });
+
+  it('drops older live overlays and keeps genuinely newer ones', () => {
+    const older = shouldKeepLiveOverlayAfterPersistedRefresh(
+      {
+        currentPrice: 150,
+        currentPriceAt: '2026-08-19T10:30:00Z',
+        currentPriceIsDelayed: false,
+        currentPriceDelayWarning: null,
+      },
+      makeQuote({
+        currentPriceEur: 149,
+        priceTimestampUtc: '2026-08-19T10:00:00Z',
+      }),
+      now,
+    );
+    const newer = shouldKeepLiveOverlayAfterPersistedRefresh(
+      {
+        currentPrice: 150,
+        currentPriceAt: '2026-08-19T10:00:00Z',
+        currentPriceIsDelayed: false,
+        currentPriceDelayWarning: null,
+      },
+      makeQuote({
+        currentPriceEur: 151,
+        priceTimestampUtc: '2026-08-19T10:45:00Z',
+      }),
+      now,
+    );
+
+    expect(older).toBe(false);
+    expect(newer).toBe(true);
+  });
 });
 
 describe('resolveNewestCurrentPriceSnapshot', () => {

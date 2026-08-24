@@ -54,7 +54,10 @@ import StockPriceChart from './StockPriceChart';
 import { formatCurrency as fmtCur, formatPercent } from '../utils/currency';
 import { isQuoteDelayed } from '../utils/quote';
 import { applyPersistedQuoteSnapshot, buildQuotePatch } from '../utils/quotePersistence';
-import { resolveNewestCurrentPriceSnapshot } from '../utils/currentPriceSnapshot';
+import {
+  resolveNewestCurrentPriceSnapshot,
+  shouldKeepLiveOverlayAfterPersistedRefresh,
+} from '../utils/currentPriceSnapshot';
 import type {
   IndexConstituentDto,
   IndexConstituentHistoryRefreshBatchResponse,
@@ -541,6 +544,29 @@ const IndexConstituentsPanel: React.FC<IndexConstituentsPanelProps> = ({
     try {
       const res = await getIndexConstituents(indexId);
       setConstituents(res.data.constituents);
+      const persistedByStockId = new Map(
+        res.data.constituents.map((constituent) => [constituent.stockId, constituent]),
+      );
+      setLivePrices((prev) => {
+        const next: Record<number, LivePriceEntry> = {};
+        for (const [stockIdText, entry] of Object.entries(prev)) {
+          if (entry.loading || !entry.quote) {
+            next[Number(stockIdText)] = entry;
+            continue;
+          }
+
+          const persisted = persistedByStockId.get(Number(stockIdText));
+          if (!persisted) {
+            continue;
+          }
+
+          if (shouldKeepLiveOverlayAfterPersistedRefresh(persisted, entry.quote)) {
+            next[Number(stockIdText)] = entry;
+          }
+        }
+
+        return next;
+      });
       setExpandedStockId((prev) =>
         prev != null && res.data.constituents.some((c) => c.stockId === prev) ? prev : null,
       );
