@@ -186,6 +186,8 @@ builder.Services.Configure<CatalogStockRefreshJobOptions>(
     builder.Configuration.GetSection("CatalogStockRefreshJob"));
 builder.Services.Configure<StockHistoryRefreshOptions>(
     builder.Configuration.GetSection("StockHistoryRefresh"));
+builder.Services.Configure<StockQuoteRefreshOptions>(
+    builder.Configuration.GetSection("StockQuoteRefresh"));
 builder.Services.Configure<CatalogFundamentalsRefreshJobOptions>(
     builder.Configuration.GetSection("CatalogFundamentalsRefreshJob"));
 builder.Services.Configure<StockMetadataEnrichmentOptions>(
@@ -208,6 +210,7 @@ builder.Services.AddSingleton<ICatalogFundamentalsRefreshStatusService>(sp =>
     sp.GetRequiredService<CatalogFundamentalsRefreshHostedService>());
 builder.Services.AddHostedService(sp => sp.GetRequiredService<CatalogFundamentalsRefreshHostedService>());
 builder.Services.AddHostedService<StockHistoryRefreshHostedService>();
+builder.Services.AddHostedService<StockQuoteRefreshHostedService>();
 
 var app = builder.Build();
 

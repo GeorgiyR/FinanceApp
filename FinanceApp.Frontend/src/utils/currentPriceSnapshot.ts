@@ -137,3 +137,40 @@ export const resolveNewestCurrentPriceSnapshot = (
   }
   return emptySnapshot;
 };
+
+export const shouldKeepLiveOverlayAfterPersistedRefresh = (
+  persisted: PersistedQuoteSnapshot,
+  liveQuote: StockQuoteResponse | null | undefined,
+  now: number = Date.now(),
+): boolean => {
+  const persistedTs = parseUtcTimestamp(persisted.currentPriceAt ?? null);
+  const liveTs = parseUtcTimestamp(liveQuote?.priceTimestampUtc ?? null);
+  const persistedHasPrice = isFiniteNumber(persisted.currentPrice);
+  const liveHasPrice = isFiniteNumber(liveQuote?.currentPriceEur);
+
+  if (!liveHasPrice || !Number.isFinite(liveTs) || liveTs > now) {
+    return false;
+  }
+
+  if (!persistedHasPrice || !Number.isFinite(persistedTs) || persistedTs > now) {
+    return true;
+  }
+
+  if (liveTs > persistedTs) {
+    return true;
+  }
+
+  if (liveTs < persistedTs) {
+    return false;
+  }
+
+  const persistedDelayed =
+    persisted.currentPriceIsDelayed === true || !!persisted.currentPriceDelayWarning;
+  const liveDelayed = isQuoteDelayed(liveQuote);
+
+  if (liveDelayed !== persistedDelayed) {
+    return !liveDelayed;
+  }
+
+  return false;
+};

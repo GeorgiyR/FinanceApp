@@ -62,7 +62,10 @@ import type {
 import { groupStocks } from '../utils/stockGrouping';
 import { isQuoteDelayed } from '../utils/quote';
 import { applyPersistedQuoteSnapshot, buildQuotePatch } from '../utils/quotePersistence';
-import { resolveNewestCurrentPriceSnapshot } from '../utils/currentPriceSnapshot';
+import {
+  resolveNewestCurrentPriceSnapshot,
+  shouldKeepLiveOverlayAfterPersistedRefresh,
+} from '../utils/currentPriceSnapshot';
 import { formatCurrency as fmtCur, formatPercent } from '../utils/currency';
 import { STOCK_HISTORY_RANGE_OPTIONS } from '../components/historyRangeOptions';
 import { formatPerformance } from '../components/performanceHelpers';
@@ -467,6 +470,27 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
       ]);
       setStocks(stocksRes.data);
       stocksRef.current = stocksRes.data;
+      const persistedByStockId = new Map(stocksRes.data.map((stock) => [stock.id, stock]));
+      setLivePrices((prev) => {
+        const next: Record<number, LivePriceEntry> = {};
+        for (const [stockIdText, entry] of Object.entries(prev)) {
+          if (entry.loading || !entry.quote) {
+            next[Number(stockIdText)] = entry;
+            continue;
+          }
+
+          const persisted = persistedByStockId.get(Number(stockIdText));
+          if (!persisted) {
+            continue;
+          }
+
+          if (shouldKeepLiveOverlayAfterPersistedRefresh(persisted, entry.quote)) {
+            next[Number(stockIdText)] = entry;
+          }
+        }
+
+        return next;
+      });
       setPortfolios(portfoliosRes.data);
       setSectors(lookupData.sectors);
       setMarketIndices(lookupData.marketIndices);

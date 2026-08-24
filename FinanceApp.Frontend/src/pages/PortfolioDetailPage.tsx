@@ -127,6 +127,7 @@ const { Title, Text } = Typography;
 
 /** Accessible label for the quote-refresh button in the positions table toolbar. */
 export const REFRESH_QUOTES_LABEL = 'Обновить цены';
+export const PORTFOLIO_SILENT_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 
 /** Ant Design Card size used for the compact summary rows above the positions table. */
 export const SUMMARY_CARD_SIZE = 'small' as const;
@@ -313,13 +314,16 @@ const PortfolioDetailPage: React.FC = () => {
   // Quote refresh
   const [quotesRefreshing, setQuotesRefreshing] = useState(false);
   const quotesRefreshingRef = useRef(false);
+  const silentRefetchInFlightRef = useRef<Promise<void> | null>(null);
 
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async (silent = false) => {
     if (!id) return;
-    setLoading(true);
+    if (!silent) {
+      setLoading(true);
+    }
     try {
       const [portfolioRes, stocksRes, portfoliosRes, ordersRes] = await Promise.all([
         getPortfolio(Number(id)),
@@ -334,11 +338,63 @@ const PortfolioDetailPage: React.FC = () => {
     } catch {
       message.error('Ошибка загрузки данных');
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
-  };
+  }, [id]);
 
-  useEffect(() => { fetchData(); setFinanceLoaded(false); }, [id]);
+  const silentRefetchPortfolioData = useCallback(async () => {
+    if (silentRefetchInFlightRef.current) {
+      await silentRefetchInFlightRef.current;
+      return;
+    }
+
+    const task = (async () => {
+      await fetchData(true);
+    })();
+
+    silentRefetchInFlightRef.current = task;
+    try {
+      await task;
+    } finally {
+      if (silentRefetchInFlightRef.current === task) {
+        silentRefetchInFlightRef.current = null;
+      }
+    }
+  }, [fetchData]);
+
+  useEffect(() => {
+    void fetchData();
+    setFinanceLoaded(false);
+  }, [fetchData, id]);
+
+  useEffect(() => {
+    const handleFocus = () => {
+      void silentRefetchPortfolioData();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void silentRefetchPortfolioData();
+      }
+    };
+
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        void silentRefetchPortfolioData();
+      }
+    }, PORTFOLIO_SILENT_REFRESH_INTERVAL_MS);
+
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [silentRefetchPortfolioData]);
 
   const fetchFinanceData = useCallback(async () => {
     if (!id) return;
