@@ -1,4 +1,5 @@
 using FinanceApp.Core.Models;
+using System.Text.Json.Serialization;
 
 namespace FinanceApp.API.Models;
 
@@ -29,7 +30,9 @@ public class SystemProcessRunListItemDto
     public long Id { get; init; }
     public string ProcessType { get; init; } = string.Empty;
     public string DisplayName { get; init; } = string.Empty;
+    [JsonConverter(typeof(JsonStringEnumConverter))]
     public SystemProcessRunStatus Status { get; init; }
+    [JsonConverter(typeof(JsonStringEnumConverter))]
     public SystemProcessTrigger Trigger { get; init; }
     public DateTime QueuedAtUtc { get; init; }
     public DateTime? StartedAtUtc { get; init; }
