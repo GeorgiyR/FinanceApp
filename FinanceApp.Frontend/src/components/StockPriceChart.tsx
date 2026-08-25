@@ -40,6 +40,7 @@ import {
   getVolumeCadenceHint,
   toDisplayVolume,
 } from './stockVolumeScale';
+import { resolveVolumeBarSize } from './stockVolumeBarSize';
 import { buildFinanzenNetUrl } from '../utils/finanzenNet';
 import { resolveNewestCurrentPriceSnapshot } from '../utils/currentPriceSnapshot';
 import {
@@ -558,6 +559,23 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
   const resolveCompressedTs = useCallback(
     (displayX: number) => resolveTimestampMsForDisplayX(displayHistoryChartData, displayX),
     [displayHistoryChartData],
+  );
+  const positiveRenderableVolumePoints = useMemo(
+    () => displayHistoryChartData.reduce(
+      (count, point) => (point.volumeDisplay != null && Number.isFinite(point.volumeDisplay) && point.volumeDisplay > 0
+        ? count + 1
+        : count),
+      0,
+    ),
+    [displayHistoryChartData],
+  );
+  const volumeBarSize = useMemo(
+    () => resolveVolumeBarSize({
+      containerWidth: chartLayoutWidth,
+      positivePointCount: positiveRenderableVolumePoints,
+      historyRange,
+    }),
+    [chartLayoutWidth, historyRange, positiveRenderableVolumePoints],
   );
 
   const weeklyIndexToTimestampMs = useMemo(() => {
@@ -1148,9 +1166,9 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
                     dataKey="volumeDisplay"
                     name="Объём"
                     fill={COLOR_VOLUME}
-                    fillOpacity={0.9}
+                    fillOpacity={1}
                     isAnimationActive={false}
-                    maxBarSize={18}
+                    barSize={volumeBarSize}
                     minPointSize={volumeScale.adaptiveScaleActive ? 3 : 1}
                   >
                     {displayHistoryChartData.map((entry, index) => (
