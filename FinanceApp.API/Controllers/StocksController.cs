@@ -308,6 +308,19 @@ public class StocksController : ControllerBase
         return Ok(result);
     }
 
+    [HttpPost("history/frankfurt/rebuild-aggregates")]
+    public async Task<ActionResult<FrankfurtAggregateRebuildResponse>> RebuildFrankfurtAggregates(
+        [FromBody] FrankfurtAggregateRebuildRequest? request,
+        CancellationToken cancellationToken = default)
+    {
+        var batchSize = request?.BatchSize ?? 25;
+        var response = await _stockHistoryService.RebuildFrankfurtAggregatesAsync(
+            batchSize,
+            request?.AfterStockId,
+            cancellationToken);
+        return Ok(response);
+    }
+
     [HttpPost]
     public async Task<ActionResult<Stock>> Create(Stock stock)
     {

@@ -10,6 +10,18 @@ public interface IStockHistoryService
     Task<StockHistoryResponse> GetHistoryAsync(Stock stock, string range, CancellationToken cancellationToken = default);
     Task<StockHistoryRefreshResponse> RefreshHistoryAsync(Stock stock, CancellationToken cancellationToken = default);
     Task<StockHistoryRefreshResponse> RefreshHistoryAsync(Stock stock, StockHistoryRefreshTrigger trigger, CancellationToken cancellationToken = default);
+    Task<FrankfurtAggregateRebuildResponse> RebuildFrankfurtAggregatesAsync(int batchSize = 25, int? afterStockId = null, CancellationToken cancellationToken = default)
+        => Task.FromResult(new FrankfurtAggregateRebuildResponse
+        {
+            BatchSize = batchSize > 0 ? batchSize : 25,
+            StartedAfterStockId = afterStockId,
+            NextAfterStockId = afterStockId,
+            ProcessedStocks = 0,
+            RebuiltStocks = 0,
+            FailedStocks = 0,
+            StoppedDueToRateLimit = false,
+            HasMore = false,
+        });
     Task<StockHistoryRepairDiagnosticsResponse> GetRepairDiagnosticsAsync(Stock stock, CancellationToken cancellationToken = default)
         => Task.FromResult(new StockHistoryRepairDiagnosticsResponse
         {

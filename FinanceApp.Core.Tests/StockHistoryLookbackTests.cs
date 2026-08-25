@@ -96,6 +96,47 @@ public class StockHistoryLookbackTests : IDisposable
         Assert.DoesNotContain(capturedUrls, u => u.Contains("interval=1d") && u.Contains("range=1y"));
     }
 
+    [Fact]
+    public async Task RefreshHistoryAsync_FrankfurtDailyInterval_Uses5YearRange()
+    {
+        var capturedUrls = new List<string>();
+
+        var stock = new Stock { Id = 2, Ticker = "AMZN", Name = "Amazon FRA", CommonName = "Amazon", Exchange = StockExchanges.Frankfurt };
+        _dbContext.Stocks.Add(stock);
+        await _dbContext.SaveChangesAsync();
+
+        var handler = new TrackingHandler(url =>
+        {
+            capturedUrls.Add(url);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(MinimalYahooChartJson("1d"), Encoding.UTF8, "application/json")
+            };
+        });
+
+        var coordinator = new YahooRequestCoordinator(
+            new FixedHttpClientFactory(new HttpClient(handler)),
+            NullLogger<YahooRequestCoordinator>.Instance,
+            Options.Create(new YahooFinanceOptions
+            {
+                MinRequestInterval = TimeSpan.Zero,
+                CooldownDuration = TimeSpan.FromMinutes(30),
+                QuoteCacheDuration = TimeSpan.Zero,
+                RequestTimeout = TimeSpan.FromSeconds(10)
+            }));
+        var service = new StockHistoryService(
+            _dbContext,
+            coordinator,
+            new StubStockQuoteConversionService(),
+            TimeProvider.System,
+            Options.Create(new StockHistoryRefreshOptions()),
+            NullLogger<StockHistoryService>.Instance);
+
+        await service.RefreshHistoryAsync(stock, CancellationToken.None);
+
+        Assert.Contains(capturedUrls, u => u.Contains("interval=1d") && u.Contains("range=5y"));
+    }
+
     private sealed class TrackingHandler : HttpMessageHandler
     {
         private readonly Func<string, HttpResponseMessage> _handler;
