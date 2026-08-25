@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Text.RegularExpressions;
 using Xunit;
 
 namespace FinanceApp.Core.Tests;
@@ -733,6 +734,58 @@ public class StocksControllerTests
     }
 
     [Fact]
+    public async Task UpdateEdit_MetadataOnlyEdit_PersistsPriceUnderRelationalTransactionPath()
+    {
+        await using var context = await CreateSqliteRelationalContextAsync();
+        var stock = new Stock
+        {
+            Id = 313,
+            Ticker = "ALMTF",
+            Name = "Almonty Industries",
+            CommonName = "Almonty",
+            Exchange = StockExchanges.Nyse,
+            CurrentPrice = 10m,
+            CurrentPriceChange = 1.5m,
+            CurrentPriceChangePercent = 2m,
+            CurrentPriceAt = DateTime.UtcNow,
+            CurrentPriceIsDelayed = true,
+            CurrentPriceDelayWarning = "delay",
+            Wkn = "A1JSSD",
+            Isin = "CA0203981034",
+            FinanzenNetSlug = "almonty-industries-aktie",
+            UpdatedAt = DateTime.UtcNow,
+        };
+        context.Stocks.Add(stock);
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context);
+        var result = await controller.UpdateEdit(stock.Id, new UpdateStockEditRequest
+        {
+            Ticker = stock.Ticker,
+            Exchange = stock.Exchange,
+            Name = stock.Name,
+            CommonName = stock.CommonName,
+            Wkn = stock.Wkn,
+            Isin = stock.Isin,
+            FinanzenNetSlug = stock.FinanzenNetSlug,
+            CurrentPrice = 12.34m,
+            IdentityEditingEnabled = false,
+            RetainProviderSymbol = true,
+        });
+
+        Assert.IsType<NoContentResult>(result);
+        var persisted = await context.Stocks.AsNoTracking().SingleAsync(x => x.Id == stock.Id);
+        Assert.Equal("ALMTF", persisted.Ticker);
+        Assert.Equal(StockExchanges.Nyse, persisted.Exchange);
+        Assert.Equal(12.34m, persisted.CurrentPrice);
+        Assert.Null(persisted.CurrentPriceAt);
+        Assert.Null(persisted.CurrentPriceChange);
+        Assert.Null(persisted.CurrentPriceChangePercent);
+        Assert.False(persisted.CurrentPriceIsDelayed);
+        Assert.Null(persisted.CurrentPriceDelayWarning);
+    }
+
+    [Fact]
     public async Task DeletePermanent_WithDependencies_ReturnsStructuredConflict()
     {
         await using var context = CreateContext();
@@ -867,6 +920,19 @@ public class StocksControllerTests
         var payload = Assert.IsType<StockMutationBlockedResponse>(conflict.Value);
         Assert.Contains(payload.Diagnostics.Blockers, b => b.Category == "unexpectedForeignKeyConflict");
         Assert.True(await context.Stocks.AnyAsync(x => x.Id == stock.Id));
+    }
+
+    [Fact]
+    public async Task StocksController_Transactions_AreWrappedByExecutionStrategy()
+    {
+        var source = await File.ReadAllTextAsync(GetStocksControllerPath());
+
+        Assert.Contains("_context.Database.CreateExecutionStrategy()", source, StringComparison.Ordinal);
+        Assert.Equal(1, Regex.Matches(source, @"BeginTransactionAsync\s*\(").Count);
+
+        var strategyIndex = source.IndexOf("CreateExecutionStrategy()", StringComparison.Ordinal);
+        var beginTransactionIndex = source.IndexOf("BeginTransactionAsync", StringComparison.Ordinal);
+        Assert.True(strategyIndex >= 0 && strategyIndex < beginTransactionIndex);
     }
 
 
@@ -3162,6 +3228,25 @@ public class StocksControllerTests
                 HttpContext = new DefaultHttpContext()
             }
         };
+    }
+
+    private static string GetStocksControllerPath()
+        => Path.Combine(GetRepositoryRoot(), "FinanceApp.API", "Controllers", "StocksController.cs");
+
+    private static string GetRepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "FinanceApp.sln")))
+            {
+                return directory.FullName;
+            }
+
+            directory = directory.Parent;
+        }
+
+        throw new InvalidOperationException("Repository root not found.");
     }
 
     private sealed class StubStockHistoryService : IStockHistoryService
