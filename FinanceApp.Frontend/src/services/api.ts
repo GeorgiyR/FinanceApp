@@ -15,6 +15,7 @@ import type {
   UpdateStockRequest,
   UpdateStockMetadataRequest,
   UpdateStockIdentityRequest,
+  UpdateStockEditRequest,
   StockDependencyDiagnosticsResponse,
   UpdateStockQuoteRequest,
   UpdateStockQuoteResponse,
@@ -133,13 +134,15 @@ export const updateStock = (id: number, data: UpdateStockRequest) => api.put<Sto
 export const updateStockMetadata = (id: number, data: UpdateStockMetadataRequest) => api.put<void>(`/Stocks/${id}/metadata`, data);
 export const updateStockIdentity = (id: number, data: UpdateStockIdentityRequest) =>
   api.put<void>(`/Stocks/${id}/identity`, data);
+export const updateStockEdit = (id: number, data: UpdateStockEditRequest) =>
+  api.put<void>(`/Stocks/${id}/edit`, data);
 export const updateStockQuote = (id: number, data: UpdateStockQuoteRequest) =>
   api.patch<UpdateStockQuoteResponse>(`/Stocks/${id}/quote`, data);
 export const deleteStock = (id: number) => api.delete(`/Stocks/${id}`);
 export const getStockDependencyDiagnostics = (id: number) =>
   api.get<StockDependencyDiagnosticsResponse>(`/Stocks/${id}/dependency-diagnostics`);
-export const deleteStockPermanent = (id: number, confirmationText: string) =>
-  api.delete(`/Stocks/${id}/permanent`, { data: { confirmationText } });
+export const deleteStockPermanent = (id: number) =>
+  api.delete(`/Stocks/${id}/permanent`);
 export const getStockHistory = (id: number, range: StockHistoryRange) =>
   api.get<StockHistoryResponse>(`/Stocks/${id}/history`, { params: { range } });
 export const refreshStockHistory = (id: number) =>

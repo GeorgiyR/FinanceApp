@@ -267,6 +267,24 @@ public sealed class UpdateStockIdentityRequest
     public bool RetainProviderSymbol { get; init; }
 }
 
+public sealed class UpdateStockEditRequest
+{
+    public string Ticker { get; init; } = string.Empty;
+    public string Exchange { get; init; } = string.Empty;
+    public string Name { get; init; } = string.Empty;
+    public string? CommonName { get; init; }
+    public string? Wkn { get; init; }
+    public string? Isin { get; init; }
+    public string? FinanzenNetSlug { get; init; }
+    public decimal CurrentPrice { get; init; }
+    public int? SectorId { get; init; }
+    public int? IndustryId { get; init; }
+    public List<int>? MarketIndexIds { get; init; }
+    public string ConfirmationText { get; init; } = string.Empty;
+    public bool IdentityEditingEnabled { get; init; }
+    public bool RetainProviderSymbol { get; init; }
+}
+
 public sealed class StockIdentityChangeResponse
 {
     public int StockId { get; init; }

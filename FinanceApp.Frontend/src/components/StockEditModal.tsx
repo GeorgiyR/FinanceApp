@@ -8,6 +8,7 @@ import type {
   MarketIndex,
   SectorDto,
   Stock,
+  StockDependencyBlockerResponse,
   StockExchange,
   UpdateStockMetadataRequest,
 } from '../types';
@@ -265,6 +266,9 @@ type StockEditModalProps = {
   marketIndices: MarketIndex[];
   loading?: boolean;
   submitting?: boolean;
+  allowIdentityEditing?: boolean;
+  inlineError?: string | null;
+  inlineBlockers?: StockDependencyBlockerResponse[];
   onCancel: () => void;
   onSubmit: (values: StockFormValues, context: { identityEditingEnabled: boolean }) => void | Promise<void>;
   onPermanentDelete?: () => void;
@@ -278,6 +282,9 @@ const StockEditModal: React.FC<StockEditModalProps> = ({
   marketIndices,
   loading = false,
   submitting = false,
+  allowIdentityEditing = true,
+  inlineError = null,
+  inlineBlockers = [],
   onCancel,
   onSubmit,
   onPermanentDelete,
@@ -341,13 +348,32 @@ const StockEditModal: React.FC<StockEditModalProps> = ({
           initialValues={{ exchange: DEFAULT_STOCK_EXCHANGE }}
           onFinish={(values) => onSubmit(values, { identityEditingEnabled })}
         >
+          {inlineError && (
+            <Form.Item>
+              <Alert
+                type="error"
+                showIcon
+                message={inlineError}
+                description={inlineBlockers.length > 0 ? (
+                  <ul style={{ margin: 0, paddingInlineStart: 18 }}>
+                    {inlineBlockers.map((blocker) => (
+                      <li key={`${blocker.category}-${blocker.displayName}`}>
+                        {`${blocker.displayName}: ${blocker.count}`}
+                        {blocker.relatedNames.length > 0 ? ` (${blocker.relatedNames.join(', ')})` : ''}
+                      </li>
+                    ))}
+                  </ul>
+                ) : undefined}
+              />
+            </Form.Item>
+          )}
           <Form.Item
             label="Тикер"
             name="ticker"
             rules={[{ required: true, message: 'Введите тикер' }]}
             extra={mode === 'edit' ? IDENTITY_IMMUTABLE_HELPER : undefined}
           >
-            <Input placeholder="AAPL" disabled={mode === 'edit' && !identityEditingEnabled} />
+            <Input placeholder="AAPL" disabled={mode === 'edit' && (!allowIdentityEditing || !identityEditingEnabled)} />
           </Form.Item>
           <Form.Item
             label="Название"
@@ -368,9 +394,9 @@ const StockEditModal: React.FC<StockEditModalProps> = ({
             name="exchange"
             rules={[{ required: true, message: 'Выберите биржу' }]}
           >
-            <Select options={exchangeOptions} disabled={mode === 'edit' && !identityEditingEnabled} />
+            <Select options={exchangeOptions} disabled={mode === 'edit' && (!allowIdentityEditing || !identityEditingEnabled)} />
           </Form.Item>
-          {mode === 'edit' && (
+          {mode === 'edit' && allowIdentityEditing && (
             <Form.Item>
               {!identityEditingEnabled ? (
                 <Button
@@ -401,6 +427,15 @@ const StockEditModal: React.FC<StockEditModalProps> = ({
                   description={IDENTITY_EDIT_WARNING}
                 />
               )}
+            </Form.Item>
+          )}
+          {mode === 'edit' && !allowIdentityEditing && (
+            <Form.Item>
+              <Alert
+                type="info"
+                showIcon
+                message="Изменение тикера/биржи недоступно в этом режиме. Разрешено только редактирование метаданных."
+              />
             </Form.Item>
           )}
           <Form.Item label="Сектор" name="sectorId">
