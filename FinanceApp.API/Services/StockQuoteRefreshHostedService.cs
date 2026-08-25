@@ -38,6 +38,7 @@ public sealed class StockQuoteRefreshHostedService : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<StockQuoteRefreshHostedService> _logger;
+    private readonly ISystemProcessJournalService? _processJournalService;
     private readonly Func<TimeSpan, CancellationToken, Task> _delayAsync;
     private readonly StockQuoteRefreshOptions _options;
     private readonly SemaphoreSlim _runGate = new(1, 1);
@@ -50,11 +51,13 @@ public sealed class StockQuoteRefreshHostedService : BackgroundService
         TimeProvider timeProvider,
         IOptions<StockQuoteRefreshOptions> options,
         ILogger<StockQuoteRefreshHostedService> logger,
-        Func<TimeSpan, CancellationToken, Task>? delayAsync = null)
+        Func<TimeSpan, CancellationToken, Task>? delayAsync = null,
+        ISystemProcessJournalService? processJournalService = null)
     {
         _scopeFactory = scopeFactory;
         _timeProvider = timeProvider;
         _logger = logger;
+        _processJournalService = processJournalService;
         _delayAsync = delayAsync ?? ((delay, cancellationToken) => Task.Delay(delay, cancellationToken));
         _options = NormalizeOptions(options.Value);
     }
@@ -103,6 +106,17 @@ public sealed class StockQuoteRefreshHostedService : BackgroundService
         var startedAt = _timeProvider.GetUtcNow();
         var watch = Stopwatch.StartNew();
         var result = new StockQuoteRefreshCycleResult();
+        var processRunId = await (_processJournalService?.CreateOrGetAsync(new CreateSystemProcessRunRequest
+        {
+            ProcessType = SystemProcessTypes.StockQuoteRefreshCycle,
+            Trigger = SystemProcessTrigger.Automatic,
+            InitialStatus = SystemProcessRunStatus.Pending,
+        }, cancellationToken) ?? Task.FromResult(0L));
+
+        if (processRunId > 0)
+        {
+            await _processJournalService!.MarkRunningAsync(processRunId, cancellationToken);
+        }
 
         try
         {
@@ -192,10 +206,40 @@ public sealed class StockQuoteRefreshHostedService : BackgroundService
                 result.Failed,
                 (int)result.Duration.TotalMilliseconds);
 
+            if (processRunId > 0)
+            {
+                await _processJournalService!.CompleteAsync(
+                    processRunId,
+                    result.Failed > 0 || result.RateLimited > 0
+                        ? SystemProcessRunStatus.CompletedWithErrors
+                        : SystemProcessRunStatus.Succeeded,
+                    new UpdateSystemProcessRunRequest
+                    {
+                        TotalItems = result.UniqueStocksSelected,
+                        ProcessedItems = result.Attempted,
+                        SucceededItems = result.SuccessfullyApplied,
+                        FailedItems = result.Failed,
+                        SkippedItems = result.SkippedNoEurConversion + result.SkippedOrRejectedAsStale,
+                        ResultSummary = $"Обработано {result.Attempted} из {result.UniqueStocksSelected}; успешно {result.SuccessfullyApplied}; ошибок {result.Failed}; rate-limit {result.RateLimited}.",
+                    },
+                    cancellationToken);
+            }
+
             return result;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            if (processRunId > 0)
+            {
+                await _processJournalService!.CompleteAsync(
+                    processRunId,
+                    SystemProcessRunStatus.Interrupted,
+                    new UpdateSystemProcessRunRequest
+                    {
+                        ErrorSummary = "Цикл автообновления котировок прерван остановкой приложения.",
+                    },
+                    CancellationToken.None);
+            }
             throw;
         }
         catch (Exception ex)
@@ -204,6 +248,18 @@ public sealed class StockQuoteRefreshHostedService : BackgroundService
             _logger.LogError(ex,
                 "Periodic stock quote refresh cycle failed unexpectedly after {DurationMs} ms.",
                 (int)watch.Elapsed.TotalMilliseconds);
+            if (processRunId > 0)
+            {
+                await _processJournalService!.CompleteAsync(
+                    processRunId,
+                    SystemProcessRunStatus.Failed,
+                    new UpdateSystemProcessRunRequest
+                    {
+                        FailedItems = result.Failed + 1,
+                        ErrorSummary = ex.Message,
+                    },
+                    CancellationToken.None);
+            }
             return result with { Failed = result.Failed + 1, Duration = watch.Elapsed };
         }
         finally

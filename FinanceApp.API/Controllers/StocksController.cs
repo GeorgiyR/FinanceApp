@@ -19,6 +19,7 @@ public class StocksController : ControllerBase
     private readonly IStockPerformanceCalculationService _stockPerformanceCalculationService;
     private readonly StockQuoteSnapshotPersistenceService _stockQuoteSnapshotPersistenceService;
     private readonly IStockMetadataEnrichmentService? _stockMetadataEnrichmentService;
+    private readonly ISystemProcessJournalService? _systemProcessJournalService;
     private readonly ILogger<StocksController> _logger;
 
     public StocksController(
@@ -27,13 +28,15 @@ public class StocksController : ControllerBase
         IStockPerformanceCalculationService stockPerformanceCalculationService,
         StockQuoteSnapshotPersistenceService stockQuoteSnapshotPersistenceService,
         ILogger<StocksController> logger,
-        IStockMetadataEnrichmentService? stockMetadataEnrichmentService = null)
+        IStockMetadataEnrichmentService? stockMetadataEnrichmentService = null,
+        ISystemProcessJournalService? systemProcessJournalService = null)
     {
         _context = context;
         _stockHistoryService = stockHistoryService;
         _stockPerformanceCalculationService = stockPerformanceCalculationService;
         _stockQuoteSnapshotPersistenceService = stockQuoteSnapshotPersistenceService;
         _stockMetadataEnrichmentService = stockMetadataEnrichmentService;
+        _systemProcessJournalService = systemProcessJournalService;
         _logger = logger;
     }
 
@@ -314,11 +317,81 @@ public class StocksController : ControllerBase
         CancellationToken cancellationToken = default)
     {
         var batchSize = request?.BatchSize ?? 25;
-        var response = await _stockHistoryService.RebuildFrankfurtAggregatesAsync(
-            batchSize,
-            request?.AfterStockId,
-            cancellationToken);
-        return Ok(response);
+        var correlationId = HttpContext.TraceIdentifier;
+        var processRunId = await (_systemProcessJournalService?.CreateOrGetAsync(new CreateSystemProcessRunRequest
+        {
+            ProcessType = SystemProcessTypes.FrankfurtAggregateRebuild,
+            Trigger = SystemProcessTrigger.ApiRepair,
+            InitiatedByUserId = User?.Identity?.Name,
+            CorrelationId = correlationId,
+            InitialStatus = SystemProcessRunStatus.Running,
+            Details = new
+            {
+                batchSize,
+                afterStockId = request?.AfterStockId,
+            },
+        }, cancellationToken) ?? Task.FromResult(0L));
+
+        try
+        {
+            var response = await _stockHistoryService.RebuildFrankfurtAggregatesAsync(
+                batchSize,
+                request?.AfterStockId,
+                cancellationToken);
+
+            if (processRunId > 0)
+            {
+                await _systemProcessJournalService!.CompleteAsync(
+                    processRunId,
+                    response.Errors.Count > 0 || response.FailedStocks > 0
+                        ? SystemProcessRunStatus.CompletedWithErrors
+                        : SystemProcessRunStatus.Succeeded,
+                    new UpdateSystemProcessRunRequest
+                    {
+                        TotalItems = response.ProcessedStocks,
+                        ProcessedItems = response.ProcessedStocks,
+                        SucceededItems = response.RebuiltStocks,
+                        FailedItems = response.FailedStocks,
+                        ResultSummary = $"Обработано {response.ProcessedStocks}; успешно {response.RebuiltStocks}; ошибок {response.FailedStocks}.",
+                        LastProcessedEntity = response.NextAfterStockId.HasValue ? $"afterStockId={response.NextAfterStockId.Value}" : null,
+                    },
+                    cancellationToken);
+            }
+
+            return Ok(response);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            if (processRunId > 0)
+            {
+                await _systemProcessJournalService!.CompleteAsync(
+                    processRunId,
+                    SystemProcessRunStatus.Interrupted,
+                    new UpdateSystemProcessRunRequest
+                    {
+                        ErrorSummary = "Пересборка агрегатов прервана остановкой приложения или отменой запроса.",
+                    },
+                    CancellationToken.None);
+            }
+
+            throw;
+        }
+        catch (Exception ex)
+        {
+            if (processRunId > 0)
+            {
+                await _systemProcessJournalService!.CompleteAsync(
+                    processRunId,
+                    SystemProcessRunStatus.Failed,
+                    new UpdateSystemProcessRunRequest
+                    {
+                        ErrorSummary = ex.Message,
+                    },
+                    CancellationToken.None);
+            }
+
+            throw;
+        }
     }
 
     [HttpPost]

@@ -38,6 +38,7 @@ public sealed class CatalogFundamentalsRefreshHostedService : BackgroundService,
     private readonly CatalogFundamentalsRefreshJobOptions _options;
     private readonly ILogger<CatalogFundamentalsRefreshHostedService> _logger;
     private readonly ICatalogMaintenanceLeaseService _maintenanceLeaseService;
+    private readonly ISystemProcessJournalService? _processJournalService;
     private readonly Func<TimeSpan, CancellationToken, Task> _delayAsync;
     private readonly SemaphoreSlim _runGate = new(1, 1);
     private readonly string _instanceId = $"{Environment.MachineName}-{Guid.NewGuid():N}";
@@ -48,12 +49,14 @@ public sealed class CatalogFundamentalsRefreshHostedService : BackgroundService,
         IOptions<CatalogFundamentalsRefreshJobOptions> options,
         ILogger<CatalogFundamentalsRefreshHostedService> logger,
         ICatalogMaintenanceLeaseService maintenanceLeaseService,
-        Func<TimeSpan, CancellationToken, Task>? delayAsync = null)
+        Func<TimeSpan, CancellationToken, Task>? delayAsync = null,
+        ISystemProcessJournalService? processJournalService = null)
     {
         _scopeFactory = scopeFactory;
         _timeProvider = timeProvider;
         _logger = logger;
         _maintenanceLeaseService = maintenanceLeaseService;
+        _processJournalService = processJournalService;
         _delayAsync = delayAsync ?? ((delay, cancellationToken) => Task.Delay(delay, cancellationToken));
 
         var raw = options.Value;
@@ -209,6 +212,7 @@ public sealed class CatalogFundamentalsRefreshHostedService : BackgroundService,
         var runId = 0;
         var hasRunLease = false;
         var hasSharedLease = false;
+        var processRunId = 0L;
         try
         {
             var timeZone = ResolveTimeZone();
@@ -224,6 +228,26 @@ public sealed class CatalogFundamentalsRefreshHostedService : BackgroundService,
             {
                 return RunAttemptOutcome.NotStarted;
             }
+
+            processRunId = await (_processJournalService?.CreateOrGetAsync(new CreateSystemProcessRunRequest
+            {
+                ProcessType = SystemProcessTypes.CatalogFundamentalsRefresh,
+                Trigger = trigger.Equals("scheduled", StringComparison.OrdinalIgnoreCase)
+                    ? SystemProcessTrigger.Scheduled
+                    : trigger.Equals("startup-catch-up", StringComparison.OrdinalIgnoreCase)
+                        ? SystemProcessTrigger.StartupCatchUp
+                        : SystemProcessTrigger.Automatic,
+                ExternalRunKey = run.RunKey,
+                CorrelationId = run.RunKey,
+                InitialStatus = SystemProcessRunStatus.Pending,
+                Details = new
+                {
+                    run.BusinessWeek,
+                    run.TimeZoneId,
+                    run.ScheduledAtUtc,
+                    trigger,
+                },
+            }, cancellationToken) ?? Task.FromResult(0L));
 
             if (!await TryAcquireLeaseAsync(runId, cancellationToken))
             {
@@ -250,6 +274,10 @@ public sealed class CatalogFundamentalsRefreshHostedService : BackgroundService,
                 dbRun.StartedAtUtc ??= startedAtUtc;
                 dbRun.UpdatedAtUtc = startedAtUtc;
             }, cancellationToken);
+            if (processRunId > 0)
+            {
+                await _processJournalService!.MarkRunningAsync(processRunId, cancellationToken);
+            }
 
             _logger.LogInformation(
                 "Weekly catalog fundamentals refresh started: runKey={RunKey} businessWeek={BusinessWeek} trigger={Trigger} weekday={Weekday} localTime={LocalScheduleTime} timeZone={TimeZoneId}",
@@ -262,10 +290,45 @@ public sealed class CatalogFundamentalsRefreshHostedService : BackgroundService,
 
             await ProcessRunAsync(runId, cancellationToken);
             await FinalizeRunAsync(runId, cancellationToken);
+            if (processRunId > 0)
+            {
+                var final = await GetRunAsync(runId, cancellationToken);
+                if (final is not null)
+                {
+                    await _processJournalService!.CompleteAsync(
+                        processRunId,
+                        final.Status == CatalogFundamentalsRefreshRunStatus.Completed
+                            ? SystemProcessRunStatus.Succeeded
+                            : SystemProcessRunStatus.CompletedWithErrors,
+                        new UpdateSystemProcessRunRequest
+                        {
+                            TotalItems = final.TotalDiscovered,
+                            ProcessedItems = final.Processed,
+                            SucceededItems = final.Succeeded,
+                            FailedItems = final.Failed + final.RateLimited,
+                            SkippedItems = final.Skipped,
+                            ResultSummary = $"Обработано {final.Processed} из {final.TotalDiscovered}; успешно {final.Succeeded}; ошибок {final.Failed}.",
+                            ErrorSummary = final.FailureSummary ?? final.LastError,
+                            LastProcessedEntity = final.LastProcessedStockId.HasValue ? $"stockId={final.LastProcessedStockId.Value}" : null,
+                        },
+                        cancellationToken);
+                }
+            }
             return RunAttemptOutcome.Completed;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            if (processRunId > 0)
+            {
+                await _processJournalService!.CompleteAsync(
+                    processRunId,
+                    SystemProcessRunStatus.Interrupted,
+                    new UpdateSystemProcessRunRequest
+                    {
+                        ErrorSummary = "Недельное обновление фундаментальных данных прервано остановкой приложения.",
+                    },
+                    CancellationToken.None);
+            }
             return RunAttemptOutcome.NotStarted;
         }
         catch (Exception ex)
@@ -279,6 +342,17 @@ public sealed class CatalogFundamentalsRefreshHostedService : BackgroundService,
                     AppendFailure(dbRun, ex.Message);
                     dbRun.UpdatedAtUtc = _timeProvider.GetUtcNow().UtcDateTime;
                 }, CancellationToken.None);
+            }
+            if (processRunId > 0)
+            {
+                await _processJournalService!.CompleteAsync(
+                    processRunId,
+                    SystemProcessRunStatus.Failed,
+                    new UpdateSystemProcessRunRequest
+                    {
+                        ErrorSummary = ex.Message,
+                    },
+                    CancellationToken.None);
             }
 
             return RunAttemptOutcome.NotStarted;

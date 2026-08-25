@@ -14,6 +14,7 @@ import MarketIndicesPage from './pages/MarketIndicesPage';
 import FinancialMetricsPage from './pages/FinancialMetricsPage';
 import ProfilePage from './pages/ProfilePage';
 import HelpPage from './pages/HelpPage';
+import SystemProcessRunsPage from './pages/SystemProcessRunsPage';
 
 const App: React.FC = () => {
   return (
@@ -108,6 +109,14 @@ const App: React.FC = () => {
               element={
                 <PrivateRoute>
                   <ProfilePage />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/system/processes"
+              element={
+                <PrivateRoute>
+                  <SystemProcessRunsPage />
                 </PrivateRoute>
               }
             />

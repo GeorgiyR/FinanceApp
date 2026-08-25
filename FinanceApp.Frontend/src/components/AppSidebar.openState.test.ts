@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   MARKET_INDICES_SIDEBAR_PARENT_KEY,
+  SYSTEM_PARENT_KEY,
+  SYSTEM_PROCESS_JOURNAL_KEY,
   applySidebarOpenChange,
   computeSidebarOpenKeys,
   marketIndexSidebarKey,
@@ -88,6 +90,20 @@ describe('AppSidebar open state', () => {
     expect(keys).toContain('stocks-directories');
     expect(keys).not.toContain('stocks');
     expect(keys).not.toContain('market-indices-root');
+  });
+
+  it('opens system section for process journal route', () => {
+    const keys = computeSidebarOpenKeys({
+      portfoliosOpen: false,
+      stocksOpen: false,
+      stocksDirectoriesOpen: false,
+      marketIndicesOpen: false,
+      selectedKeys: [SYSTEM_PROCESS_JOURNAL_KEY],
+    });
+
+    expect(keys).toContain(SYSTEM_PARENT_KEY);
+    expect(keys).not.toContain('stocks');
+    expect(keys).not.toContain('stocks-directories');
   });
 
   it('route-required parents win over stale persisted preferences', () => {

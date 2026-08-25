@@ -9,6 +9,7 @@ import {
   GlobalOutlined,
   LogoutOutlined,
   QuestionCircleOutlined,
+  SettingOutlined,
   StockOutlined,
   UnorderedListOutlined,
   UserOutlined,
@@ -32,6 +33,7 @@ const SIDEBAR_COLLAPSED_STORAGE_KEY = 'financeapp.sidebar.collapsed';
 const PORTFOLIOS_OPEN_STORAGE_KEY = 'financeapp.sidebar.portfolios.open';
 const STOCKS_OPEN_STORAGE_KEY = 'financeapp.sidebar.stocks.open';
 const STOCKS_DIRECTORIES_OPEN_STORAGE_KEY = 'financeapp.sidebar.stocks-directories.open';
+const SYSTEM_OPEN_STORAGE_KEY = 'financeapp.sidebar.system.open';
 const MARKET_INDICES_OPEN_STORAGE_KEY = 'financeapp.sidebar.market-indices.open';
 const MARKET_INDICES_DESCENDANT_OPEN_KEYS_STORAGE_KEY = 'financeapp.sidebar.market-indices.descendant-open-keys';
 
@@ -39,6 +41,8 @@ export const MARKET_INDICES_SIDEBAR_PARENT_KEY = 'market-indices-root';
 export const MARKET_INDEX_KEY_PREFIX = 'market-index-';
 export const MARKET_INDICES_MANAGE_KEY = 'market-indices-manage';
 export const STOCKS_CATALOG_KEY = 'stocks-catalog';
+export const SYSTEM_PARENT_KEY = 'system';
+export const SYSTEM_PROCESS_JOURNAL_KEY = 'system-processes';
 
 export function marketIndexSidebarKey(id: number): string {
   return `${MARKET_INDEX_KEY_PREFIX}${id}`;
@@ -52,11 +56,13 @@ export interface SidebarOpenState {
   portfoliosOpen: boolean;
   stocksOpen: boolean;
   stocksDirectoriesOpen: boolean;
+  systemOpen: boolean;
   marketIndicesOpen: boolean;
   marketIndicesDescendantOpenKeys: string[];
 }
 
-export interface SidebarOpenKeysParams extends Omit<SidebarOpenState, 'marketIndicesDescendantOpenKeys'> {
+export interface SidebarOpenKeysParams extends Omit<SidebarOpenState, 'marketIndicesDescendantOpenKeys' | 'systemOpen'> {
+  systemOpen?: boolean;
   selectedKeys: string[];
   activePortfolioId?: string | number;
   defaultOpenKeys?: string[];
@@ -132,6 +138,10 @@ export function isStocksDirectoriesSelectedKey(key: string): boolean {
     || key.startsWith('sectors-');
 }
 
+export function isSystemSelectedKey(key: string): boolean {
+  return key === SYSTEM_PARENT_KEY || key === SYSTEM_PROCESS_JOURNAL_KEY;
+}
+
 export function isMarketIndicesSelectedKey(key: string): boolean {
   return key === MARKET_INDICES_SIDEBAR_PARENT_KEY
     || key === MARKET_INDICES_MANAGE_KEY
@@ -159,6 +169,7 @@ export function computeSidebarOpenKeys({
   portfoliosOpen,
   stocksOpen,
   stocksDirectoriesOpen,
+  systemOpen = false,
   marketIndicesOpen,
   marketIndicesDescendantOpenKeys = [],
   selectedKeys,
@@ -168,6 +179,7 @@ export function computeSidebarOpenKeys({
   const keys: string[] = [];
   const hasStocksSelection = selectedKeys.some(isStocksSelectedKey);
   const hasStocksDirectoriesSelection = selectedKeys.some(isStocksDirectoriesSelectedKey);
+  const hasSystemSelection = selectedKeys.some(isSystemSelectedKey);
   const marketIndicesDescendantKeys = filterMarketIndicesDescendantOpenKeys(marketIndicesDescendantOpenKeys);
   const stocksRootOpen = stocksOpen || hasStocksSelection;
   // marketIndicesSubtreeOpen deliberately uses only the controlled state, NOT selectedKeys.
@@ -183,6 +195,9 @@ export function computeSidebarOpenKeys({
   }
   if (stocksDirectoriesOpen || hasStocksDirectoriesSelection) {
     keys.push(STOCKS_DIRECTORIES_PARENT_KEY);
+  }
+  if (systemOpen || hasSystemSelection) {
+    keys.push(SYSTEM_PARENT_KEY);
   }
   if (marketIndicesSubtreeOpen) {
     keys.push(MARKET_INDICES_SIDEBAR_PARENT_KEY);
@@ -209,6 +224,7 @@ export function applySidebarOpenChange({
   portfoliosOpen,
   stocksOpen,
   stocksDirectoriesOpen,
+  systemOpen = false,
   marketIndicesOpen,
   marketIndicesDescendantOpenKeys = [],
   selectedKeys,
@@ -224,6 +240,7 @@ export function applySidebarOpenChange({
     portfoliosOpen,
     stocksOpen,
     stocksDirectoriesOpen,
+    systemOpen,
     marketIndicesOpen,
     marketIndicesDescendantOpenKeys: currentMarketIndicesDescendantKeys,
     selectedKeys,
@@ -234,6 +251,7 @@ export function applySidebarOpenChange({
   let nextPortfoliosOpen = portfoliosOpen;
   let nextStocksOpen = stocksOpen;
   let nextStocksDirectoriesOpen = stocksDirectoriesOpen;
+  let nextSystemOpen = systemOpen;
   let nextMarketIndicesOpen = marketIndicesOpen;
   let nextMarketIndicesDescendantOpenKeys = currentMarketIndicesDescendantKeys;
 
@@ -271,6 +289,17 @@ export function applySidebarOpenChange({
     nextStocksDirectoriesOpen = true;
   }
 
+  const prevHasSystem = currentKeys.includes(SYSTEM_PARENT_KEY);
+  const nextHasSystem = newOpenKeys.includes(SYSTEM_PARENT_KEY);
+  const routeRequiresSystem = selectedKeys.some(isSystemSelectedKey);
+  if (prevHasSystem && !nextHasSystem) {
+    if (!routeRequiresSystem) {
+      nextSystemOpen = false;
+    }
+  } else if (!prevHasSystem && nextHasSystem) {
+    nextSystemOpen = true;
+  }
+
   // Market Indices: onOpenChange is the single authority.
   // Because onOpenChange is never fired for leaf clicks, any diff here is a genuine
   // submenu open or close action by the user (or a cascade from closing stocks).
@@ -298,6 +327,7 @@ export function applySidebarOpenChange({
     portfoliosOpen: nextPortfoliosOpen,
     stocksOpen: nextStocksOpen,
     stocksDirectoriesOpen: nextStocksDirectoriesOpen,
+    systemOpen: nextSystemOpen,
     marketIndicesOpen: nextMarketIndicesOpen,
     marketIndicesDescendantOpenKeys: nextMarketIndicesDescendantOpenKeys,
   };
@@ -439,6 +469,19 @@ export function buildSidebarMenuItems({
       label: STOCKS_DIRECTORIES_PARENT_LABEL,
       children: buildStocksDirectoriesMenuItems(onNavigate),
     },
+    {
+      key: SYSTEM_PARENT_KEY,
+      icon: <SettingOutlined />,
+      label: 'Система',
+      children: [
+        {
+          key: SYSTEM_PROCESS_JOURNAL_KEY,
+          icon: <UnorderedListOutlined />,
+          label: 'Журнал процессов',
+          onClick: () => onNavigate('/system/processes'),
+        },
+      ],
+    },
   ];
 }
 
@@ -500,6 +543,16 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
     } catch {}
     return selectedKeys.some(isStocksDirectoriesSelectedKey);
   });
+  const [systemOpen, setSystemOpen] = useState<boolean>(() => {
+    if (typeof window === 'undefined') {
+      return selectedKeys.some(isSystemSelectedKey);
+    }
+    try {
+      const stored = window.localStorage.getItem(SYSTEM_OPEN_STORAGE_KEY);
+      if (stored !== null) return stored === '1';
+    } catch {}
+    return selectedKeys.some(isSystemSelectedKey);
+  });
 
   const [marketIndicesOpen, setMarketIndicesOpen] = useState<boolean>(() => {
     if (typeof window === 'undefined') {
@@ -555,6 +608,13 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
+      window.localStorage.setItem(SYSTEM_OPEN_STORAGE_KEY, systemOpen ? '1' : '0');
+    } catch {}
+  }, [systemOpen]);
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
       window.localStorage.setItem(MARKET_INDICES_OPEN_STORAGE_KEY, marketIndicesOpen ? '1' : '0');
     } catch {}
   }, [marketIndicesOpen]);
@@ -574,13 +634,14 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
       portfoliosOpen,
       stocksOpen,
       stocksDirectoriesOpen,
+      systemOpen,
       marketIndicesOpen,
       marketIndicesDescendantOpenKeys,
       activePortfolioId,
       defaultOpenKeys,
       selectedKeys,
     });
-  }, [portfoliosOpen, stocksOpen, stocksDirectoriesOpen, marketIndicesOpen, marketIndicesDescendantOpenKeys, activePortfolioId, defaultOpenKeys, selectedKeys]);
+  }, [portfoliosOpen, stocksOpen, stocksDirectoriesOpen, systemOpen, marketIndicesOpen, marketIndicesDescendantOpenKeys, activePortfolioId, defaultOpenKeys, selectedKeys]);
 
   // Handle all submenu open/close changes from Ant Design.
   // onOpenChange is the single authority for submenu state: it fires only on submenu
@@ -590,6 +651,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
       portfoliosOpen,
       stocksOpen,
       stocksDirectoriesOpen,
+      systemOpen,
       marketIndicesOpen,
       marketIndicesDescendantOpenKeys,
       activePortfolioId,
@@ -601,6 +663,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
     setPortfoliosOpen(nextState.portfoliosOpen);
     setStocksOpen(nextState.stocksOpen);
     setStocksDirectoriesOpen(nextState.stocksDirectoriesOpen);
+    setSystemOpen(nextState.systemOpen);
     setMarketIndicesOpen(nextState.marketIndicesOpen);
     setMarketIndicesDescendantOpenKeys(nextState.marketIndicesDescendantOpenKeys);
   }, [
@@ -611,6 +674,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
     portfoliosOpen,
     selectedKeys,
     stocksDirectoriesOpen,
+    systemOpen,
     stocksOpen,
   ]);
 

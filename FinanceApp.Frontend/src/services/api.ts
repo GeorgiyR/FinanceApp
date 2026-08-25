@@ -54,6 +54,9 @@ import type {
   StockMetadataEnrichmentJob,
   StockMetadataEnrichmentResultPage,
   StockMetadataEnrichmentScope,
+  SystemProcessRunDetails,
+  SystemProcessRunListResponse,
+  SystemProcessRunSummary,
 } from '../types';
 
 export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '/api';
@@ -361,5 +364,15 @@ export const reviewStockMetadataEnrichmentResult = (
     industryId,
     saveMapping,
   });
+
+
+export const getSystemProcessRuns = (params: Record<string, unknown>) =>
+  api.get<SystemProcessRunListResponse>('/system/process-runs', { params });
+
+export const getSystemProcessRun = (id: number) =>
+  api.get<SystemProcessRunDetails>(`/system/process-runs/${id}`);
+
+export const getSystemProcessRunsSummary = () =>
+  api.get<SystemProcessRunSummary>('/system/process-runs/summary');
 
 export default api;
