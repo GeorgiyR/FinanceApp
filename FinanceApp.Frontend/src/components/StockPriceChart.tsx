@@ -6,6 +6,7 @@ import utc from 'dayjs/plugin/utc';
 import {
   Bar,
   BarChart,
+  Cell,
   LineChart,
   Line,
   CartesianGrid,
@@ -33,6 +34,12 @@ import {
   usesUtcDateLabels,
 } from './stockPriceChartData';
 import type { HistoryChartPoint } from './stockPriceChartData';
+import {
+  analyzeAdaptiveVolumeScale,
+  formatVolumeTooltipValue,
+  getVolumeCadenceHint,
+  toDisplayVolume,
+} from './stockVolumeScale';
 import { buildFinanzenNetUrl } from '../utils/finanzenNet';
 import { resolveNewestCurrentPriceSnapshot } from '../utils/currentPriceSnapshot';
 import {
@@ -520,11 +527,28 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
     [baseHistoryChartData, currentQuoteOverlay, historyData, historyRange],
   );
 
+  const volumeScale = useMemo(
+    () => analyzeAdaptiveVolumeScale(exchange, historyChartData.map((point) => point.volumeChart)),
+    [exchange, historyChartData],
+  );
+
+  const historyChartDataWithVolumeDisplay = useMemo(
+    () => historyChartData.map((point) => {
+      const { displayVolume, volumeCapped } = toDisplayVolume(point.volumeChart, volumeScale);
+      return {
+        ...point,
+        volumeDisplay: displayVolume,
+        volumeCapped,
+      };
+    }),
+    [historyChartData, volumeScale],
+  );
+
   const displayHistoryChartData = useMemo(
     () => historyRange === '24h'
-      ? compressIntradaySessionGaps(historyChartData, chartLayoutWidth)
-      : historyChartData,
-    [chartLayoutWidth, historyChartData, historyRange],
+      ? compressIntradaySessionGaps(historyChartDataWithVolumeDisplay, chartLayoutWidth)
+      : historyChartDataWithVolumeDisplay,
+    [chartLayoutWidth, historyChartDataWithVolumeDisplay, historyRange],
   );
 
   const resolveCompressedTs = useCallback(
@@ -633,6 +657,10 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
         : formatCurrencyValue(volumeMetrics.turnover, volumeMetrics.turnoverCurrency),
     },
   ], [latestVolumePoint, volumeMetrics]);
+  const volumeCadenceHint = useMemo(
+    () => getVolumeCadenceHint(historyRange, historyResponse?.interval),
+    [historyRange, historyResponse?.interval],
+  );
   const renderXAxis = (hide = false) => (
     historyRange === '1w' ? (
       <XAxis
@@ -964,6 +992,20 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
                   Объём и активность торгов
                 </Text>
               </div>
+              {volumeCadenceHint != null && (
+                <div style={{ marginTop: 4 }}>
+                  <Text type="secondary" style={{ fontSize: 16 }}>
+                    {volumeCadenceHint}
+                  </Text>
+                </div>
+              )}
+              {volumeScale.adaptiveScaleActive && (
+                <div style={{ marginTop: 6 }}>
+                  <Text type="secondary" style={{ fontSize: 16 }}>
+                    Адаптивная шкала объёма: крупные выбросы визуально ограничены.
+                  </Text>
+                </div>
+              )}
               <div
                 style={{
                   display: 'grid',
@@ -1049,46 +1091,69 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
             </ResponsiveContainer>
           </div>
           <div style={{ width: '100%', height: 128 }}>
-            <ResponsiveContainer>
-              <BarChart data={displayHistoryChartData} syncId={`stock-history-${stockId}`}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                {renderXAxis(true)}
-                <YAxis tick={{ fontSize: 16 }} tickFormatter={(value: number) => formatCompactNumber(value)} width={60} />
-                <RechartsTooltip
-                  contentStyle={{ fontSize: 16 }}
-                  itemStyle={{ fontSize: 16 }}
-                  labelStyle={{ fontSize: 16 }}
-                  labelFormatter={(value: number) => {
-                    if (historyRange === '1w') {
-                      const ts = resolveWeeklyTs(value);
-                      return ts != null ? formatHistoryTimestamp(ts, '1w', 'DD.MM.YYYY HH:mm') : '';
-                    }
-                    if (historyRange === '24h') {
-                      const ts = resolveCompressedTs(value);
-                      return ts != null ? formatHistoryTimestamp(ts, historyRange, 'DD.MM.YYYY HH:mm') : '';
-                    }
-                    return formatHistoryTimestamp(
-                      value,
-                      historyRange,
-                      usesUtcDateLabels(historyRange) ? 'DD.MM.YYYY' : 'DD.MM.YYYY HH:mm',
-                    );
-                  }}
-                  formatter={(value: unknown) => {
-                    if (value == null) {
-                      return ['Нет данных', 'Объём'];
-                    }
+            {!volumeScale.hasPositiveFiniteVolume ? (
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Поставщик не предоставил данные об объёме" />
+            ) : (
+              <ResponsiveContainer>
+                <BarChart data={displayHistoryChartData} syncId={`stock-history-${stockId}`}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  {renderXAxis(true)}
+                  {volumeScale.adaptiveScaleActive && volumeScale.displayUpperBound != null ? (
+                    <YAxis
+                      domain={[0, volumeScale.displayUpperBound]}
+                      allowDataOverflow
+                      tick={{ fontSize: 16 }}
+                      tickFormatter={(value: number) => formatCompactNumber(value)}
+                      width={60}
+                    />
+                  ) : (
+                    <YAxis tick={{ fontSize: 16 }} tickFormatter={(value: number) => formatCompactNumber(value)} width={60} />
+                  )}
+                  <RechartsTooltip
+                    contentStyle={{ fontSize: 16 }}
+                    itemStyle={{ fontSize: 16 }}
+                    labelStyle={{ fontSize: 16 }}
+                    labelFormatter={(value: number) => {
+                      if (historyRange === '1w') {
+                        const ts = resolveWeeklyTs(value);
+                        return ts != null ? formatHistoryTimestamp(ts, '1w', 'DD.MM.YYYY HH:mm') : '';
+                      }
+                      if (historyRange === '24h') {
+                        const ts = resolveCompressedTs(value);
+                        return ts != null ? formatHistoryTimestamp(ts, historyRange, 'DD.MM.YYYY HH:mm') : '';
+                      }
+                      return formatHistoryTimestamp(
+                        value,
+                        historyRange,
+                        usesUtcDateLabels(historyRange) ? 'DD.MM.YYYY' : 'DD.MM.YYYY HH:mm',
+                      );
+                    }}
+                    formatter={(_value: unknown, _name: string, item) => {
+                      const payload = item.payload as HistoryChartPoint | undefined;
+                      if (payload == null || payload.volumeChart == null || !Number.isFinite(payload.volumeChart)) {
+                        return ['Нет данных', 'Объём'];
+                      }
 
-                    return [formatNumber(Number(value), 0), 'Объём'];
-                  }}
-                />
-                <Bar
-                  dataKey="volumeChart"
-                  name="Объём"
-                  fill={COLOR_VOLUME}
-                  isAnimationActive={false}
-                />
-              </BarChart>
-            </ResponsiveContainer>
+                      return [formatVolumeTooltipValue(payload.volumeChart, payload.volumeCapped === true), 'Объём'];
+                    }}
+                  />
+                  <Bar
+                    dataKey="volumeDisplay"
+                    name="Объём"
+                    fill={COLOR_VOLUME}
+                    isAnimationActive={false}
+                    minPointSize={volumeScale.adaptiveScaleActive ? 2 : 0}
+                  >
+                    {displayHistoryChartData.map((entry, index) => (
+                      <Cell
+                        key={`volume-cell-${entry.timestamp}-${index}`}
+                        fill={entry.volumeCapped ? '#1677ff' : COLOR_VOLUME}
+                      />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            )}
           </div>
           </div>
         </div>

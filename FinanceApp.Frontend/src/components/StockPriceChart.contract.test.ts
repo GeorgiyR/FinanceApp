@@ -41,4 +41,11 @@ describe('StockPriceChart history strategy contracts', () => {
     expect(source).toContain('timestampUtc: selectedSessionSnapshot.currentPriceAt');
     expect(source).toContain('isStale: selectedSessionSnapshot.isDelayed');
   });
+
+  it('keeps adaptive-volume semantics display-only and preserves actual tooltip values', () => {
+    expect(source).toContain('dataKey="volumeDisplay"');
+    expect(source).toContain('formatVolumeTooltipValue(payload.volumeChart, payload.volumeCapped === true)');
+    expect(source).toContain('Поставщик не предоставил данные об объёме');
+    expect(source).toContain('minPointSize={volumeScale.adaptiveScaleActive ? 2 : 0}');
+  });
 });
