@@ -137,6 +137,59 @@ public class StockHistoryLookbackTests : IDisposable
         Assert.Contains(capturedUrls, u => u.Contains("interval=1d") && u.Contains("range=5y"));
     }
 
+    [Fact]
+    public async Task RefreshHistoryAsync_AutomaticFullBackfill_UsesAtLeastFiveYearDailyLookbackByDefault()
+    {
+        var capturedUrls = new List<string>();
+        var now = new DateTime(2026, 8, 26, 12, 0, 0, DateTimeKind.Utc);
+
+        var stock = new Stock
+        {
+            Id = 3,
+            Ticker = "WPM",
+            Name = "Wheaton",
+            CommonName = "Wheaton",
+            Exchange = StockExchanges.Nyse
+        };
+        _dbContext.Stocks.Add(stock);
+        await _dbContext.SaveChangesAsync();
+
+        var handler = new TrackingHandler(url =>
+        {
+            capturedUrls.Add(url);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(MinimalYahooChartJson("1d"), Encoding.UTF8, "application/json")
+            };
+        });
+
+        var coordinator = new YahooRequestCoordinator(
+            new FixedHttpClientFactory(new HttpClient(handler)),
+            NullLogger<YahooRequestCoordinator>.Instance,
+            Options.Create(new YahooFinanceOptions
+            {
+                MinRequestInterval = TimeSpan.Zero,
+                CooldownDuration = TimeSpan.FromMinutes(30),
+                QuoteCacheDuration = TimeSpan.Zero,
+                RequestTimeout = TimeSpan.FromSeconds(10)
+            }));
+        var service = new StockHistoryService(
+            _dbContext,
+            coordinator,
+            new StubStockQuoteConversionService(),
+            new FixedTimeProvider(now),
+            Options.Create(new StockHistoryRefreshOptions()),
+            NullLogger<StockHistoryService>.Instance);
+
+        var refresh = await service.RefreshHistoryAsync(stock, StockHistoryRefreshTrigger.Automatic);
+
+        Assert.Equal(nameof(StockHistoryRefreshTier.FullBackfill), refresh.AppliedTier);
+        var dailyUrl = capturedUrls.Single(u => u.Contains("interval=1d") && u.Contains("period1="));
+        var period1 = long.Parse(GetQueryValue(dailyUrl, "period1"));
+        var period2 = long.Parse(GetQueryValue(dailyUrl, "period2"));
+        Assert.True(TimeSpan.FromSeconds(period2 - period1).TotalDays >= 1825d);
+    }
+
     private sealed class TrackingHandler : HttpMessageHandler
     {
         private readonly Func<string, HttpResponseMessage> _handler;
@@ -203,5 +256,21 @@ public class StockHistoryLookbackTests : IDisposable
                 Volume = historicalPrice.Volume
             };
         }
+    }
+
+    private sealed class FixedTimeProvider(DateTime utcNow) : TimeProvider
+    {
+        private readonly DateTimeOffset _utcNow = new(utcNow, TimeSpan.Zero);
+        public override DateTimeOffset GetUtcNow() => _utcNow;
+    }
+
+    private static string GetQueryValue(string url, string key)
+    {
+        var uri = new Uri(url);
+        var query = uri.Query.TrimStart('?')
+            .Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .Select(part => part.Split('=', 2))
+            .ToDictionary(parts => parts[0], parts => parts.Length > 1 ? Uri.UnescapeDataString(parts[1]) : string.Empty, StringComparer.Ordinal);
+        return query[key];
     }
 }
