@@ -10,6 +10,7 @@ import {
   Tooltip,
   Input,
   Select,
+  Space,
 } from 'antd';
 import axios from 'axios';
 import {
@@ -1266,7 +1267,7 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
           </Title>
         )}
         headerRight={(
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: isCatalogMode ? 'wrap' : undefined }}>
             {!isCatalogMode && (
               <>
                 <Text type="secondary" style={{ fontSize: 16 }}>
@@ -1283,41 +1284,49 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
             )}
             {isCatalogMode && (
               <>
-                <Select<CatalogSortMode>
-                  value={catalogSortMode}
-                  onChange={handleCatalogSortModeChange}
-                  options={CATALOG_SORT_MODE_OPTIONS}
-                  style={{ width: 130 }}
-                  aria-label="Сортировка"
-                />
-                {isCatalogPeriodSortMode(catalogSortMode) && (
-                  <Tooltip title={catalogSortDirection === 'desc' ? 'Убыванию' : 'Возрастанию'}>
-                    <Button
-                      icon={catalogSortDirection === 'desc' ? <SortDescendingOutlined /> : <SortAscendingOutlined />}
-                      onClick={handleCatalogSortDirectionToggle}
-                      aria-label={catalogSortDirection === 'desc' ? 'Сортировать по возрастанию' : 'Сортировать по убыванию'}
-                    />
-                  </Tooltip>
-                )}
                 <Input
                   placeholder="Поиск: тикер, название, биржа, индекс"
                   value={catalogQuery}
                   onChange={(event) => setCatalogQuery(event.target.value)}
                   allowClear
-                  style={{ width: 320 }}
+                  size="small"
+                  style={{ width: 320, maxWidth: '100%' }}
                 />
                 <AdvancedStockFilterToolbarControls
+                  compact
                   activeGroupCount={activeAdvancedFilterGroups}
                   onOpen={openCatalogAdvancedFilters}
                   onReset={resetCatalogAdvancedFilters}
                   resetDisabled={activeAdvancedFilterGroups === 0}
                 />
+                <Space size={4} align="center" wrap>
+                  <span style={{ fontSize: 16, color: '#595959', whiteSpace: 'nowrap' }}>Сортировка:</span>
+                  <Select<CatalogSortMode>
+                    size="small"
+                    value={catalogSortMode}
+                    onChange={handleCatalogSortModeChange}
+                    options={CATALOG_SORT_MODE_OPTIONS}
+                    style={{ width: 130 }}
+                    aria-label="Сортировка"
+                  />
+                  {isCatalogPeriodSortMode(catalogSortMode) && (
+                    <Tooltip title={catalogSortDirection === 'desc' ? 'Убыванию' : 'Возрастанию'}>
+                      <Button
+                        size="small"
+                        icon={catalogSortDirection === 'desc' ? <SortDescendingOutlined /> : <SortAscendingOutlined />}
+                        onClick={handleCatalogSortDirectionToggle}
+                        aria-label={catalogSortDirection === 'desc' ? 'Сортировать по возрастанию' : 'Сортировать по убыванию'}
+                      />
+                    </Tooltip>
+                  )}
+                </Space>
               </>
             )}
             <Button
               type="primary"
               icon={<PlusOutlined />}
               onClick={openCreateModal}
+              style={isCatalogMode ? { marginInlineStart: 'auto' } : undefined}
             >
               Добавить акцию
             </Button>

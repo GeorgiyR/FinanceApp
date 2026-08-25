@@ -20,10 +20,10 @@ const AdvancedStockFilterToolbarControls: React.FC<AdvancedStockFilterToolbarCon
 
   return (
     <Space size={compact ? 6 : 8}>
-      <Button onClick={onOpen} aria-label="Открыть расширенные фильтры">
+      <Button size={compact ? 'small' : 'middle'} onClick={onOpen} aria-label="Открыть расширенные фильтры">
         {filtersLabel}
       </Button>
-      <Button onClick={onReset} disabled={resetDisabled} aria-label="Сбросить расширенные фильтры">
+      <Button size={compact ? 'small' : 'middle'} onClick={onReset} disabled={resetDisabled} aria-label="Сбросить расширенные фильтры">
         Сбросить
       </Button>
     </Space>
