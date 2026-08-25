@@ -1243,6 +1243,24 @@ describe('StocksPage tracked mode regression', () => {
     });
   });
 
+  it('tracked page keeps untrack confirmation flow and calls untrackStock once', async () => {
+    const user = userEvent.setup();
+    const api = await import('../services/api');
+    vi.mocked(api.getPortfolios).mockResolvedValue({ data: [] });
+    renderPage('tracked');
+    await waitFor(() => expect(screen.getAllByText('AAPL').length).toBeGreaterThan(0));
+
+    const deleteButton = screen
+      .getAllByRole('button', { name: 'Удалить из отслеживаемых' })
+      .find((button) => !(button as HTMLButtonElement).disabled);
+    expect(deleteButton).toBeDefined();
+    await user.click(deleteButton as HTMLElement);
+    await screen.findByText('Удалить из отслеживаемых? Акция останется в «Список акций», индексах и портфелях.');
+    await user.click(await screen.findByRole('button', { name: 'Да' }));
+    await waitFor(() => expect(api.untrackStock).toHaveBeenCalledTimes(1));
+    expect(api.untrackStock).toHaveBeenCalledWith(trackedStock.id);
+  });
+
   // Tracked page shows countdown and auto-refresh
   it('tracked page shows auto-refresh countdown', async () => {
     renderPage('tracked');
