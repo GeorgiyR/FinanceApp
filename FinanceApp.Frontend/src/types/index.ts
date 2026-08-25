@@ -954,3 +954,66 @@ export interface TechnicalAnalysisResponse {
   twoYears: TechnicalAnalysisHorizonResult;
   warnings: TechnicalAnalysisFactor[];
 }
+
+export type SystemProcessRunStatus =
+  | 'Pending'
+  | 'Running'
+  | 'Succeeded'
+  | 'CompletedWithErrors'
+  | 'Failed'
+  | 'Cancelled'
+  | 'Interrupted'
+  | 'Deferred';
+
+export type SystemProcessTrigger =
+  | 'Scheduled'
+  | 'StartupCatchUp'
+  | 'Automatic'
+  | 'Manual'
+  | 'ApiRepair'
+  | 'SystemRecovery';
+
+export interface SystemProcessRunListItem {
+  id: number;
+  processType: string;
+  displayName: string;
+  status: SystemProcessRunStatus;
+  trigger: SystemProcessTrigger;
+  queuedAtUtc: string;
+  startedAtUtc: string | null;
+  completedAtUtc: string | null;
+  updatedAtUtc: string;
+  correlationId: string | null;
+  totalItems: number | null;
+  processedItems: number;
+  succeededItems: number;
+  failedItems: number;
+  skippedItems: number;
+  resultSummary: string | null;
+  errorSummary: string | null;
+  durationSeconds: number | null;
+  progressPercent: number | null;
+}
+
+export interface SystemProcessRunDetails extends SystemProcessRunListItem {
+  externalRunKey: string | null;
+  initiatedByUserId: string | null;
+  lastProcessedEntity: string | null;
+  detailsJson: string | null;
+}
+
+export interface SystemProcessRunListResponse {
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  serverNowUtc: string;
+  items: SystemProcessRunListItem[];
+}
+
+export interface SystemProcessRunSummary {
+  generatedAtUtc: string;
+  activeCount: number;
+  failedLast24Hours: number;
+  completedLast24Hours: number;
+  totalLast24Hours: number;
+}

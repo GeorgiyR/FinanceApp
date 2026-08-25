@@ -121,6 +121,7 @@ public sealed class CatalogStockRefreshHostedService : BackgroundService, ICatal
     private readonly CatalogStockRefreshJobOptions _options;
     private readonly ILogger<CatalogStockRefreshHostedService> _logger;
     private readonly ICatalogMaintenanceLeaseService _maintenanceLeaseService;
+    private readonly ISystemProcessJournalService? _processJournalService;
     private readonly Func<TimeSpan, CancellationToken, Task> _delayAsync;
     private readonly SemaphoreSlim _runGate = new(1, 1);
     private readonly string _instanceId = $"{Environment.MachineName}-{Guid.NewGuid():N}";
@@ -131,12 +132,14 @@ public sealed class CatalogStockRefreshHostedService : BackgroundService, ICatal
         IOptions<CatalogStockRefreshJobOptions> options,
         ILogger<CatalogStockRefreshHostedService> logger,
         ICatalogMaintenanceLeaseService maintenanceLeaseService,
-        Func<TimeSpan, CancellationToken, Task>? delayAsync = null)
+        Func<TimeSpan, CancellationToken, Task>? delayAsync = null,
+        ISystemProcessJournalService? processJournalService = null)
     {
         _scopeFactory = scopeFactory;
         _timeProvider = timeProvider;
         _logger = logger;
         _maintenanceLeaseService = maintenanceLeaseService;
+        _processJournalService = processJournalService;
         _delayAsync = delayAsync ?? ((delay, cancellationToken) => Task.Delay(delay, cancellationToken));
 
         var raw = options.Value;
@@ -292,6 +295,7 @@ public sealed class CatalogStockRefreshHostedService : BackgroundService, ICatal
         var hasRunLease = false;
         var hasSharedLease = false;
         var runId = 0;
+        var processRunId = 0L;
         try
         {
             var timeZone = ResolveTimeZone();
@@ -314,6 +318,26 @@ public sealed class CatalogStockRefreshHostedService : BackgroundService, ICatal
                     run.Status);
                 return RunAttemptOutcome.NotStarted;
             }
+
+            processRunId = await (_processJournalService?.CreateOrGetAsync(new CreateSystemProcessRunRequest
+            {
+                ProcessType = SystemProcessTypes.CatalogStockRefresh,
+                Trigger = trigger.Equals("scheduled", StringComparison.OrdinalIgnoreCase)
+                    ? SystemProcessTrigger.Scheduled
+                    : trigger.Equals("startup-catch-up", StringComparison.OrdinalIgnoreCase)
+                        ? SystemProcessTrigger.StartupCatchUp
+                        : SystemProcessTrigger.Automatic,
+                ExternalRunKey = run.RunKey,
+                CorrelationId = run.RunKey,
+                InitialStatus = SystemProcessRunStatus.Pending,
+                Details = new
+                {
+                    run.BusinessDate,
+                    run.TimeZoneId,
+                    run.ScheduledAtUtc,
+                    trigger,
+                },
+            }, cancellationToken) ?? Task.FromResult(0L));
 
             if (!await TryAcquireLeaseAsync(runId, cancellationToken))
             {
@@ -345,6 +369,10 @@ public sealed class CatalogStockRefreshHostedService : BackgroundService, ICatal
                 dbRun.StartedAtUtc ??= startedAtUtc;
                 dbRun.UpdatedAtUtc = startedAtUtc;
             }, cancellationToken);
+            if (processRunId > 0)
+            {
+                await _processJournalService!.MarkRunningAsync(processRunId, cancellationToken);
+            }
 
             _logger.LogInformation(
                 "Nightly catalog refresh started: runKey={RunKey} businessDate={BusinessDate} trigger={Trigger} localTime={LocalScheduleTime} timeZone={TimeZoneId}",
@@ -357,15 +385,61 @@ public sealed class CatalogStockRefreshHostedService : BackgroundService, ICatal
             await ProcessRunAsync(runId, cancellationToken);
 
             await FinalizeRunAsync(runId, cancellationToken);
+            if (processRunId > 0)
+            {
+                var final = await GetRunAsync(runId, cancellationToken);
+                if (final is not null)
+                {
+                    await _processJournalService!.CompleteAsync(
+                        processRunId,
+                        final.Status == CatalogStockRefreshRunStatus.Completed
+                            ? SystemProcessRunStatus.Succeeded
+                            : SystemProcessRunStatus.CompletedWithErrors,
+                        new UpdateSystemProcessRunRequest
+                        {
+                            TotalItems = final.TotalDiscovered,
+                            ProcessedItems = final.Processed,
+                            SucceededItems = final.QuoteSucceeded + final.HistorySucceeded,
+                            FailedItems = final.QuoteFailed + final.HistoryFailed + final.RateLimited,
+                            SkippedItems = final.QuoteSkipped + final.HistorySkipped,
+                            ResultSummary = $"Обработано {final.Processed} из {final.TotalDiscovered}; quote ok {final.QuoteSucceeded}; history ok {final.HistorySucceeded}.",
+                            ErrorSummary = final.FailureSummary ?? final.LastError,
+                            LastProcessedEntity = final.LastProcessedStockId.HasValue ? $"stockId={final.LastProcessedStockId.Value}" : null,
+                        },
+                        cancellationToken);
+                }
+            }
             return RunAttemptOutcome.Completed;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            if (processRunId > 0)
+            {
+                await _processJournalService!.CompleteAsync(
+                    processRunId,
+                    SystemProcessRunStatus.Interrupted,
+                    new UpdateSystemProcessRunRequest
+                    {
+                        ErrorSummary = "Ночное обновление каталога прервано остановкой приложения.",
+                    },
+                    CancellationToken.None);
+            }
             return RunAttemptOutcome.NotStarted;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Nightly catalog refresh failed for businessDate={BusinessDate}", businessDate);
+            if (processRunId > 0)
+            {
+                await _processJournalService!.CompleteAsync(
+                    processRunId,
+                    SystemProcessRunStatus.Failed,
+                    new UpdateSystemProcessRunRequest
+                    {
+                        ErrorSummary = ex.Message,
+                    },
+                    CancellationToken.None);
+            }
             return RunAttemptOutcome.NotStarted;
         }
         finally

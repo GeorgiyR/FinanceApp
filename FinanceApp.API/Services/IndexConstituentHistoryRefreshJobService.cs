@@ -49,16 +49,19 @@ public sealed class IndexConstituentHistoryRefreshJobService : BackgroundService
     private readonly TimeProvider _timeProvider;
     private readonly IndexConstituentHistoryRefreshJobOptions _options;
     private readonly ILogger<IndexConstituentHistoryRefreshJobService> _logger;
+    private readonly ISystemProcessJournalService? _processJournalService;
 
     public IndexConstituentHistoryRefreshJobService(
         IServiceScopeFactory scopeFactory,
         TimeProvider timeProvider,
         IOptions<IndexConstituentHistoryRefreshJobOptions> options,
-        ILogger<IndexConstituentHistoryRefreshJobService> logger)
+        ILogger<IndexConstituentHistoryRefreshJobService> logger,
+        ISystemProcessJournalService? processJournalService = null)
     {
         _scopeFactory = scopeFactory;
         _timeProvider = timeProvider;
         _logger = logger;
+        _processJournalService = processJournalService;
 
         var rawOptions = options.Value;
         _options = new IndexConstituentHistoryRefreshJobOptions
@@ -200,6 +203,16 @@ public sealed class IndexConstituentHistoryRefreshJobService : BackgroundService
             return;
         }
 
+        var processRunId = await (_processJournalService?.CreateOrGetAsync(new CreateSystemProcessRunRequest
+        {
+            ProcessType = SystemProcessTypes.IndexConstituentHistoryRefresh,
+            Trigger = SystemProcessTrigger.Automatic,
+            ExternalRunKey = workItem.JobId,
+            CorrelationId = workItem.JobId,
+            InitialStatus = SystemProcessRunStatus.Running,
+            Details = new { workItem.MarketIndexId, workItem.StockId, workItem.JobId },
+        }, stoppingToken) ?? Task.FromResult(0L));
+
         try
         {
             using var scope = _scopeFactory.CreateScope();
@@ -212,12 +225,14 @@ public sealed class IndexConstituentHistoryRefreshJobService : BackgroundService
             if (marketIndex is null)
             {
                 MarkCompleted(workItem.JobId, IndexConstituentHistoryRefreshJobState.Failed, error: "Индекс не найден.");
+                await CompleteJournalForJobAsync(processRunId, IndexConstituentHistoryRefreshJobState.Failed, 0, 0, "Индекс не найден.");
                 return;
             }
 
             if (marketIndex.IsArchived)
             {
                 MarkCompleted(workItem.JobId, IndexConstituentHistoryRefreshJobState.Failed, error: "Нельзя обновлять историю акций для архивного индекса.");
+                await CompleteJournalForJobAsync(processRunId, IndexConstituentHistoryRefreshJobState.Failed, 0, 0, "Нельзя обновлять историю акций для архивного индекса.");
                 return;
             }
 
@@ -232,6 +247,7 @@ public sealed class IndexConstituentHistoryRefreshJobService : BackgroundService
             if (membership?.Stock is null)
             {
                 MarkCompleted(workItem.JobId, IndexConstituentHistoryRefreshJobState.Failed, error: "Акция не входит в текущий состав выбранного индекса.");
+                await CompleteJournalForJobAsync(processRunId, IndexConstituentHistoryRefreshJobState.Failed, 0, 0, "Акция не входит в текущий состав выбранного индекса.");
                 return;
             }
 
@@ -239,6 +255,7 @@ public sealed class IndexConstituentHistoryRefreshJobService : BackgroundService
             if (!TryValidateTickerAndExchange(stock, out var validationError))
             {
                 MarkCompleted(workItem.JobId, IndexConstituentHistoryRefreshJobState.Failed, error: validationError);
+                await CompleteJournalForJobAsync(processRunId, IndexConstituentHistoryRefreshJobState.Failed, 0, 0, validationError);
                 return;
             }
 
@@ -251,6 +268,7 @@ public sealed class IndexConstituentHistoryRefreshJobService : BackgroundService
                     deletedPoints: result.DeletedPoints,
                     importedPoints: result.ImportedPoints,
                     error: RateLimitMessage);
+                await CompleteJournalForJobAsync(processRunId, IndexConstituentHistoryRefreshJobState.RateLimited, result.ImportedPoints, result.DeletedPoints, RateLimitMessage);
                 return;
             }
 
@@ -259,14 +277,17 @@ public sealed class IndexConstituentHistoryRefreshJobService : BackgroundService
                 IndexConstituentHistoryRefreshJobState.Succeeded,
                 deletedPoints: result.DeletedPoints,
                 importedPoints: result.ImportedPoints);
+            await CompleteJournalForJobAsync(processRunId, IndexConstituentHistoryRefreshJobState.Succeeded, result.ImportedPoints, result.DeletedPoints, null);
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
             MarkCompleted(workItem.JobId, IndexConstituentHistoryRefreshJobState.Interrupted, error: InterruptedMessage);
+            await CompleteJournalForJobAsync(processRunId, IndexConstituentHistoryRefreshJobState.Interrupted, 0, 0, InterruptedMessage);
         }
         catch (InvalidOperationException ex)
         {
             MarkCompleted(workItem.JobId, IndexConstituentHistoryRefreshJobState.Failed, error: ex.Message);
+            await CompleteJournalForJobAsync(processRunId, IndexConstituentHistoryRefreshJobState.Failed, 0, 0, ex.Message);
         }
         catch (Exception ex)
         {
@@ -277,7 +298,42 @@ public sealed class IndexConstituentHistoryRefreshJobService : BackgroundService
                 workItem.MarketIndexId,
                 workItem.StockId);
             MarkCompleted(workItem.JobId, IndexConstituentHistoryRefreshJobState.Failed, error: GenericFailureMessage);
+            await CompleteJournalForJobAsync(processRunId, IndexConstituentHistoryRefreshJobState.Failed, 0, 0, GenericFailureMessage);
         }
+    }
+
+    private async Task CompleteJournalForJobAsync(
+        long processRunId,
+        IndexConstituentHistoryRefreshJobState state,
+        int importedPoints,
+        int deletedPoints,
+        string? error)
+    {
+        if (_processJournalService is null || processRunId <= 0)
+        {
+            return;
+        }
+
+        var status = state switch
+        {
+            IndexConstituentHistoryRefreshJobState.Succeeded => SystemProcessRunStatus.Succeeded,
+            IndexConstituentHistoryRefreshJobState.RateLimited => SystemProcessRunStatus.Deferred,
+            IndexConstituentHistoryRefreshJobState.Interrupted => SystemProcessRunStatus.Interrupted,
+            _ => SystemProcessRunStatus.Failed,
+        };
+
+        await _processJournalService.CompleteAsync(
+            processRunId,
+            status,
+            new UpdateSystemProcessRunRequest
+            {
+                ProcessedItems = 1,
+                SucceededItems = state == IndexConstituentHistoryRefreshJobState.Succeeded ? 1 : 0,
+                FailedItems = state is IndexConstituentHistoryRefreshJobState.Failed or IndexConstituentHistoryRefreshJobState.Interrupted ? 1 : 0,
+                ResultSummary = $"Импортировано {importedPoints}; удалено {deletedPoints}.",
+                ErrorSummary = error,
+            },
+            CancellationToken.None);
     }
 
     private bool TryMarkRunning(string jobId)

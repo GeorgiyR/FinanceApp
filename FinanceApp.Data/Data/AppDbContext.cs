@@ -467,6 +467,7 @@ public class AppDbContext : DbContext
     public DbSet<StockMetadataEnrichmentJob> StockMetadataEnrichmentJobs { get; set; } = null!;
     public DbSet<StockMetadataEnrichmentResult> StockMetadataEnrichmentResults { get; set; } = null!;
     public DbSet<StockMetadataIndustryMapping> StockMetadataIndustryMappings { get; set; } = null!;
+    public DbSet<SystemProcessRun> SystemProcessRuns { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -701,6 +702,33 @@ public class AppDbContext : DbContext
                 .WithMany()
                 .HasForeignKey(x => x.IndustryId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<SystemProcessRun>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.ProcessType).HasMaxLength(100);
+            entity.Property(x => x.DisplayName).HasMaxLength(200);
+            entity.Property(x => x.Status).HasConversion<string>().HasMaxLength(32);
+            entity.Property(x => x.Trigger).HasConversion<string>().HasMaxLength(32);
+            entity.Property(x => x.InitiatedByUserId).HasMaxLength(128);
+            entity.Property(x => x.CorrelationId).HasMaxLength(128);
+            entity.Property(x => x.ExternalRunKey).HasMaxLength(128);
+            entity.Property(x => x.InstanceId).HasMaxLength(128);
+            entity.Property(x => x.ResultSummary).HasMaxLength(1000);
+            entity.Property(x => x.ErrorSummary).HasMaxLength(1000);
+            entity.Property(x => x.LastProcessedEntity).HasMaxLength(256);
+            entity.Property(x => x.DetailsJson).HasMaxLength(4000);
+
+            entity.HasIndex(x => new { x.StartedAtUtc, x.Id })
+                .HasDatabaseName("IX_SystemProcessRuns_StartedAtUtc_Id");
+            entity.HasIndex(x => x.Status);
+            entity.HasIndex(x => new { x.ProcessType, x.QueuedAtUtc, x.Id })
+                .HasDatabaseName("IX_SystemProcessRuns_ProcessType_QueuedAtUtc_Id");
+            entity.HasIndex(x => x.CorrelationId);
+            entity.HasIndex(x => x.ExternalRunKey).IsUnique();
+            entity.HasIndex(x => new { x.CompletedAtUtc, x.UpdatedAtUtc, x.Id })
+                .HasDatabaseName("IX_SystemProcessRuns_ActiveLookup");
         });
 
         modelBuilder.Entity<CompanyFundamentalsSnapshot>(entity =>

@@ -192,6 +192,8 @@ builder.Services.Configure<CatalogFundamentalsRefreshJobOptions>(
     builder.Configuration.GetSection("CatalogFundamentalsRefreshJob"));
 builder.Services.Configure<StockMetadataEnrichmentOptions>(
     builder.Configuration.GetSection("StockMetadataEnrichment"));
+builder.Services.Configure<SystemProcessJournalOptions>(
+    builder.Configuration.GetSection("SystemProcessJournal"));
 builder.Services.AddScoped<ITechnicalAnalysisSourceResolver, TechnicalAnalysisSourceResolver>();
 builder.Services.AddScoped<IStockTechnicalAnalysisService, StockTechnicalAnalysisService>();
 builder.Services.AddSingleton<IStockMetadataCuratedSnapshotService, StockMetadataCuratedSnapshotService>();
@@ -201,6 +203,8 @@ builder.Services.AddSingleton<IStockMetadataEnrichmentService>(sp =>
     sp.GetRequiredService<StockMetadataEnrichmentService>());
 builder.Services.AddHostedService(sp => sp.GetRequiredService<StockMetadataEnrichmentService>());
 builder.Services.AddSingleton<ICatalogMaintenanceLeaseService, CatalogMaintenanceLeaseService>();
+builder.Services.AddSingleton<ISystemProcessJournalService, SystemProcessJournalService>();
+builder.Services.AddHostedService<SystemProcessJournalMaintenanceService>();
 builder.Services.AddSingleton<CatalogStockRefreshHostedService>();
 builder.Services.AddSingleton<ICatalogStockRefreshStatusService>(sp =>
     sp.GetRequiredService<CatalogStockRefreshHostedService>());

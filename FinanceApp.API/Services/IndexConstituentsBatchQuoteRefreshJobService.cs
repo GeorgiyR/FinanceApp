@@ -44,17 +44,20 @@ public sealed class IndexConstituentsBatchQuoteRefreshJobService
     private readonly IndexConstituentsBatchQuoteRefreshJobOptions _options;
     private readonly ILogger<IndexConstituentsBatchQuoteRefreshJobService> _logger;
     private readonly Func<TimeSpan, CancellationToken, Task> _delayAsync;
+    private readonly ISystemProcessJournalService? _processJournalService;
 
     public IndexConstituentsBatchQuoteRefreshJobService(
         IServiceScopeFactory scopeFactory,
         TimeProvider timeProvider,
         IOptions<IndexConstituentsBatchQuoteRefreshJobOptions> options,
         ILogger<IndexConstituentsBatchQuoteRefreshJobService> logger,
-        Func<TimeSpan, CancellationToken, Task>? delayAsync = null)
+        Func<TimeSpan, CancellationToken, Task>? delayAsync = null,
+        ISystemProcessJournalService? processJournalService = null)
     {
         _scopeFactory = scopeFactory;
         _timeProvider = timeProvider;
         _logger = logger;
+        _processJournalService = processJournalService;
         _delayAsync = delayAsync ?? ((delay, cancellationToken) => Task.Delay(delay, cancellationToken));
 
         var raw = options.Value;
@@ -200,6 +203,16 @@ public sealed class IndexConstituentsBatchQuoteRefreshJobService
             marketIndexId = e.MarketIndexId;
         }
 
+        var processRunId = await (_processJournalService?.CreateOrGetAsync(new CreateSystemProcessRunRequest
+        {
+            ProcessType = SystemProcessTypes.IndexConstituentsBatchQuoteRefresh,
+            Trigger = SystemProcessTrigger.Automatic,
+            ExternalRunKey = jobId,
+            CorrelationId = jobId,
+            InitialStatus = SystemProcessRunStatus.Running,
+            Details = new { MarketIndexId = marketIndexId, JobId = jobId },
+        }, stoppingToken) ?? Task.FromResult(0L));
+
         _logger.LogInformation(
             "Batch quote refresh started: jobId={JobId} indexId={IndexId}", jobId, marketIndexId);
 
@@ -215,6 +228,7 @@ public sealed class IndexConstituentsBatchQuoteRefreshJobService
             if (marketIndex is null)
             {
                 MarkCompleted(jobId, IndexConstituentsBatchQuoteRefreshJobState.Failed, error: "Индекс не найден.");
+                await CompleteJournalForJobAsync(processRunId, IndexConstituentsBatchQuoteRefreshJobState.Failed, 0, 0, new Counters(), "Индекс не найден.");
                 return;
             }
 
@@ -222,6 +236,7 @@ public sealed class IndexConstituentsBatchQuoteRefreshJobService
             {
                 MarkCompleted(jobId, IndexConstituentsBatchQuoteRefreshJobState.Failed,
                     error: "Нельзя обновлять цены для архивного индекса.");
+                await CompleteJournalForJobAsync(processRunId, IndexConstituentsBatchQuoteRefreshJobState.Failed, 0, 0, new Counters(), "Нельзя обновлять цены для архивного индекса.");
                 return;
             }
 
@@ -276,6 +291,15 @@ public sealed class IndexConstituentsBatchQuoteRefreshJobService
             MarkCompleted(jobId, IndexConstituentsBatchQuoteRefreshJobState.Succeeded,
                 processed: processed, total: total, counters: counters,
                 error: counters.RateLimitedSkipped > 0 ? RateLimitMessage : null);
+            await CompleteJournalForJobAsync(
+                processRunId,
+                counters.RateLimitedSkipped > 0
+                    ? IndexConstituentsBatchQuoteRefreshJobState.RateLimited
+                    : IndexConstituentsBatchQuoteRefreshJobState.Succeeded,
+                processed,
+                total,
+                counters,
+                counters.RateLimitedSkipped > 0 ? RateLimitMessage : null);
 
             _logger.LogInformation(
                 "Batch quote refresh completed: jobId={JobId} indexId={IndexId} total={Total} succeeded={Succeeded} delayed={Delayed} noEur={NoEur} staleRejected={StaleRejected} providerFailed={ProviderFailed} persistFailed={PersistFailed} rateLimited={RateLimited} rateLimitRetries={RateLimitRetries} rateLimitedSkipped={RateLimitedSkipped}",
@@ -287,6 +311,7 @@ public sealed class IndexConstituentsBatchQuoteRefreshJobService
         {
             MarkCompleted(jobId, IndexConstituentsBatchQuoteRefreshJobState.Interrupted,
                 error: InterruptedMessage);
+            await CompleteJournalForJobAsync(processRunId, IndexConstituentsBatchQuoteRefreshJobState.Interrupted, 0, 0, new Counters(), InterruptedMessage);
         }
         catch (Exception ex)
         {
@@ -294,7 +319,45 @@ public sealed class IndexConstituentsBatchQuoteRefreshJobService
                 "Unexpected failure in batch quote refresh job {JobId} (indexId={IndexId})", jobId, marketIndexId);
             MarkCompleted(jobId, IndexConstituentsBatchQuoteRefreshJobState.Failed,
                 error: GenericFailureMessage);
+            await CompleteJournalForJobAsync(processRunId, IndexConstituentsBatchQuoteRefreshJobState.Failed, 0, 0, new Counters(), GenericFailureMessage);
         }
+    }
+
+    private async Task CompleteJournalForJobAsync(
+        long processRunId,
+        IndexConstituentsBatchQuoteRefreshJobState state,
+        int processed,
+        int total,
+        Counters counters,
+        string? error)
+    {
+        if (_processJournalService is null || processRunId <= 0)
+        {
+            return;
+        }
+
+        var status = state switch
+        {
+            IndexConstituentsBatchQuoteRefreshJobState.Succeeded => SystemProcessRunStatus.Succeeded,
+            IndexConstituentsBatchQuoteRefreshJobState.RateLimited => SystemProcessRunStatus.CompletedWithErrors,
+            IndexConstituentsBatchQuoteRefreshJobState.Interrupted => SystemProcessRunStatus.Interrupted,
+            _ => SystemProcessRunStatus.Failed,
+        };
+
+        await _processJournalService.CompleteAsync(
+            processRunId,
+            status,
+            new UpdateSystemProcessRunRequest
+            {
+                TotalItems = total,
+                ProcessedItems = processed,
+                SucceededItems = counters.Succeeded,
+                FailedItems = counters.ProviderFailed + counters.PersistFailed + counters.RateLimitedSkipped,
+                SkippedItems = counters.NoEurConversion + counters.StaleRejected,
+                ResultSummary = $"Обработано {processed} из {total}; успешно {counters.Succeeded}; rate-limit {counters.RateLimited}.",
+                ErrorSummary = error,
+            },
+            CancellationToken.None);
     }
 
     private async Task ProcessSingleStockWithRetriesAsync(

@@ -19,4 +19,8 @@ describe('App market-indices route', () => {
     expect(appSource).toMatch(/path="\/help"[\s\S]*?<PrivateRoute>[\s\S]*?<HelpPage \/>/);
     expect(appSource).toMatch(/path="\/help\/:articleSlug"[\s\S]*?<PrivateRoute>[\s\S]*?<HelpPage \/>/);
   });
+
+  it('registers /system/processes inside PrivateRoute', () => {
+    expect(appSource).toMatch(/path="\/system\/processes"[\s\S]*?<PrivateRoute>[\s\S]*?<SystemProcessRunsPage \/>/);
+  });
 });
