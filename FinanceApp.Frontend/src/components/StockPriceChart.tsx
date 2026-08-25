@@ -37,7 +37,6 @@ import type { HistoryChartPoint } from './stockPriceChartData';
 import {
   analyzeAdaptiveVolumeScale,
   formatVolumeTooltipValue,
-  getVolumeCadenceHint,
   toDisplayVolume,
 } from './stockVolumeScale';
 import { resolveVolumeBarSize } from './stockVolumeBarSize';
@@ -688,11 +687,6 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
         : formatCurrencyValue(volumeMetrics.turnover, volumeMetrics.turnoverCurrency),
     },
   ], [latestVolumePoint, volumeMetrics]);
-  const volumeCadenceHint = useMemo(
-    () => getVolumeCadenceHint(historyRange, historyResponse?.interval),
-    [historyRange, historyResponse?.interval],
-  );
-  const isRobustFrankfurtLongRangeMode = volumeScale.activationReason === 'deterministicFrankfurtLongRange';
   const renderXAxis = (hide = false) => (
     historyRange === '1w' ? (
       <XAxis
@@ -1034,22 +1028,6 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
                   Объём и активность торгов
                 </Text>
               </div>
-              {volumeCadenceHint != null && (
-                <div style={{ marginTop: 4 }}>
-                  <Text type="secondary" style={{ fontSize: 16 }}>
-                    {volumeCadenceHint}
-                  </Text>
-                </div>
-              )}
-              {volumeScale.adaptiveScaleActive && (
-                <div style={{ marginTop: 6 }}>
-                  <Text type="secondary" style={{ fontSize: 16 }}>
-                    {isRobustFrankfurtLongRangeMode
-                      ? 'Робастная шкала объёма: для долгого диапазона Frankfurt крупные выбросы визуально ограничены.'
-                      : 'Адаптивная шкала объёма: крупные выбросы визуально ограничены.'}
-                  </Text>
-                </div>
-              )}
               <div
                 style={{
                   display: 'grid',

@@ -67,7 +67,7 @@ describe('StockPriceChart volume scaling behavior', () => {
     vi.clearAllMocks();
   });
 
-  it('shows Frankfurt robust-scale and weekly cadence explanation for 1y weekly volume', async () => {
+  it('renders Frankfurt 1y volume section without no-volume fallback', async () => {
     vi.mocked(api.getStockHistory).mockResolvedValueOnce({
       data: makeResponse('1y', '1wk', [120, 160, 200, 300, 42000]),
     } as never);
@@ -75,8 +75,8 @@ describe('StockPriceChart volume scaling behavior', () => {
     render(<StockPriceChart panelId="p1" stockId={1} ticker="AMD" name="AMD Frankfurt" exchange="Frankfurt" providerSymbol="AMD.F" />);
     await waitFor(() => expect(vi.mocked(api.getStockHistory)).toHaveBeenCalled());
 
-    expect(screen.getByText('Робастная шкала объёма: для долгого диапазона Frankfurt крупные выбросы визуально ограничены.')).toBeInTheDocument();
-    expect(screen.getByText('Объём по недельным свечам.')).toBeInTheDocument();
+    expect(screen.getByText('Объём и активность торгов')).toBeInTheDocument();
+    expect(screen.queryByText('Поставщик не предоставил данные об объёме')).not.toBeInTheDocument();
   });
 
   it('renders explicit no-volume message when provider returned no positive finite volumes', async () => {
@@ -90,7 +90,7 @@ describe('StockPriceChart volume scaling behavior', () => {
     expect(screen.getByText('Поставщик не предоставил данные об объёме')).toBeInTheDocument();
   });
 
-  it('uses interval-aware monthly cadence text for 3y and 5y ranges', async () => {
+  it('keeps positive-volume rendering for 3y and 5y ranges', async () => {
     const user = userEvent.setup();
     vi.mocked(api.getStockHistory).mockImplementation(async (_stockId: number, range: string) => {
       if (range === '3y') {
@@ -104,14 +104,14 @@ describe('StockPriceChart volume scaling behavior', () => {
 
     render(<StockPriceChart panelId="p3" stockId={3} ticker="BAS" name="BASF" exchange="Frankfurt" providerSymbol="BAS.F" />);
     await waitFor(() => expect(vi.mocked(api.getStockHistory)).toHaveBeenCalledWith(3, '1y'));
-    expect(screen.getByText('Объём по недельным свечам.')).toBeInTheDocument();
+    expect(screen.queryByText('Поставщик не предоставил данные об объёме')).not.toBeInTheDocument();
 
     await user.click(screen.getByText('3 года'));
     await waitFor(() => expect(vi.mocked(api.getStockHistory)).toHaveBeenCalledWith(3, '3y'));
-    expect(screen.getByText('Объём по месячным свечам.')).toBeInTheDocument();
+    expect(screen.queryByText('Поставщик не предоставил данные об объёме')).not.toBeInTheDocument();
 
     await user.click(screen.getByText('5 лет'));
     await waitFor(() => expect(vi.mocked(api.getStockHistory)).toHaveBeenCalledWith(3, '5y'));
-    expect(screen.getByText('Объём по месячным свечам.')).toBeInTheDocument();
+    expect(screen.queryByText('Поставщик не предоставил данные об объёме')).not.toBeInTheDocument();
   });
 });

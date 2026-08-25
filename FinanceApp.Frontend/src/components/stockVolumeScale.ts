@@ -25,6 +25,20 @@ const isFiniteNumber = (value: unknown): value is number =>
 const toPositiveFiniteVolumes = (volumes: Array<number | null | undefined>): number[] =>
   volumes.filter((value): value is number => isFiniteNumber(value) && value > 0);
 
+const getCadenceFromInterval = (interval: string | null | undefined): 'weekly' | 'monthly' | null => {
+  if (!interval) {
+    return null;
+  }
+  const normalized = interval.trim().toLowerCase();
+  if (normalized.includes('wk') || normalized.includes('week')) {
+    return 'weekly';
+  }
+  if (normalized.includes('mo') || normalized.includes('month')) {
+    return 'monthly';
+  }
+  return null;
+};
+
 const lowerQuantile = (sorted: number[], percentile: number): number => {
   if (sorted.length === 0) {
     return 0;
@@ -226,38 +240,4 @@ export const formatVolumeTooltipValue = (actualVolume: number, volumeCapped: boo
   return volumeCapped
     ? `${volumeText} (выброс; визуально ограничен)`
     : volumeText;
-};
-
-const getCadenceFromInterval = (interval: string | null | undefined): 'weekly' | 'monthly' | null => {
-  if (!interval) {
-    return null;
-  }
-  const normalized = interval.trim().toLowerCase();
-  if (normalized.includes('wk') || normalized.includes('week')) {
-    return 'weekly';
-  }
-  if (normalized.includes('mo') || normalized.includes('month')) {
-    return 'monthly';
-  }
-  return null;
-};
-
-export const getVolumeCadenceHint = (
-  historyRange: StockHistoryRange,
-  interval: string | null | undefined,
-): string | null => {
-  if (historyRange !== '1y' && historyRange !== '3y' && historyRange !== '5y') {
-    return null;
-  }
-  const intervalCadence = getCadenceFromInterval(interval);
-  if (intervalCadence === 'weekly') {
-    return 'Объём по недельным свечам.';
-  }
-  if (intervalCadence === 'monthly') {
-    return 'Объём по месячным свечам.';
-  }
-  if (historyRange === '1y') {
-    return 'Объём по недельным свечам.';
-  }
-  return 'Объём по месячным свечам.';
 };
