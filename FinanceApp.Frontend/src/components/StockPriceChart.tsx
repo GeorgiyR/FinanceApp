@@ -72,7 +72,7 @@ const COLOR_POSITIVE = '#389e0d';
 const COLOR_NEGATIVE = '#cf1322';
 const COLOR_PRIMARY = '#1677ff';
 const COLOR_SECONDARY_TEXT = '#8c8c8c';
-const COLOR_VOLUME = '#91caff';
+const COLOR_VOLUME = '#4096ff';
 export const RANGE_BOUND_COLOR = COLOR_SECONDARY_TEXT;
 export const DAY_RANGE_ARROW_TEXT = ' → ';
 export const BASELINE_BLOCK_STYLE = { marginLeft: 'auto', textAlign: 'right' } as const;
@@ -528,8 +528,12 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
   );
 
   const volumeScale = useMemo(
-    () => analyzeAdaptiveVolumeScale(exchange, historyChartData.map((point) => point.volumeChart)),
-    [exchange, historyChartData],
+    () => analyzeAdaptiveVolumeScale(
+      exchange,
+      historyChartData.map((point) => point.volumeChart),
+      { historyRange, interval: historyResponse?.interval },
+    ),
+    [exchange, historyChartData, historyRange, historyResponse?.interval],
   );
 
   const historyChartDataWithVolumeDisplay = useMemo(
@@ -661,6 +665,7 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
     () => getVolumeCadenceHint(historyRange, historyResponse?.interval),
     [historyRange, historyResponse?.interval],
   );
+  const isRobustFrankfurtLongRangeMode = volumeScale.activationReason === 'deterministicFrankfurtLongRange';
   const renderXAxis = (hide = false) => (
     historyRange === '1w' ? (
       <XAxis
@@ -1002,7 +1007,9 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
               {volumeScale.adaptiveScaleActive && (
                 <div style={{ marginTop: 6 }}>
                   <Text type="secondary" style={{ fontSize: 16 }}>
-                    Адаптивная шкала объёма: крупные выбросы визуально ограничены.
+                    {isRobustFrankfurtLongRangeMode
+                      ? 'Робастная шкала объёма: для долгого диапазона Frankfurt крупные выбросы визуально ограничены.'
+                      : 'Адаптивная шкала объёма: крупные выбросы визуально ограничены.'}
                   </Text>
                 </div>
               )}
@@ -1090,7 +1097,7 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
               </LineChart>
             </ResponsiveContainer>
           </div>
-          <div style={{ width: '100%', height: 128 }}>
+          <div style={{ width: '100%', height: 168 }}>
             {!volumeScale.hasPositiveFiniteVolume ? (
               <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Поставщик не предоставил данные об объёме" />
             ) : (
@@ -1141,8 +1148,10 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
                     dataKey="volumeDisplay"
                     name="Объём"
                     fill={COLOR_VOLUME}
+                    fillOpacity={0.9}
                     isAnimationActive={false}
-                    minPointSize={volumeScale.adaptiveScaleActive ? 2 : 0}
+                    maxBarSize={18}
+                    minPointSize={volumeScale.adaptiveScaleActive ? 3 : 1}
                   >
                     {displayHistoryChartData.map((entry, index) => (
                       <Cell

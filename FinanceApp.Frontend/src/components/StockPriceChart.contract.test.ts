@@ -46,6 +46,6 @@ describe('StockPriceChart history strategy contracts', () => {
     expect(source).toContain('dataKey="volumeDisplay"');
     expect(source).toContain('formatVolumeTooltipValue(payload.volumeChart, payload.volumeCapped === true)');
     expect(source).toContain('Поставщик не предоставил данные об объёме');
-    expect(source).toContain('minPointSize={volumeScale.adaptiveScaleActive ? 2 : 0}');
+    expect(source).toContain('minPointSize={volumeScale.adaptiveScaleActive ? 3 : 1}');
   });
 });
