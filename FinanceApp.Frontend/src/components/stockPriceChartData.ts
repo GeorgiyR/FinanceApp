@@ -20,6 +20,8 @@ export type HistoryChartPoint = {
   closeChart: number | null;
   rawClose: number;
   volumeChart: number | null;
+  volumeDisplay?: number | null;
+  volumeCapped?: boolean;
   isQuoteDerived?: boolean;
   isGapMarker?: boolean;
   chartIndex?: number;
@@ -71,6 +73,8 @@ export const buildHistoryChartData = (
       closeChart: point.closeEur ?? point.closeNormalized,
       rawClose: point.closeRaw,
       volumeChart: point.volume,
+      volumeDisplay: point.volume,
+      volumeCapped: false,
       isQuoteDerived: point.isQuoteDerived ?? false,
     }))
     .sort((left, right) => left.timestampMs - right.timestampMs);
@@ -102,6 +106,8 @@ export const buildHistoryChartData = (
         closeChart: overlayClose,
         rawClose: currentQuoteOverlay?.rawClose ?? overlayClose,
         volumeChart: null,
+        volumeDisplay: null,
+        volumeCapped: false,
         isQuoteDerived: false,
       });
     }
@@ -129,6 +135,8 @@ export const buildHistoryChartData = (
         closeChart: null,
         rawClose: previousPoint.rawClose,
         volumeChart: null,
+        volumeDisplay: null,
+        volumeCapped: false,
         isGapMarker: true,
       });
     }
