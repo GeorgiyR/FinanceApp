@@ -93,6 +93,11 @@ public class StockHistoryService : IStockHistoryService
             throw new InvalidOperationException("Stock ticker and exchange must be valid before refreshing history.");
         }
 
+        var requestedTicker = stock.Ticker.Trim();
+        var requestedExchange = StockExchanges.TryNormalize(stock.Exchange, out var normalizedRequestedExchange)
+            ? normalizedRequestedExchange
+            : stock.Exchange.Trim();
+
         var stockLock = StockRefreshLocks.GetOrAdd(stock.Id, static _ => new SemaphoreSlim(1, 1));
         await stockLock.WaitAsync(cancellationToken);
         try
@@ -118,6 +123,27 @@ public class StockHistoryService : IStockHistoryService
 
             persisted.Exchange = normalizedExchange;
             EnsureCadenceDefault(persisted);
+
+            if (!string.Equals(persisted.Ticker, requestedTicker, StringComparison.Ordinal)
+                || !string.Equals(persisted.Exchange, requestedExchange, StringComparison.Ordinal))
+            {
+                _logger.LogInformation(
+                    "Skipping history refresh for stock {StockId}: listing changed during concurrent operation. Requested={RequestedTicker}/{RequestedExchange} Persisted={PersistedTicker}/{PersistedExchange}",
+                    persisted.Id,
+                    requestedTicker,
+                    requestedExchange,
+                    persisted.Ticker,
+                    persisted.Exchange);
+                return new StockHistoryRefreshResponse
+                {
+                    StockId = persisted.Id,
+                    DeletedPoints = 0,
+                    ImportedPoints = 0,
+                    RateLimited = false,
+                    SkippedNotDue = true,
+                    NextDueAtUtc = ComputeNextDueAtUtc(persisted, _timeProvider.GetUtcNow().UtcDateTime),
+                };
+            }
 
             var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
             var hasHistory = await _dbContext.StockHistoricalPrices
@@ -167,6 +193,30 @@ public class StockHistoryService : IStockHistoryService
 
             var batches = BuildPersistenceBatches(persisted, fetchResult.Batches, nowUtc);
             var importedPoints = batches.Sum(batch => batch.Batch.Candles.Count);
+            var listingStillCurrent = await _dbContext.Stocks
+                .AsNoTracking()
+                .AnyAsync(
+                    x => x.Id == persisted.Id
+                         && x.Ticker == requestedTicker
+                         && x.Exchange == requestedExchange,
+                    cancellationToken);
+            if (!listingStillCurrent)
+            {
+                _logger.LogInformation(
+                    "Skipping history persistence for stock {StockId}: listing changed before save. Requested={RequestedTicker}/{RequestedExchange}",
+                    persisted.Id,
+                    requestedTicker,
+                    requestedExchange);
+                return new StockHistoryRefreshResponse
+                {
+                    StockId = persisted.Id,
+                    DeletedPoints = 0,
+                    ImportedPoints = 0,
+                    RateLimited = false,
+                    SkippedNotDue = true,
+                    NextDueAtUtc = ComputeNextDueAtUtc(persisted, nowUtc),
+                };
+            }
             if (IsFrankfurtExchange(persisted.Exchange))
             {
                 var aggregateBatches = batches

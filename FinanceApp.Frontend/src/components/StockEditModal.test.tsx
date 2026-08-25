@@ -153,10 +153,10 @@ describe('StockEditModal helpers', () => {
 });
 
 describe('StockEditModal source contracts', () => {
-  it('keeps ticker and exchange immutable in edit mode with helper text', () => {
+  it('keeps ticker and exchange immutable in edit mode by default with explicit unlock action', () => {
     expect(modalSource).toContain("extra={mode === 'edit' ? IDENTITY_IMMUTABLE_HELPER : undefined}");
-    expect(modalSource).toContain('<Input placeholder="AAPL" disabled={mode === \'edit\'} />');
-    expect(modalSource).toContain('<Select options={exchangeOptions} disabled={mode === \'edit\'} />');
+    expect(modalSource).toContain("disabled={mode === 'edit' && !identityEditingEnabled}");
+    expect(modalSource).toContain('Изменить тикер / биржу');
   });
 
   it('shows loading state and submission lock inside the reusable modal', () => {

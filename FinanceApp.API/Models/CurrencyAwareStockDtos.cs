@@ -258,3 +258,52 @@ public sealed class UpdateStockMetadataRequest
     public int? IndustryId { get; init; }
     public List<int>? MarketIndexIds { get; init; }
 }
+
+public sealed class UpdateStockIdentityRequest
+{
+    public string Ticker { get; init; } = string.Empty;
+    public string Exchange { get; init; } = string.Empty;
+    public string ConfirmationText { get; init; } = string.Empty;
+    public bool RetainProviderSymbol { get; init; }
+}
+
+public sealed class StockIdentityChangeResponse
+{
+    public int StockId { get; init; }
+    public string OldTicker { get; init; } = string.Empty;
+    public string OldExchange { get; init; } = string.Empty;
+    public string NewTicker { get; init; } = string.Empty;
+    public string NewExchange { get; init; } = string.Empty;
+    public bool IdentityChanged { get; init; }
+    public int ClearedHistoryRows { get; init; }
+    public bool ClearedFundamentalsSnapshot { get; init; }
+    public int ClearedEnrichmentResultRows { get; init; }
+    public bool RefreshScheduled { get; init; }
+    public string? RefreshWarning { get; init; }
+}
+
+public sealed class DeleteStockPermanentRequest
+{
+    public string ConfirmationText { get; init; } = string.Empty;
+}
+
+public sealed class StockDependencyBlockerResponse
+{
+    public string Category { get; init; } = string.Empty;
+    public string DisplayName { get; init; } = string.Empty;
+    public int Count { get; init; }
+    public IReadOnlyList<string> RelatedNames { get; init; } = Array.Empty<string>();
+}
+
+public sealed class StockDependencyDiagnosticsResponse
+{
+    public int StockId { get; init; }
+    public bool HasBlockers { get; init; }
+    public IReadOnlyList<StockDependencyBlockerResponse> Blockers { get; init; } = Array.Empty<StockDependencyBlockerResponse>();
+}
+
+public sealed class StockMutationBlockedResponse
+{
+    public string Message { get; init; } = string.Empty;
+    public StockDependencyDiagnosticsResponse Diagnostics { get; init; } = new();
+}

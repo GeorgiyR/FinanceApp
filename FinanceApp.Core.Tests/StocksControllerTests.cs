@@ -480,6 +480,243 @@ public class StocksControllerTests
         Assert.IsType<NotFoundResult>(result);
     }
 
+    [Fact]
+    public async Task UpdateIdentity_UnchangedNormalizedIdentity_ReturnsNoOpAndKeepsHistory()
+    {
+        await using var context = CreateContext();
+        var stock = new Stock
+        {
+            Id = 981,
+            Ticker = "AAPL",
+            Name = "Apple",
+            CommonName = "Apple",
+            Exchange = StockExchanges.Nyse,
+            CurrentPrice = 100m,
+            UpdatedAt = DateTime.UtcNow,
+        };
+        context.Stocks.Add(stock);
+        context.StockHistoricalPrices.Add(new StockHistoricalPrice
+        {
+            StockId = stock.Id,
+            Interval = "1d",
+            Timestamp = DateTime.UtcNow.Date,
+            Open = 1m,
+            High = 1m,
+            Low = 1m,
+            Close = 1m,
+        });
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context);
+        var result = await controller.UpdateIdentity(stock.Id, new UpdateStockIdentityRequest
+        {
+            Ticker = " aapl ",
+            Exchange = " nyse ",
+            ConfirmationText = "ignored",
+        });
+
+        var ok = Assert.IsType<OkObjectResult>(result.Result);
+        var payload = Assert.IsType<StockIdentityChangeResponse>(ok.Value);
+        Assert.False(payload.IdentityChanged);
+        Assert.Equal(1, await context.StockHistoricalPrices.CountAsync(x => x.StockId == stock.Id));
+    }
+
+    [Fact]
+    public async Task UpdateIdentity_WithPortfolioDependency_ReturnsStructuredConflict()
+    {
+        await using var context = CreateContext();
+        var user = new User { Id = 201, Username = "u", Email = "u@example.com", PasswordHash = "hash", CreatedAt = DateTime.UtcNow };
+        var portfolio = new Portfolio { Id = 202, Name = "Main", UserId = user.Id, User = user, CreatedAt = DateTime.UtcNow };
+        var stock = new Stock
+        {
+            Id = 203,
+            Ticker = "AAPL",
+            Name = "Apple",
+            CommonName = "Apple",
+            Exchange = StockExchanges.Nyse,
+            CurrentPrice = 100m,
+            UpdatedAt = DateTime.UtcNow,
+        };
+        context.Users.Add(user);
+        context.Portfolios.Add(portfolio);
+        context.Stocks.Add(stock);
+        context.PortfolioItems.Add(new PortfolioItem
+        {
+            PortfolioId = portfolio.Id,
+            Portfolio = portfolio,
+            StockId = stock.Id,
+            Stock = stock,
+            Quantity = 1,
+            BuyPrice = 100m,
+            BoughtAt = DateTime.UtcNow,
+        });
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context);
+        var transition = "AAPL (NYSE) → AAPLX (NASDAQ)";
+        var result = await controller.UpdateIdentity(stock.Id, new UpdateStockIdentityRequest
+        {
+            Ticker = "AAPLX",
+            Exchange = StockExchanges.Nasdaq,
+            ConfirmationText = transition,
+        });
+
+        var conflict = Assert.IsType<ConflictObjectResult>(result.Result);
+        var payload = Assert.IsType<StockMutationBlockedResponse>(conflict.Value);
+        Assert.Contains(payload.Diagnostics.Blockers, b => b.Category == "portfolioItems");
+    }
+
+    [Fact]
+    public async Task UpdateIdentity_Success_ClearsDerivedDataAndResetsProviderSymbol()
+    {
+        await using var context = CreateContext();
+        var stock = new Stock
+        {
+            Id = 310,
+            Ticker = "WPM",
+            Name = "WPM",
+            CommonName = "WPM",
+            Exchange = StockExchanges.Nyse,
+            CurrentPrice = 50m,
+            ProviderSymbol = "WPM",
+            CurrentPriceAt = DateTime.UtcNow,
+            CurrentPriceChange = 1m,
+            CurrentPriceChangePercent = 2m,
+            CurrentPriceIsDelayed = true,
+            CurrentPriceDelayWarning = "delay",
+            UpdatedAt = DateTime.UtcNow,
+        };
+        context.Stocks.Add(stock);
+        context.StockHistoricalPrices.Add(new StockHistoricalPrice
+        {
+            StockId = stock.Id,
+            Interval = "1d",
+            Timestamp = DateTime.UtcNow.Date,
+            Open = 10,
+            High = 11,
+            Low = 9,
+            Close = 10,
+        });
+        context.FundamentalsSnapshots.Add(new CompanyFundamentalsSnapshot
+        {
+            StockId = stock.Id,
+            SourceSymbol = "WPM",
+            FetchedAtUtc = DateTime.UtcNow,
+        });
+        context.StockMetadataEnrichmentResults.Add(new StockMetadataEnrichmentResult
+        {
+            JobId = Guid.NewGuid(),
+            StockId = stock.Id,
+            CreatedAtUtc = DateTime.UtcNow,
+            UpdatedAtUtc = DateTime.UtcNow,
+        });
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context);
+        var transition = "WPM (NYSE) → WPM (NASDAQ)";
+        var result = await controller.UpdateIdentity(stock.Id, new UpdateStockIdentityRequest
+        {
+            Ticker = "WPM",
+            Exchange = StockExchanges.Nasdaq,
+            ConfirmationText = transition,
+            RetainProviderSymbol = false,
+        });
+
+        var ok = Assert.IsType<OkObjectResult>(result.Result);
+        var payload = Assert.IsType<StockIdentityChangeResponse>(ok.Value);
+        Assert.True(payload.IdentityChanged);
+        var persisted = await context.Stocks.SingleAsync(x => x.Id == stock.Id);
+        Assert.Equal(StockExchanges.Nasdaq, persisted.Exchange);
+        Assert.Null(persisted.ProviderSymbol);
+        Assert.Equal(0m, persisted.CurrentPrice);
+        Assert.Equal(0, await context.StockHistoricalPrices.CountAsync(x => x.StockId == stock.Id));
+        Assert.Equal(0, await context.FundamentalsSnapshots.CountAsync(x => x.StockId == stock.Id));
+        Assert.Equal(0, await context.StockMetadataEnrichmentResults.CountAsync(x => x.StockId == stock.Id));
+    }
+
+    [Fact]
+    public async Task DeletePermanent_WithDependencies_ReturnsStructuredConflict()
+    {
+        await using var context = CreateContext();
+        var user = new User { Id = 401, Username = "u1", Email = "u1@example.com", PasswordHash = "hash", CreatedAt = DateTime.UtcNow };
+        var portfolio = new Portfolio { Id = 402, Name = "Main", UserId = user.Id, User = user, CreatedAt = DateTime.UtcNow };
+        var stock = new Stock
+        {
+            Id = 403,
+            Ticker = "ABCD",
+            Name = "ABCD",
+            CommonName = "ABCD",
+            Exchange = StockExchanges.Nyse,
+            CurrentPrice = 1m,
+            UpdatedAt = DateTime.UtcNow,
+        };
+        context.Users.Add(user);
+        context.Portfolios.Add(portfolio);
+        context.Stocks.Add(stock);
+        context.Orders.Add(new Order
+        {
+            PortfolioId = portfolio.Id,
+            Portfolio = portfolio,
+            StockId = stock.Id,
+            Stock = stock,
+            Type = OrderType.Buy,
+            Quantity = 1,
+            Price = 1,
+            CreatedAt = DateTime.UtcNow,
+        });
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context);
+        var result = await controller.DeletePermanent(stock.Id, new DeleteStockPermanentRequest { ConfirmationText = stock.Ticker });
+
+        var conflict = Assert.IsType<ConflictObjectResult>(result);
+        var payload = Assert.IsType<StockMutationBlockedResponse>(conflict.Value);
+        Assert.Contains(payload.Diagnostics.Blockers, b => b.Category == "orders");
+        Assert.True(await context.Stocks.AnyAsync(x => x.Id == stock.Id));
+    }
+
+    [Fact]
+    public async Task DeletePermanent_UnreferencedStock_DeletesStockAndDerivedRows()
+    {
+        await using var context = CreateContext();
+        var stock = new Stock
+        {
+            Id = 501,
+            Ticker = "FREE",
+            Name = "Free",
+            CommonName = "Free",
+            Exchange = StockExchanges.Nyse,
+            CurrentPrice = 10m,
+            UpdatedAt = DateTime.UtcNow,
+        };
+        context.Stocks.Add(stock);
+        context.StockHistoricalPrices.Add(new StockHistoricalPrice
+        {
+            StockId = stock.Id,
+            Interval = "1d",
+            Timestamp = DateTime.UtcNow.Date,
+            Open = 1,
+            High = 1,
+            Low = 1,
+            Close = 1,
+        });
+        context.FundamentalsSnapshots.Add(new CompanyFundamentalsSnapshot
+        {
+            StockId = stock.Id,
+            SourceSymbol = "FREE",
+            FetchedAtUtc = DateTime.UtcNow,
+        });
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context);
+        var result = await controller.DeletePermanent(stock.Id, new DeleteStockPermanentRequest { ConfirmationText = "УДАЛИТЬ" });
+
+        Assert.IsType<NoContentResult>(result);
+        Assert.False(await context.Stocks.AnyAsync(x => x.Id == stock.Id));
+        Assert.Equal(0, await context.StockHistoricalPrices.CountAsync(x => x.StockId == stock.Id));
+        Assert.Equal(0, await context.FundamentalsSnapshots.CountAsync(x => x.StockId == stock.Id));
+    }
+
 
     [Fact]
     public async Task GetHistory_MissingStock_ReturnsNotFound()

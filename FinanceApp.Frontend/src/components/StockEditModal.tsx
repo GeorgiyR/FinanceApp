@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo } from 'react';
-import { Button, Form, Input, InputNumber, Modal, Select, Spin, Tag } from 'antd';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Alert, Button, Form, Input, InputNumber, Modal, Select, Spin, Tag, Typography } from 'antd';
 import type { RuleObject } from 'antd/es/form';
 import type { StoreValue } from 'antd/es/form/interface';
 import { getMarketIndices, getSectors } from '../services/api';
@@ -26,6 +26,8 @@ export const exchangeOptions: { label: string; value: StockExchange }[] = [
 ];
 export const IDENTITY_IMMUTABLE_HELPER =
   'Тикер и биржа определяют инструмент и не могут быть изменены. Для другого тикера или биржи создайте новую акцию.';
+const IDENTITY_EDIT_WARNING =
+  'Изменение тикера/биржи меняет инструмент. История котировок, provider-данные и снапшоты будут очищены и загружены заново.';
 export const STOCK_MARKET_INDEX_SELECT_MODE = 'multiple';
 
 export type StockFormValues = {
@@ -264,7 +266,8 @@ type StockEditModalProps = {
   loading?: boolean;
   submitting?: boolean;
   onCancel: () => void;
-  onSubmit: (values: StockFormValues) => void | Promise<void>;
+  onSubmit: (values: StockFormValues, context: { identityEditingEnabled: boolean }) => void | Promise<void>;
+  onPermanentDelete?: () => void;
 };
 
 const StockEditModal: React.FC<StockEditModalProps> = ({
@@ -277,17 +280,21 @@ const StockEditModal: React.FC<StockEditModalProps> = ({
   submitting = false,
   onCancel,
   onSubmit,
+  onPermanentDelete,
 }) => {
   const [form] = Form.useForm<StockFormValues>();
+  const [identityEditingEnabled, setIdentityEditingEnabled] = useState(false);
   const selectedFormSectorId = Form.useWatch('sectorId', form) as number | undefined;
 
   useEffect(() => {
     if (!open) {
       form.resetFields();
+      setIdentityEditingEnabled(false);
       return;
     }
 
     form.setFieldsValue(buildStockFormValues(mode === 'edit' ? stock : null));
+    setIdentityEditingEnabled(false);
   }, [form, mode, open, stock]);
 
   const sectorOptions = useMemo(
@@ -332,7 +339,7 @@ const StockEditModal: React.FC<StockEditModalProps> = ({
           form={form}
           layout="vertical"
           initialValues={{ exchange: DEFAULT_STOCK_EXCHANGE }}
-          onFinish={onSubmit}
+          onFinish={(values) => onSubmit(values, { identityEditingEnabled })}
         >
           <Form.Item
             label="Тикер"
@@ -340,7 +347,7 @@ const StockEditModal: React.FC<StockEditModalProps> = ({
             rules={[{ required: true, message: 'Введите тикер' }]}
             extra={mode === 'edit' ? IDENTITY_IMMUTABLE_HELPER : undefined}
           >
-            <Input placeholder="AAPL" disabled={mode === 'edit'} />
+            <Input placeholder="AAPL" disabled={mode === 'edit' && !identityEditingEnabled} />
           </Form.Item>
           <Form.Item
             label="Название"
@@ -361,8 +368,41 @@ const StockEditModal: React.FC<StockEditModalProps> = ({
             name="exchange"
             rules={[{ required: true, message: 'Выберите биржу' }]}
           >
-            <Select options={exchangeOptions} disabled={mode === 'edit'} />
+            <Select options={exchangeOptions} disabled={mode === 'edit' && !identityEditingEnabled} />
           </Form.Item>
+          {mode === 'edit' && (
+            <Form.Item>
+              {!identityEditingEnabled ? (
+                <Button
+                  block
+                  onClick={() => {
+                    Modal.confirm({
+                      title: 'Изменить тикер / биржу',
+                      content: (
+                        <Alert
+                          type="warning"
+                          showIcon
+                          message={IDENTITY_EDIT_WARNING}
+                        />
+                      ),
+                      okText: 'Подтвердить',
+                      cancelText: 'Отмена',
+                      onOk: () => setIdentityEditingEnabled(true),
+                    });
+                  }}
+                >
+                  Изменить тикер / биржу
+                </Button>
+              ) : (
+                <Alert
+                  type="warning"
+                  showIcon
+                  message="Режим коррекции идентичности включён"
+                  description={IDENTITY_EDIT_WARNING}
+                />
+              )}
+            </Form.Item>
+          )}
           <Form.Item label="Сектор" name="sectorId">
             <Select
               allowClear
@@ -447,6 +487,16 @@ const StockEditModal: React.FC<StockEditModalProps> = ({
               {mode === 'edit' ? 'Сохранить' : 'Добавить'}
             </Button>
           </Form.Item>
+          {mode === 'edit' && onPermanentDelete && (
+            <Form.Item style={{ marginBottom: 0 }}>
+              <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
+                Необратимо удаляет акцию и технические данные. Бизнес-ссылки блокируют удаление.
+              </Typography.Text>
+              <Button danger block onClick={onPermanentDelete}>
+                Удалить акцию полностью
+              </Button>
+            </Form.Item>
+          )}
         </Form>
       )}
     </Modal>
