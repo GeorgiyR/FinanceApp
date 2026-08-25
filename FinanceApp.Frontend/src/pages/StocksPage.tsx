@@ -70,6 +70,27 @@ import { formatCurrency as fmtCur, formatPercent } from '../utils/currency';
 import { STOCK_HISTORY_RANGE_OPTIONS } from '../components/historyRangeOptions';
 import { formatPerformance } from '../components/performanceHelpers';
 import type { PerformanceMap } from '../components/performanceHelpers';
+import AdvancedStockFiltersDrawer from '../components/stock-filters/AdvancedStockFiltersDrawer';
+import AdvancedStockFilterToolbarControls from '../components/stock-filters/AdvancedStockFilterToolbarControls';
+import {
+  buildIndustryToSectorMap,
+  matchesStockAdvancedFilters,
+} from '../components/stock-filters/stockFilterEngine';
+import {
+  areAdvancedStockFiltersEqual,
+  countActiveAdvancedFilterGroups,
+  EMPTY_ADVANCED_STOCK_FILTERS,
+  normalizeAdvancedStockFilters,
+  type AdvancedStockFilters,
+} from '../components/stock-filters/stockFilterModel';
+import {
+  getActiveSectorOptions,
+  getIndustryOptionsForSelectedSectors,
+  normalizeAdvancedStockFiltersWithDirectory,
+  parseAdvancedStockFiltersFromSearchParams,
+  pruneInvalidIndustrySelections,
+  serializeAdvancedStockFiltersToSearchParams,
+} from '../components/stock-filters/stockFilterUrlState';
 
 export {
   buildCreateStockPayload,
@@ -310,6 +331,10 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
   const [catalogQuery, setCatalogQuery] = useState('');
   const [catalogSortMode, setCatalogSortMode] = useState<CatalogSortMode>(CATALOG_SORT_NAME_MODE);
   const [catalogSortDirection, setCatalogSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [catalogAdvancedFilters, setCatalogAdvancedFilters] = useState<AdvancedStockFilters>(EMPTY_ADVANCED_STOCK_FILTERS);
+  const [catalogAdvancedDraft, setCatalogAdvancedDraft] = useState<AdvancedStockFilters>(EMPTY_ADVANCED_STOCK_FILTERS);
+  const [catalogFiltersOpen, setCatalogFiltersOpen] = useState(false);
+  const [catalogUrlSearch, setCatalogUrlSearch] = useState(() => window.location.search);
   const [performanceMap, setPerformanceMap] = useState<PerformanceMap>(new Map());
   const [performanceLoading, setPerformanceLoading] = useState(false);
   const [performanceError, setPerformanceError] = useState<string | null>(null);
@@ -331,6 +356,16 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
     return ids;
   }, [portfolios]);
   const marketIndexNameById = useMemo(() => new Map<number, string>(marketIndices.map((idx) => [idx.id, idx.name])), [marketIndices]);
+  const industryToSectorMap = useMemo(() => buildIndustryToSectorMap(sectors), [sectors]);
+  const sectorFilterOptions = useMemo(() => getActiveSectorOptions(sectors), [sectors]);
+  const industryFilterOptions = useMemo(
+    () => getIndustryOptionsForSelectedSectors(sectors, catalogAdvancedDraft.sectorIds),
+    [catalogAdvancedDraft.sectorIds, sectors],
+  );
+  const activeAdvancedFilterGroups = useMemo(
+    () => countActiveAdvancedFilterGroups(catalogAdvancedFilters),
+    [catalogAdvancedFilters],
+  );
   const filteredStocks = useMemo(() => {
     if (!isCatalogMode) {
       return stocks;
@@ -351,9 +386,12 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
             || indexNames.includes(query);
         });
 
+    const filteredByAdvanced = base.filter((stock) =>
+      matchesStockAdvancedFilters(stock, catalogAdvancedFilters, industryToSectorMap));
+
     if (isCatalogPeriodSortMode(catalogSortMode)) {
       const dir = catalogSortDirection === 'asc' ? 1 : -1;
-      return [...base].sort((a, b) => {
+      return [...filteredByAdvanced].sort((a, b) => {
         const pa = performanceMap.get(a.id) ?? null;
         const pb = performanceMap.get(b.id) ?? null;
         const aHas = pa != null;
@@ -371,13 +409,23 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
       });
     }
 
-    return [...base].sort((a, b) => {
+    return [...filteredByAdvanced].sort((a, b) => {
       const nameA = (a.commonName || a.name || '').trim();
       const nameB = (b.commonName || b.name || '').trim();
       const cmp = nameA.localeCompare(nameB, undefined, { sensitivity: 'base' });
       return cmp !== 0 ? cmp : a.ticker.localeCompare(b.ticker, undefined, { sensitivity: 'base' });
     });
-  }, [catalogQuery, catalogSortMode, catalogSortDirection, performanceMap, isCatalogMode, marketIndexNameById, stocks]);
+  }, [
+    catalogAdvancedFilters,
+    catalogQuery,
+    catalogSortMode,
+    catalogSortDirection,
+    industryToSectorMap,
+    performanceMap,
+    isCatalogMode,
+    marketIndexNameById,
+    stocks,
+  ]);
   const { portfolioGroup, fraGroup, nyseGroup } = useMemo(
     () => groupStocks(filteredStocks, portfolioStockIds),
     [filteredStocks, portfolioStockIds],
@@ -453,6 +501,116 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
   const handleCatalogSortDirectionToggle = useCallback(() => {
     setCatalogSortDirection((prev) => (prev === 'desc' ? 'asc' : 'desc'));
   }, []);
+
+  useEffect(() => {
+    const onPopState = () => setCatalogUrlSearch(window.location.search);
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  useEffect(() => {
+    if (!isCatalogMode) {
+      return;
+    }
+
+    const parsed = parseAdvancedStockFiltersFromSearchParams(new URLSearchParams(catalogUrlSearch));
+    const normalized = normalizeAdvancedStockFiltersWithDirectory(parsed, sectors);
+    if (!areAdvancedStockFiltersEqual(catalogAdvancedFilters, normalized)) {
+      setCatalogAdvancedFilters(normalized);
+    }
+
+    const canonicalParams = serializeAdvancedStockFiltersToSearchParams(
+      new URLSearchParams(catalogUrlSearch),
+      normalized,
+    );
+    const canonicalSearch = canonicalParams.toString();
+    const currentSearch = new URLSearchParams(catalogUrlSearch).toString();
+
+    if (canonicalSearch !== currentSearch) {
+      const nextUrl = `${window.location.pathname}${canonicalSearch ? `?${canonicalSearch}` : ''}${window.location.hash}`;
+      window.history.replaceState(window.history.state, '', nextUrl);
+      setCatalogUrlSearch(window.location.search);
+    }
+  }, [catalogAdvancedFilters, catalogUrlSearch, isCatalogMode, sectors]);
+
+  useEffect(() => {
+    if (!isCatalogMode) {
+      return;
+    }
+
+    setCatalogPage(1);
+  }, [catalogAdvancedFilters, isCatalogMode]);
+
+  useEffect(() => {
+    if (!catalogFiltersOpen) {
+      return;
+    }
+
+    setCatalogAdvancedDraft((prev) => {
+      const normalized = normalizeAdvancedStockFilters(prev);
+      const nextIndustries = pruneInvalidIndustrySelections(normalized.industryIds, normalized.sectorIds, sectors);
+      if (nextIndustries.length === normalized.industryIds.length && nextIndustries.every((id, idx) => id === normalized.industryIds[idx])) {
+        return normalized;
+      }
+
+      return { ...normalized, industryIds: nextIndustries };
+    });
+  }, [catalogFiltersOpen, sectors]);
+
+  const commitCatalogFiltersToUrl = useCallback((nextFilters: AdvancedStockFilters, mode: 'push' | 'replace') => {
+    const base = new URLSearchParams(window.location.search);
+    const nextParams = serializeAdvancedStockFiltersToSearchParams(base, nextFilters);
+    const nextSearch = nextParams.toString();
+    const currentSearch = base.toString();
+    const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ''}${window.location.hash}`;
+
+    if (mode === 'push') {
+      if (currentSearch !== nextSearch) {
+        window.history.pushState(window.history.state, '', nextUrl);
+      }
+    } else if (currentSearch !== nextSearch) {
+      window.history.replaceState(window.history.state, '', nextUrl);
+    }
+
+    setCatalogUrlSearch(window.location.search);
+  }, []);
+
+  const handleCatalogAdvancedDraftChange = useCallback((next: AdvancedStockFilters) => {
+    const normalized = normalizeAdvancedStockFilters(next);
+    const nextIndustryIds = pruneInvalidIndustrySelections(normalized.industryIds, normalized.sectorIds, sectors);
+    setCatalogAdvancedDraft({ ...normalized, industryIds: nextIndustryIds });
+  }, [sectors]);
+
+  const openCatalogAdvancedFilters = useCallback(() => {
+    setCatalogAdvancedDraft(catalogAdvancedFilters);
+    setCatalogFiltersOpen(true);
+  }, [catalogAdvancedFilters]);
+
+  const closeCatalogAdvancedFilters = useCallback(() => {
+    setCatalogFiltersOpen(false);
+  }, []);
+
+  const applyCatalogAdvancedFilters = useCallback(() => {
+    const normalized = normalizeAdvancedStockFiltersWithDirectory(catalogAdvancedDraft, sectors);
+    setCatalogAdvancedFilters(normalized);
+    commitCatalogFiltersToUrl(normalized, 'push');
+    setCatalogPage(1);
+    setCatalogFiltersOpen(false);
+  }, [catalogAdvancedDraft, commitCatalogFiltersToUrl, sectors]);
+
+  const clearCatalogAdvancedDraft = useCallback(() => {
+    setCatalogAdvancedDraft(EMPTY_ADVANCED_STOCK_FILTERS);
+  }, []);
+
+  const resetCatalogAdvancedFilters = useCallback(() => {
+    if (activeAdvancedFilterGroups === 0) {
+      return;
+    }
+
+    setCatalogAdvancedFilters(EMPTY_ADVANCED_STOCK_FILTERS);
+    commitCatalogFiltersToUrl(EMPTY_ADVANCED_STOCK_FILTERS, 'push');
+    setCatalogPage(1);
+  }, [activeAdvancedFilterGroups, commitCatalogFiltersToUrl]);
 
   useEffect(() => {
     if (!isCatalogMode) return;
@@ -1148,6 +1306,12 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
                   allowClear
                   style={{ width: 320 }}
                 />
+                <AdvancedStockFilterToolbarControls
+                  activeGroupCount={activeAdvancedFilterGroups}
+                  onOpen={openCatalogAdvancedFilters}
+                  onReset={resetCatalogAdvancedFilters}
+                  resetDisabled={activeAdvancedFilterGroups === 0}
+                />
               </>
             )}
             <Button
@@ -1217,6 +1381,18 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
         open={fundamentalsStock !== null}
         onClose={() => setFundamentalsStock(null)}
       />
+      {isCatalogMode && (
+        <AdvancedStockFiltersDrawer
+          open={catalogFiltersOpen}
+          draftFilters={catalogAdvancedDraft}
+          sectorOptions={sectorFilterOptions}
+          industryOptions={industryFilterOptions}
+          onClose={closeCatalogAdvancedFilters}
+          onDraftChange={handleCatalogAdvancedDraftChange}
+          onClearDraft={clearCatalogAdvancedDraft}
+          onApply={applyCatalogAdvancedFilters}
+        />
+      )}
       <StockEditModal
         open={modalOpen}
         mode={editingStock ? 'edit' : 'create'}

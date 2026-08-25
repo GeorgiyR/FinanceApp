@@ -1127,8 +1127,64 @@ public class MarketIndicesControllerTests
         var payload = Assert.IsType<IndexConstituentsResponse>(ok.Value);
         var dto = Assert.Single(payload.Constituents, x => x.StockId == 5911);
 
+        Assert.Equal(501, dto.SectorId);
         Assert.Equal("Information Technology", dto.Sector);
+        Assert.Equal(601, dto.IndustryId);
         Assert.Equal("Software", dto.Industry);
+    }
+
+    [Fact]
+    public async Task GetConstituents_UsesStockSectorIdFallbackWhenIndustryMissing()
+    {
+        await using var context = await CreateSqliteContextAsync();
+        var now = DateTime.UtcNow;
+
+        var sector = new Sector
+        {
+            Id = 511,
+            Name = "Energy",
+            NormalizedName = "ENERGY",
+            IsArchived = false,
+            SortOrder = 0,
+            CreatedAtUtc = now,
+            UpdatedAtUtc = now
+        };
+        var stock = new Stock
+        {
+            Id = 5912,
+            Ticker = "XOM",
+            Name = "Exxon Mobil",
+            CommonName = "Exxon Mobil",
+            Exchange = StockExchanges.Nyse,
+            SectorId = sector.Id,
+            Sector = sector,
+            IndustryId = null,
+            Industry = null,
+            TrackingStatus = StockTrackingStatus.CatalogOnly,
+            UpdatedAt = now
+        };
+        context.Sectors.Add(sector);
+        context.Stocks.Add(stock);
+        context.StockMarketIndices.Add(new StockMarketIndex
+        {
+            StockId = stock.Id,
+            MarketIndexId = 1,
+            Source = "Test",
+            EffectiveFrom = now,
+            ImportedAt = now
+        });
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context);
+        var result = await controller.GetConstituents(1);
+        var ok = Assert.IsType<OkObjectResult>(result.Result);
+        var payload = Assert.IsType<IndexConstituentsResponse>(ok.Value);
+        var dto = Assert.Single(payload.Constituents, x => x.StockId == stock.Id);
+
+        Assert.Equal(sector.Id, dto.SectorId);
+        Assert.Equal("Energy", dto.Sector);
+        Assert.Null(dto.IndustryId);
+        Assert.Null(dto.Industry);
     }
 
     [Fact]

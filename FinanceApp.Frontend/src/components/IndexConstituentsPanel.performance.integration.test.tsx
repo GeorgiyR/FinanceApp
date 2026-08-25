@@ -4,6 +4,7 @@ import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import IndexConstituentsPanel from './IndexConstituentsPanel';
+import { loadStockMetadataLookups } from './StockEditModal';
 
 vi.mock('../services/api', () => ({
   getIndexConstituentHistory: vi.fn(),
@@ -68,6 +69,7 @@ const buildPerformanceResponse = (range: string, items: Array<{ stockId: number;
 describe('IndexConstituentsPanel 24h performance integration', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    window.history.replaceState({}, '', '/market-indices/1?tab=constituents');
     const api = await import('../services/api');
     vi.mocked(api.getIndexConstituents).mockResolvedValue(baseConstituentsResponse);
     vi.mocked(api.getIndexConstituentPerformance).mockResolvedValue(buildPerformanceResponse('24h', [
@@ -192,5 +194,86 @@ describe('IndexConstituentsPanel 24h performance integration', () => {
     await user.click(await screen.findByText('24 ч.'));
 
     await waitFor(() => expect(screen.getByText('Ошибка загрузки данных о росте')).toBeInTheDocument());
+  });
+
+  it('applies US advanced exchange filter for both NYSE and NASDAQ, then resets via back navigation', async () => {
+    const user = userEvent.setup();
+    const api = await import('../services/api');
+    vi.mocked(api.getIndexConstituents).mockResolvedValue({
+      data: {
+        ...baseConstituentsResponse.data,
+        constituents: [
+          { stockId: 1, ticker: 'FRA1', name: 'Frankfurt One', exchange: 'Frankfurt', trackingStatus: 'CatalogOnly', importedAt: '', sectorId: 1, industryId: 10 },
+          { stockId: 2, ticker: 'NYSE1', name: 'Nyse One', exchange: 'NYSE', trackingStatus: 'CatalogOnly', importedAt: '', sectorId: 2, industryId: 20 },
+          { stockId: 3, ticker: 'NAS1', name: 'Nasdaq One', exchange: 'NASDAQ', trackingStatus: 'CatalogOnly', importedAt: '', sectorId: 2, industryId: 20 },
+        ],
+      },
+    });
+    vi.mocked(loadStockMetadataLookups).mockResolvedValue({
+      sectors: [
+        {
+          id: 2,
+          name: 'Materials',
+          normalizedName: 'MATERIALS',
+          isArchived: false,
+          sortOrder: 1,
+          createdAtUtc: '',
+          updatedAtUtc: '',
+          industryCount: 1,
+          stockCount: 1,
+          industries: [{ id: 20, sectorId: 2, name: 'Gold', normalizedName: 'GOLD', isArchived: false, sortOrder: 1, createdAtUtc: '', updatedAtUtc: '', stockCount: 1 }],
+        },
+      ],
+      marketIndices: [],
+      marketIndicesLoadFailed: false,
+    });
+
+    render(<IndexConstituentsPanel indexId={1} isArchived={false} />);
+    await waitFor(() => expect(screen.getAllByText('FRA1').length).toBeGreaterThan(0));
+
+    await user.click(screen.getByRole('button', { name: 'Открыть расширенные фильтры' }));
+    await user.click(screen.getByRole('combobox', { name: 'Фильтр по бирже' }));
+    await user.click(await screen.findByText('США (NYSE + NASDAQ)'));
+    await user.click(screen.getByRole('button', { name: 'Применить' }));
+
+    await waitFor(() => expect(screen.queryByText('FRA1')).not.toBeInTheDocument());
+    expect(screen.getAllByText('NYSE1').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('NAS1').length).toBeGreaterThan(0);
+    expect(window.location.search).toContain('exchanges=us');
+
+    window.history.back();
+    window.dispatchEvent(new PopStateEvent('popstate'));
+
+    await waitFor(() => expect(screen.getAllByText('FRA1').length).toBeGreaterThan(0));
+  });
+
+  it('canonicalizes invalid advanced filter URL params while preserving unrelated query state', async () => {
+    window.history.replaceState({}, '', '/market-indices/1?tab=constituents&exchanges=us,fra,us,unknown&sectors=2,999&industries=20,21,1000');
+    vi.mocked(loadStockMetadataLookups).mockResolvedValue({
+      sectors: [
+        {
+          id: 2,
+          name: 'Materials',
+          normalizedName: 'MATERIALS',
+          isArchived: false,
+          sortOrder: 1,
+          createdAtUtc: '',
+          updatedAtUtc: '',
+          industryCount: 1,
+          stockCount: 1,
+          industries: [{ id: 20, sectorId: 2, name: 'Gold', normalizedName: 'GOLD', isArchived: false, sortOrder: 1, createdAtUtc: '', updatedAtUtc: '', stockCount: 1 }],
+        },
+      ],
+      marketIndices: [],
+      marketIndicesLoadFailed: false,
+    });
+
+    render(<IndexConstituentsPanel indexId={1} isArchived={false} />);
+    await waitFor(() => expect(screen.getByText('Фильтры (3)')).toBeInTheDocument());
+
+    expect(window.location.search).toContain('tab=constituents');
+    expect(window.location.search).toContain('exchanges=fra%2Cus');
+    expect(window.location.search).toContain('sectors=2');
+    expect(window.location.search).toContain('industries=20');
   });
 });

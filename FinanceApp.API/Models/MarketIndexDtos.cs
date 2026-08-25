@@ -70,7 +70,9 @@ public sealed class IndexConstituentDto
     public string? ProviderSymbol { get; init; }
     public string Name { get; init; } = string.Empty;
     public string? CommonName { get; init; }
+    public int? SectorId { get; init; }
     public string? Sector { get; init; }
+    public int? IndustryId { get; init; }
     public string? Industry { get; init; }
     public string Exchange { get; init; } = string.Empty;
     public string? Isin { get; init; }

@@ -14,7 +14,6 @@ import {
   message,
 } from 'antd';
 import {
-  SearchOutlined,
   PlusOutlined,
   ReloadOutlined,
   CaretRightFilled,
@@ -80,6 +79,27 @@ import {
   sortConstituentsByPerformance,
 } from './performanceHelpers';
 import type { PerformanceMap } from './performanceHelpers';
+import AdvancedStockFiltersDrawer from './stock-filters/AdvancedStockFiltersDrawer';
+import AdvancedStockFilterToolbarControls from './stock-filters/AdvancedStockFilterToolbarControls';
+import {
+  buildIndustryToSectorMap,
+  matchesConstituentAdvancedFilters,
+} from './stock-filters/stockFilterEngine';
+import {
+  areAdvancedStockFiltersEqual,
+  countActiveAdvancedFilterGroups,
+  EMPTY_ADVANCED_STOCK_FILTERS,
+  normalizeAdvancedStockFilters,
+  type AdvancedStockFilters,
+} from './stock-filters/stockFilterModel';
+import {
+  getActiveSectorOptions,
+  getIndustryOptionsForSelectedSectors,
+  normalizeAdvancedStockFiltersWithDirectory,
+  parseAdvancedStockFiltersFromSearchParams,
+  pruneInvalidIndustrySelections,
+  serializeAdvancedStockFiltersToSearchParams,
+} from './stock-filters/stockFilterUrlState';
 import {
   INDEX_BATCH_QUOTE_JOB_POLL_INTERVAL_MS,
   INDEX_BATCH_QUOTE_JOB_POLL_TIMEOUT_MS,
@@ -437,6 +457,11 @@ const IndexConstituentsPanel: React.FC<IndexConstituentsPanelProps> = ({
     isStale: false,
   });
   const [search, setSearch] = useState('');
+  const [advancedFilters, setAdvancedFilters] = useState<AdvancedStockFilters>(EMPTY_ADVANCED_STOCK_FILTERS);
+  const [advancedDraft, setAdvancedDraft] = useState<AdvancedStockFilters>(EMPTY_ADVANCED_STOCK_FILTERS);
+  const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
+  const [urlSearch, setUrlSearch] = useState(() => window.location.search);
+  const [tablePage, setTablePage] = useState(1);
   const [trackingId, setTrackingId] = useState<number | null>(null);
   const [historyRefreshStates, setHistoryRefreshStates] = useState<Record<number, IndexConstituentHistoryRefreshJobState>>({});
   const [batchHistoryRefreshing, setBatchHistoryRefreshing] = useState(false);
@@ -470,6 +495,16 @@ const IndexConstituentsPanel: React.FC<IndexConstituentsPanelProps> = ({
   const performanceRequestIdRef = useRef(0);
   const sortModeRef = useRef<ConstituentSortMode>(CONSTITUENT_NAME_SORT_MODE);
   sortModeRef.current = sortMode;
+  const industryToSectorMap = useMemo(() => buildIndustryToSectorMap(sectors), [sectors]);
+  const sectorFilterOptions = useMemo(() => getActiveSectorOptions(sectors), [sectors]);
+  const industryFilterOptions = useMemo(
+    () => getIndustryOptionsForSelectedSectors(sectors, advancedDraft.sectorIds),
+    [advancedDraft.sectorIds, sectors],
+  );
+  const activeAdvancedFilterGroups = useMemo(
+    () => countActiveAdvancedFilterGroups(advancedFilters),
+    [advancedFilters],
+  );
   const quoteRefreshInFlightRef = useRef(new Set<number>());
   const persistIndexQuote = useCallback(async (stockId: number, patch: UpdateStockQuoteRequest) => (
     await updateStockQuote(stockId, patch)
@@ -592,6 +627,33 @@ const IndexConstituentsPanel: React.FC<IndexConstituentsPanelProps> = ({
     void loadData();
   }, [loadData]);
 
+  useEffect(() => {
+    const onPopState = () => setUrlSearch(window.location.search);
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  useEffect(() => {
+    const parsed = parseAdvancedStockFiltersFromSearchParams(new URLSearchParams(urlSearch));
+    const normalized = normalizeAdvancedStockFiltersWithDirectory(parsed, sectors);
+    if (!areAdvancedStockFiltersEqual(advancedFilters, normalized)) {
+      setAdvancedFilters(normalized);
+    }
+
+    const canonicalParams = serializeAdvancedStockFiltersToSearchParams(new URLSearchParams(urlSearch), normalized);
+    const canonicalSearch = canonicalParams.toString();
+    const currentSearch = new URLSearchParams(urlSearch).toString();
+    if (canonicalSearch !== currentSearch) {
+      const nextUrl = `${window.location.pathname}${canonicalSearch ? `?${canonicalSearch}` : ''}${window.location.hash}`;
+      window.history.replaceState(window.history.state, '', nextUrl);
+      setUrlSearch(window.location.search);
+    }
+  }, [advancedFilters, sectors, urlSearch]);
+
+  useEffect(() => {
+    setTablePage(1);
+  }, [advancedFilters]);
+
   const ensureEditLookupsLoaded = useCallback(async () => {
     if (sectors.length > 0 || marketIndices.length > 0) {
       return;
@@ -604,6 +666,81 @@ const IndexConstituentsPanel: React.FC<IndexConstituentsPanelProps> = ({
       void messageApi.warning('Не удалось загрузить мировые индексы');
     }
   }, [marketIndices.length, messageApi, sectors.length]);
+
+  useEffect(() => {
+    void ensureEditLookupsLoaded();
+  }, [ensureEditLookupsLoaded]);
+
+  const commitFiltersToUrl = useCallback((nextFilters: AdvancedStockFilters, mode: 'push' | 'replace') => {
+    const base = new URLSearchParams(window.location.search);
+    const nextParams = serializeAdvancedStockFiltersToSearchParams(base, nextFilters);
+    const nextSearch = nextParams.toString();
+    const currentSearch = base.toString();
+    const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ''}${window.location.hash}`;
+
+    if (mode === 'push') {
+      if (currentSearch !== nextSearch) {
+        window.history.pushState(window.history.state, '', nextUrl);
+      }
+    } else if (currentSearch !== nextSearch) {
+      window.history.replaceState(window.history.state, '', nextUrl);
+    }
+
+    setUrlSearch(window.location.search);
+  }, []);
+
+  const handleAdvancedDraftChange = useCallback((next: AdvancedStockFilters) => {
+    const normalized = normalizeAdvancedStockFilters(next);
+    const nextIndustryIds = pruneInvalidIndustrySelections(normalized.industryIds, normalized.sectorIds, sectors);
+    setAdvancedDraft({ ...normalized, industryIds: nextIndustryIds });
+  }, [sectors]);
+
+  const openAdvancedFilters = useCallback(() => {
+    setAdvancedDraft(advancedFilters);
+    setAdvancedFiltersOpen(true);
+  }, [advancedFilters]);
+
+  const closeAdvancedFilters = useCallback(() => {
+    setAdvancedFiltersOpen(false);
+  }, []);
+
+  const clearAdvancedDraft = useCallback(() => {
+    setAdvancedDraft(EMPTY_ADVANCED_STOCK_FILTERS);
+  }, []);
+
+  useEffect(() => {
+    if (!advancedFiltersOpen) {
+      return;
+    }
+
+    setAdvancedDraft((prev) => {
+      const normalized = normalizeAdvancedStockFilters(prev);
+      const nextIndustryIds = pruneInvalidIndustrySelections(normalized.industryIds, normalized.sectorIds, sectors);
+      if (nextIndustryIds.length === normalized.industryIds.length && nextIndustryIds.every((id, index) => id === normalized.industryIds[index])) {
+        return normalized;
+      }
+
+      return { ...normalized, industryIds: nextIndustryIds };
+    });
+  }, [advancedFiltersOpen, sectors]);
+
+  const applyAdvancedFilters = useCallback(() => {
+    const normalized = normalizeAdvancedStockFiltersWithDirectory(advancedDraft, sectors);
+    setAdvancedFilters(normalized);
+    commitFiltersToUrl(normalized, 'push');
+    setTablePage(1);
+    setAdvancedFiltersOpen(false);
+  }, [advancedDraft, commitFiltersToUrl, sectors]);
+
+  const resetAdvancedFilters = useCallback(() => {
+    if (activeAdvancedFilterGroups === 0) {
+      return;
+    }
+
+    setAdvancedFilters(EMPTY_ADVANCED_STOCK_FILTERS);
+    commitFiltersToUrl(EMPTY_ADVANCED_STOCK_FILTERS, 'push');
+    setTablePage(1);
+  }, [activeAdvancedFilterGroups, commitFiltersToUrl]);
 
   const handleEditCancel = useCallback(() => {
     if (editSubmitting) {
@@ -910,15 +1047,23 @@ const IndexConstituentsPanel: React.FC<IndexConstituentsPanelProps> = ({
       ? sortConstituentsByPerformance(constituents, performanceMap)
       : sortConstituentsByName(constituents);
     const query = search.trim().toLowerCase();
-    if (!query) return sorted;
-    return sorted.filter((c) =>
-      c.ticker.toLowerCase().includes(query)
-      || c.name.toLowerCase().includes(query)
-      || (c.commonName?.toLowerCase().includes(query) ?? false)
-      || (c.wkn?.toLowerCase().includes(query) ?? false)
-      || (c.isin?.toLowerCase().includes(query) ?? false)
-      || (c.providerSymbol?.toLowerCase().includes(query) ?? false));
-  }, [constituents, search, performanceMap, sortMode]);
+    return sorted.filter((c) => {
+      if (!matchesConstituentAdvancedFilters(c, advancedFilters, industryToSectorMap)) {
+        return false;
+      }
+
+      if (!query) {
+        return true;
+      }
+
+      return c.ticker.toLowerCase().includes(query)
+        || c.name.toLowerCase().includes(query)
+        || (c.commonName?.toLowerCase().includes(query) ?? false)
+        || (c.wkn?.toLowerCase().includes(query) ?? false)
+        || (c.isin?.toLowerCase().includes(query) ?? false)
+        || (c.providerSymbol?.toLowerCase().includes(query) ?? false);
+    });
+  }, [advancedFilters, constituents, industryToSectorMap, performanceMap, search, sortMode]);
   const selectedSnapshotByStockId = useMemo(() => {
     const map = new Map<number, ReturnType<typeof resolveNewestCurrentPriceSnapshot>>();
     for (const constituent of constituents) {
@@ -939,6 +1084,11 @@ const IndexConstituentsPanel: React.FC<IndexConstituentsPanelProps> = ({
     () => makeConstituentRows(filteredConstituents, expandedStockId),
     [expandedStockId, filteredConstituents],
   );
+
+  useEffect(() => {
+    const maxPage = Math.max(1, Math.ceil(filteredConstituents.length / 20));
+    setTablePage((prev) => Math.min(prev, maxPage));
+  }, [filteredConstituents.length]);
 
   const columns: ColumnsType<TableRow> = [
     {
@@ -1295,12 +1445,18 @@ const IndexConstituentsPanel: React.FC<IndexConstituentsPanelProps> = ({
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
         <Input
           placeholder="Поиск по тикеру, названию, WKN, ISIN…"
-          prefix={<SearchOutlined />}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           allowClear
           style={{ maxWidth: 320 }}
           size="small"
+        />
+        <AdvancedStockFilterToolbarControls
+          compact
+          activeGroupCount={activeAdvancedFilterGroups}
+          onOpen={openAdvancedFilters}
+          onReset={resetAdvancedFilters}
+          resetDisabled={activeAdvancedFilterGroups === 0}
         />
         <Space size={4} align="center">
           <span style={{ fontSize: 16, color: '#595959', whiteSpace: 'nowrap' }}>Сортировка:</span>
@@ -1410,7 +1566,13 @@ const IndexConstituentsPanel: React.FC<IndexConstituentsPanelProps> = ({
           scroll={{ x: TABLE_SCROLL_X }}
           rowClassName={(record) => (isChartRow(record) ? 'chart-panel-row' : '')}
           size="small"
-          pagination={{ pageSize: 20, showSizeChanger: false, hideOnSinglePage: true }}
+          pagination={{
+            current: tablePage,
+            pageSize: 20,
+            showSizeChanger: false,
+            hideOnSinglePage: true,
+            onChange: (page) => setTablePage(page),
+          }}
           locale={{ emptyText: 'Нет компонентов, соответствующих поиску' }}
         />
       )}
@@ -1419,6 +1581,16 @@ const IndexConstituentsPanel: React.FC<IndexConstituentsPanelProps> = ({
         stock={fundamentalsStock}
         open={fundamentalsStock != null}
         onClose={() => setFundamentalsStock(null)}
+      />
+      <AdvancedStockFiltersDrawer
+        open={advancedFiltersOpen}
+        draftFilters={advancedDraft}
+        sectorOptions={sectorFilterOptions}
+        industryOptions={industryFilterOptions}
+        onClose={closeAdvancedFilters}
+        onDraftChange={handleAdvancedDraftChange}
+        onClearDraft={clearAdvancedDraft}
+        onApply={applyAdvancedFilters}
       />
       <StockEditModal
         open={editModalOpen}
