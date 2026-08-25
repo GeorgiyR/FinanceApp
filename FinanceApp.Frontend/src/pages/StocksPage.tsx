@@ -145,6 +145,58 @@ const getStockMutationBlockedResponse = (err: unknown): StockMutationBlockedResp
   return data as StockMutationBlockedResponse;
 };
 
+const getStockEditErrorMessage = (err: unknown): string => {
+  if (!axios.isAxiosError(err)) {
+    return 'Ошибка сохранения акции';
+  }
+
+  if (err.response == null) {
+    return 'Не удалось отправить запрос. Проверьте сеть и повторите.';
+  }
+
+  const { status, data } = err.response;
+  if (typeof data === 'string' && data.trim().length > 0) {
+    return data;
+  }
+
+  if (data != null && typeof data === 'object') {
+    if ('title' in data && typeof data.title === 'string' && data.title.trim().length > 0) {
+      const problemTitle = data.title.trim();
+      const errors =
+        'errors' in data
+        && data.errors != null
+        && typeof data.errors === 'object'
+          ? Object.entries(data.errors as Record<string, unknown>)
+              .flatMap(([, value]) => (Array.isArray(value) ? value : []))
+              .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+          : [];
+      if (errors.length > 0) {
+        return `${problemTitle}: ${errors.join(' ')}`;
+      }
+      return problemTitle;
+    }
+
+    if ('message' in data && typeof data.message === 'string' && data.message.trim().length > 0) {
+      return data.message.trim();
+    }
+  }
+
+  if (status === 404) {
+    return 'Endpoint редактирования не найден (404). Проверьте актуальность backend deployment.';
+  }
+  if (status === 405) {
+    return 'Метод редактирования не поддерживается (405). Проверьте маршрутизацию API.';
+  }
+  if (status >= 500) {
+    return `Ошибка сервера (${status}). Повторите позже или проверьте backend-логи.`;
+  }
+  if (status === 400) {
+    return 'Сервер отклонил изменения (400). Проверьте поля формы и повторите.';
+  }
+
+  return `Ошибка сохранения акции (${status})`;
+};
+
 const renderBlockersMessage = (response: StockMutationBlockedResponse): string => {
   const details = response.diagnostics.blockers
     .map((blocker) => {
@@ -919,16 +971,17 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
           });
         }
 
+        await fetchData();
         message.success('Акция обновлена');
       } else {
         await createStock(buildCreateStockPayload(values));
+        await fetchData();
         message.success('Акция добавлена');
       }
       setModalOpen(false);
       setEditingStock(null);
       setEditInlineError(null);
       setEditInlineBlockers([]);
-      fetchData();
     } catch (err: unknown) {
       const blocked = getStockMutationBlockedResponse(err);
       if (blocked) {
@@ -936,18 +989,7 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
         setEditInlineBlockers(blocked.diagnostics.blockers);
         return;
       }
-
-      const errorMsg =
-        err != null &&
-        typeof err === 'object' &&
-        'response' in err &&
-        err.response != null &&
-        typeof err.response === 'object' &&
-        'data' in err.response &&
-        typeof err.response.data === 'string'
-          ? err.response.data
-          : 'Ошибка сохранения акции';
-      setEditInlineError(errorMsg);
+      setEditInlineError(getStockEditErrorMessage(err));
     } finally {
       setSubmitting(false);
       submitInFlightRef.current = false;
