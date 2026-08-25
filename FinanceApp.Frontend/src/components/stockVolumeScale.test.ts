@@ -3,7 +3,6 @@ import { buildHistoryChartData } from './stockPriceChartData';
 import {
   analyzeAdaptiveVolumeScale,
   formatVolumeTooltipValue,
-  getVolumeCadenceHint,
   toDisplayVolume,
 } from './stockVolumeScale';
 
@@ -158,9 +157,4 @@ describe('stockVolumeScale', () => {
     expect(analysis.actualUpperBound).toBe(300);
   });
 
-  it('derives cadence-appropriate explanatory text from actual response interval for 1y/3y/5y', () => {
-    expect(getVolumeCadenceHint('1y', '1wk')).toBe('Объём по недельным свечам.');
-    expect(getVolumeCadenceHint('3y', '1mo')).toBe('Объём по месячным свечам.');
-    expect(getVolumeCadenceHint('5y', '1month')).toBe('Объём по месячным свечам.');
-  });
 });

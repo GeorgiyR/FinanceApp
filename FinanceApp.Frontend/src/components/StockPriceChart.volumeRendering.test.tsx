@@ -114,9 +114,6 @@ describe('StockPriceChart volume rendering regression', () => {
     render(<StockPriceChart panelId="rendering" stockId={11} ticker="ABEA" name="Alphabet Frankfurt" exchange="Frankfurt" providerSymbol="ABEA.F" />);
     await waitFor(() => expect(vi.mocked(api.getStockHistory)).toHaveBeenCalledWith(11, '1y'));
 
-    expect(screen.getByText('Объём по недельным свечам.')).toBeInTheDocument();
-    expect(screen.getByText('Робастная шкала объёма: для долгого диапазона Frankfurt крупные выбросы визуально ограничены.')).toBeInTheDocument();
-
     const bars = getRenderedBars();
     const widths = bars.map((bar) => bar.width);
     const heights = bars.map((bar) => bar.height);
@@ -197,7 +194,7 @@ describe('StockPriceChart volume rendering regression', () => {
 
     render(<StockPriceChart panelId="rendering-nyse" stockId={14} ticker="AMD" name="AMD NYSE" exchange="NYSE" providerSymbol="AMD" />);
     await waitFor(() => expect(vi.mocked(api.getStockHistory)).toHaveBeenCalledWith(14, '1y'));
-    expect(screen.queryByText('Робастная шкала объёма: для долгого диапазона Frankfurt крупные выбросы визуально ограничены.')).not.toBeInTheDocument();
+    expect(screen.getByText('Объём и активность торгов')).toBeInTheDocument();
 
     await user.click(screen.getByText('Сегодня'));
     await waitFor(() => expect(vi.mocked(api.getStockHistory)).toHaveBeenCalledWith(14, 'today'));

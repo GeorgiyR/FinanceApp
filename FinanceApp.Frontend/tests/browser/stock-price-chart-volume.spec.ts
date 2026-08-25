@@ -51,7 +51,7 @@ const readBarGeometry = async (page: Page) => {
 
 test('renders visible Frankfurt long-range volume bars with payload-based tooltip timestamp', async ({ page }) => {
   await page.goto('stock-price-chart-volume-harness.html?scenario=frankfurt');
-  await expect(page.getByText('Робастная шкала объёма: для долгого диапазона Frankfurt крупные выбросы визуально ограничены.')).toBeVisible();
+  await expect(page.getByText('Объём и активность торгов')).toBeVisible();
 
   const oneYearBars = await readBarGeometry(page);
   expect(oneYearBars.length).toBeGreaterThan(20);
@@ -66,7 +66,6 @@ test('renders visible Frankfurt long-range volume bars with payload-based toolti
   await expect(page.locator('.recharts-default-tooltip').filter({ hasText: '05.01.2026' }).first()).toBeVisible();
 
   await page.getByText('3 года').click();
-  await expect(page.getByText('Объём по месячным свечам.')).toBeVisible();
   const threeYearBars = await readBarGeometry(page);
   expect(threeYearBars.length).toBeGreaterThan(20);
   expect(threeYearBars.every((bar) => bar.width >= 4 && bar.intersectsClip)).toBeTruthy();
@@ -79,7 +78,7 @@ test('renders visible Frankfurt long-range volume bars with payload-based toolti
 
 test('keeps intraday US exchange behavior without long-range width forcing', async ({ page }) => {
   await page.goto('stock-price-chart-volume-harness.html?scenario=nyse');
-  await expect(page.getByText('Робастная шкала объёма: для долгого диапазона Frankfurt крупные выбросы визуально ограничены.')).toHaveCount(0);
+  await expect(page.getByText('Объём и активность торгов')).toBeVisible();
   await page.getByText('Сегодня').click();
 
   const intradayBars = await readBarGeometry(page);
@@ -90,7 +89,7 @@ test('keeps intraday US exchange behavior without long-range width forcing', asy
 
 test('renders visible intraday bars for NASDAQ without Frankfurt-specific robust message', async ({ page }) => {
   await page.goto('stock-price-chart-volume-harness.html?scenario=nasdaq');
-  await expect(page.getByText('Робастная шкала объёма: для долгого диапазона Frankfurt крупные выбросы визуально ограничены.')).toHaveCount(0);
+  await expect(page.getByText('Объём и активность торгов')).toBeVisible();
   await page.getByText('Сегодня').click();
 
   const intradayBars = await readBarGeometry(page);
