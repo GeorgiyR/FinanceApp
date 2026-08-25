@@ -39,7 +39,7 @@ const fixtureFrankfurt1yVolumes = [
   60000, 58000, 55000, 52000, 50000, 47000, 45000, 43000, 41000, 39000, 37000, 35000, 33000,
   31000, 29000, 27000, 25000, 24000, 23000, 22000, 21000, 20000, 19000, 18000, 17000, 16000,
   15000, 14500, 14000, 13500, 13000, 12500, 12000, 18000, 17000, 16000, 15500, 15000, 14500,
-  14000, 13500, 13000, 12500, 12000, 11500, 11000, 10500, 10000, 9500, 9000, 8500, 8000, 932,
+  14000, 13500, 13000, 12500, 12000, 11500, 11000, 10500, 10000, 9500, 9000, 8500, 8000, 204,
 ];
 
 const makePoint = (timestamp: string, interval: string, volume: number) => ({
@@ -85,7 +85,7 @@ const makeResponse = (range: 'today' | '1y' | '3y' | '5y', interval: string, vol
 });
 
 const getRenderedBars = () => (
-  Array.from(document.querySelectorAll<SVGElement>('.recharts-bar-rectangle .recharts-rectangle, .recharts-bar-rectangle'))
+  Array.from(document.querySelectorAll<SVGElement>('.recharts-bar-rectangle .recharts-rectangle'))
     .map((element) => {
       const width = Number(element.getAttribute('width'));
       const height = Number(element.getAttribute('height'));

@@ -126,6 +126,7 @@ export interface StockPriceChartProps {
     stockId: number,
     state: IndexConstituentHistoryRefreshJobState | null,
   ) => void;
+  hideTechnicalAnalysisPanel?: boolean;
 }
 
 const formatSigned = (value: number, suffix = '') =>
@@ -184,6 +185,7 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
   historyLoader,
   historyRefreshJobAdapter,
   onIndexHistoryRefreshStateChange,
+  hideTechnicalAnalysisPanel = false,
 }) => {
   const [historyRange, setHistoryRange] = useState<StockHistoryRange>('1y');
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -577,6 +579,13 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
     }),
     [chartLayoutWidth, historyRange, positiveRenderableVolumePoints],
   );
+  const volumeChartData = useMemo(
+    () => displayHistoryChartData.map((point, index) => ({
+      ...point,
+      volumeCategoryKey: `${point.timestampMs}-${index}`,
+    })),
+    [displayHistoryChartData],
+  );
 
   const weeklyIndexToTimestampMs = useMemo(() => {
     const map = new Map<number, number>();
@@ -729,6 +738,16 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
       />
     )
   );
+  const formatTooltipTimestampLabel = useCallback((timestampMs: number | null | undefined): string => {
+    if (timestampMs == null || !Number.isFinite(timestampMs)) {
+      return '';
+    }
+    return formatHistoryTimestamp(
+      timestampMs,
+      historyRange,
+      usesUtcDateLabels(historyRange) ? 'DD.MM.YYYY' : 'DD.MM.YYYY HH:mm',
+    );
+  }, [historyRange]);
 
   const renderDayRangeBound = (
     entry: typeof dayHighLowDisplay.minimum,
@@ -1120,9 +1139,9 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
               <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Поставщик не предоставил данные об объёме" />
             ) : (
               <ResponsiveContainer>
-                <BarChart data={displayHistoryChartData} syncId={`stock-history-${stockId}`}>
+                <BarChart data={volumeChartData}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  {renderXAxis(true)}
+                  <XAxis hide dataKey="volumeCategoryKey" type="category" />
                   {volumeScale.adaptiveScaleActive && volumeScale.displayUpperBound != null ? (
                     <YAxis
                       domain={[0, volumeScale.displayUpperBound]}
@@ -1138,22 +1157,11 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
                     contentStyle={{ fontSize: 16 }}
                     itemStyle={{ fontSize: 16 }}
                     labelStyle={{ fontSize: 16 }}
-                    labelFormatter={(value: number) => {
-                      if (historyRange === '1w') {
-                        const ts = resolveWeeklyTs(value);
-                        return ts != null ? formatHistoryTimestamp(ts, '1w', 'DD.MM.YYYY HH:mm') : '';
-                      }
-                      if (historyRange === '24h') {
-                        const ts = resolveCompressedTs(value);
-                        return ts != null ? formatHistoryTimestamp(ts, historyRange, 'DD.MM.YYYY HH:mm') : '';
-                      }
-                      return formatHistoryTimestamp(
-                        value,
-                        historyRange,
-                        usesUtcDateLabels(historyRange) ? 'DD.MM.YYYY' : 'DD.MM.YYYY HH:mm',
-                      );
+                    labelFormatter={(_value: unknown, items: any) => {
+                      const itemPayload = items?.[0]?.payload as HistoryChartPoint | undefined;
+                      return formatTooltipTimestampLabel(itemPayload?.timestampMs);
                     }}
-                    formatter={(_value: unknown, _name: string, item) => {
+                    formatter={(_value: unknown, _name: any, item: any) => {
                       const payload = item.payload as HistoryChartPoint | undefined;
                       if (payload == null || payload.volumeChart == null || !Number.isFinite(payload.volumeChart)) {
                         return ['Нет данных', 'Объём'];
@@ -1171,7 +1179,7 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
                     barSize={volumeBarSize}
                     minPointSize={volumeScale.adaptiveScaleActive ? 3 : 1}
                   >
-                    {displayHistoryChartData.map((entry, index) => (
+                    {volumeChartData.map((entry, index) => (
                       <Cell
                         key={`volume-cell-${entry.timestamp}-${index}`}
                         fill={entry.volumeCapped ? '#1677ff' : COLOR_VOLUME}
@@ -1185,7 +1193,7 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
           </div>
         </div>
       )}
-      <StockTechnicalAnalysisPanel stockId={stockId} />
+      {!hideTechnicalAnalysisPanel && <StockTechnicalAnalysisPanel stockId={stockId} />}
       <Modal
         title="Сбросить и загрузить историю заново"
         open={hardResetModalOpen}
