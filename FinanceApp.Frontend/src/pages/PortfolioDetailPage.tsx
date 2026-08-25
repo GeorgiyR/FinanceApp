@@ -772,6 +772,8 @@ const PortfolioDetailPage: React.FC = () => {
                 stockId={record._stockId}
                 ticker={item?.stock?.ticker ?? ''}
                 name={item?.stock?.name ?? ''}
+                exchange={item?.stock?.exchange ?? null}
+                providerSymbol={item?.stock?.providerSymbol ?? null}
                 wkn={item?.stock?.wkn ?? null}
                 isin={item?.stock?.isin ?? null}
                 finanzenNetSlug={item?.stock?.finanzenNetSlug ?? null}
