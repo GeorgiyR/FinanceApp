@@ -986,6 +986,133 @@ public class StockHistoryRefreshTests
     }
 
     [Fact]
+    public async Task RefreshHistoryAsync_Frankfurt_UsesDailyAggregationForWeeklyVolumes_AndExcludesCurrentWeekMetrics()
+    {
+        await using var context = CreateInMemoryContext();
+        var now = new DateTime(2026, 8, 26, 12, 0, 0, DateTimeKind.Utc); // Wednesday
+        var stock = new Stock { Id = 100, Ticker = "AMZN", Exchange = StockExchanges.Frankfurt, Name = "Amazon FRA" };
+        context.Stocks.Add(stock);
+        await context.SaveChangesAsync();
+
+        var handler = new SequenceHandler(
+            // Yahoo monthly/weekly payloads contain a collapsed low-volume tail.
+            SuccessChartJson((ToUnix(new DateTime(2026, 7, 1, 12, 0, 0, DateTimeKind.Utc)), 100m, 120_000L)),
+            SuccessChartJson(
+                (ToUnix(new DateTime(2026, 8, 10, 12, 0, 0, DateTimeKind.Utc)), 101m, 50_000L),
+                (ToUnix(new DateTime(2026, 8, 17, 12, 0, 0, DateTimeKind.Utc)), 102m, 82L)),
+            // Daily candles are the ground truth for weekly/monthly aggregation.
+            SuccessChartJson(
+                (ToUnix(new DateTime(2026, 8, 10, 12, 0, 0, DateTimeKind.Utc)), 100m, 10_000L),
+                (ToUnix(new DateTime(2026, 8, 11, 12, 0, 0, DateTimeKind.Utc)), 101m, 11_000L),
+                (ToUnix(new DateTime(2026, 8, 12, 12, 0, 0, DateTimeKind.Utc)), 102m, 9_000L),
+                (ToUnix(new DateTime(2026, 8, 13, 12, 0, 0, DateTimeKind.Utc)), 103m, 10_000L),
+                (ToUnix(new DateTime(2026, 8, 14, 12, 0, 0, DateTimeKind.Utc)), 104m, 10_000L),
+                (ToUnix(new DateTime(2026, 8, 17, 12, 0, 0, DateTimeKind.Utc)), 105m, 12_000L),
+                (ToUnix(new DateTime(2026, 8, 18, 12, 0, 0, DateTimeKind.Utc)), 106m, 11_000L),
+                (ToUnix(new DateTime(2026, 8, 19, 12, 0, 0, DateTimeKind.Utc)), 107m, 13_000L),
+                (ToUnix(new DateTime(2026, 8, 20, 12, 0, 0, DateTimeKind.Utc)), 108m, 12_000L),
+                (ToUnix(new DateTime(2026, 8, 21, 12, 0, 0, DateTimeKind.Utc)), 109m, 12_000L),
+                // Current in-progress week must be excluded from weekly chart/metrics.
+                (ToUnix(new DateTime(2026, 8, 24, 12, 0, 0, DateTimeKind.Utc)), 110m, 82L)),
+            SuccessChartJson((ToUnix(now.AddHours(-2)), 111m, 1_000L)),
+            SuccessChartJson((ToUnix(now.AddMinutes(-10)), 112m, 500L)));
+        var service = CreateService(context, handler, new FixedTimeProvider(new DateTimeOffset(now)));
+
+        await service.RefreshHistoryAsync(stock);
+
+        var weeklyRows = await context.StockHistoricalPrices
+            .Where(x => x.StockId == stock.Id && x.Interval == "1wk")
+            .OrderBy(x => x.Timestamp)
+            .ToListAsync();
+
+        Assert.Equal(2, weeklyRows.Count);
+        Assert.Equal(50_000L, weeklyRows[0].Volume);
+        Assert.Equal(60_000L, weeklyRows[1].Volume);
+        Assert.DoesNotContain(weeklyRows, row => row.Volume == 82L);
+
+        var history = await service.GetHistoryAsync(stock, "1y");
+        var lastPoint = Assert.Single(history.Points, p => p.Timestamp == weeklyRows[^1].Timestamp);
+        Assert.Equal(60_000L, lastPoint.Volume);
+        Assert.True(history.VolumeMetrics.UsesCompletedCandle);
+        Assert.Equal(weeklyRows[^1].Timestamp, history.VolumeMetrics.LatestMetricsTimestamp);
+    }
+
+    [Fact]
+    public async Task RefreshHistoryAsync_AutomaticFrankfurtRefresh_RebuildsLongRangeWithoutManualReset()
+    {
+        await using var context = CreateInMemoryContext();
+        var now = new DateTime(2026, 8, 26, 12, 0, 0, DateTimeKind.Utc);
+        var stock = new Stock
+        {
+            Id = 101,
+            Ticker = "AMZN",
+            Exchange = StockExchanges.Frankfurt,
+            Name = "Amazon FRA",
+            HistoryRefreshCadence = StockHistoryRefreshCadence.Daily,
+            NextIncrementalHistoryRefreshAtUtc = now.AddDays(-1),
+            NextHistoryReconciliationAtUtc = now.AddDays(10),
+            NextFullHistoryBackfillAtUtc = now.AddDays(10)
+        };
+        context.Stocks.Add(stock);
+        context.StockHistoricalPrices.AddRange(
+            new StockHistoricalPrice
+            {
+                StockId = stock.Id,
+                Interval = "1d",
+                Timestamp = new DateTime(2026, 8, 20, 12, 0, 0, DateTimeKind.Utc),
+                Open = 100m,
+                High = 100m,
+                Low = 100m,
+                Close = 100m,
+                QuoteCurrency = "EUR",
+                FinancialCurrency = "EUR",
+                NormalizedQuoteCurrency = "EUR",
+                QuoteUnitMultiplier = 1m,
+                Volume = 10_000L
+            },
+            new StockHistoricalPrice
+            {
+                StockId = stock.Id,
+                Interval = "1wk",
+                Timestamp = new DateTime(2026, 8, 17, 0, 0, 0, DateTimeKind.Utc),
+                Open = 100m,
+                High = 100m,
+                Low = 100m,
+                Close = 100m,
+                QuoteCurrency = "EUR",
+                FinancialCurrency = "EUR",
+                NormalizedQuoteCurrency = "EUR",
+                QuoteUnitMultiplier = 1m,
+                Volume = 82L
+            });
+        await context.SaveChangesAsync();
+
+        var handler = new CountingHandler(
+            SuccessChartJson(
+                (ToUnix(new DateTime(2026, 8, 17, 12, 0, 0, DateTimeKind.Utc)), 101m, 12_000L),
+                (ToUnix(new DateTime(2026, 8, 18, 12, 0, 0, DateTimeKind.Utc)), 102m, 13_000L),
+                (ToUnix(new DateTime(2026, 8, 19, 12, 0, 0, DateTimeKind.Utc)), 103m, 11_000L),
+                (ToUnix(new DateTime(2026, 8, 20, 12, 0, 0, DateTimeKind.Utc)), 104m, 12_000L),
+                (ToUnix(new DateTime(2026, 8, 21, 12, 0, 0, DateTimeKind.Utc)), 105m, 12_000L),
+                (ToUnix(new DateTime(2026, 8, 24, 12, 0, 0, DateTimeKind.Utc)), 106m, 82L)),
+            SuccessChartJson((ToUnix(now.AddHours(-1)), 110m, 1_000L)),
+            SuccessChartJson((ToUnix(now.AddMinutes(-5)), 111m, 500L)));
+        var service = CreateService(context, handler, new FixedTimeProvider(new DateTimeOffset(now)));
+
+        var refresh = await service.RefreshHistoryAsync(stock, StockHistoryRefreshTrigger.Automatic);
+
+        Assert.False(refresh.RateLimited);
+        Assert.Equal(3, handler.CallCount);
+
+        var weeklyRows = await context.StockHistoricalPrices
+            .Where(x => x.StockId == stock.Id && x.Interval == "1wk")
+            .OrderBy(x => x.Timestamp)
+            .ToListAsync();
+        Assert.DoesNotContain(weeklyRows, row => row.Volume == 82L);
+        Assert.Contains(weeklyRows, row => row.Volume == 60_000L);
+    }
+
+    [Fact]
     public async Task GetHistoryAsync_ComputesVolumeMetrics_FromSelectedListingHistory()
     {
         await using var context = CreateInMemoryContext();
@@ -1139,7 +1266,7 @@ public class StockHistoryRefreshTests
         var handler = new CountingHandler(
             SuccessChartJson(BuildCandles(ToUnix(now.AddMonths(-18)), 12, TimeSpan.FromDays(30), 10m)),
             SuccessChartJson(BuildCandles(ToUnix(now.AddDays(-220)), 30, TimeSpan.FromDays(7), 20m)),
-            SuccessChartJson(BuildCandles(ToUnix(now.AddDays(-160)), 140, TimeSpan.FromDays(1), 30m)),
+            SuccessChartJson(BuildCandles(ToUnix(now.AddDays(-600)), 600, TimeSpan.FromDays(1), 30m)),
             SuccessChartJson(BuildCandles(ToUnix(now.AddDays(-2)), 8, TimeSpan.FromHours(1), 40m)),
             SuccessChartJson(BuildCandles(ToUnix(now.AddHours(-8)), 12, TimeSpan.FromMinutes(5), 50m)));
         var service = CreateService(context, handler, new FixedTimeProvider(new DateTimeOffset(now)));
@@ -1238,6 +1365,56 @@ public class StockHistoryRefreshTests
         Assert.Equal("validationFailed", result.ResultBucket);
         Assert.NotEmpty(result.Errors);
         Assert.Equal(0, handler.CallCount);
+    }
+
+    [Fact]
+    public async Task RebuildFrankfurtAggregatesAsync_BatchesAndSupportsCursorResume()
+    {
+        await using var context = CreateInMemoryContext();
+        var now = new DateTime(2026, 8, 26, 12, 0, 0, DateTimeKind.Utc);
+        context.Stocks.AddRange(
+            new Stock { Id = 201, Ticker = "AMZN", Exchange = StockExchanges.Frankfurt, Name = "Amazon FRA" },
+            new Stock { Id = 202, Ticker = "RHM.DE", Exchange = StockExchanges.Frankfurt, Name = "Rheinmetall" },
+            new Stock { Id = 203, Ticker = "AAPL", Exchange = StockExchanges.Nasdaq, Name = "Apple" });
+        await context.SaveChangesAsync();
+
+        var handler = new CountingHandler(
+            SuccessChartJson((ToUnix(new DateTime(2026, 7, 1, 12, 0, 0, DateTimeKind.Utc)), 100m, 100_000L)),
+            SuccessChartJson((ToUnix(new DateTime(2026, 8, 17, 12, 0, 0, DateTimeKind.Utc)), 101m, 82L)),
+            SuccessChartJson(
+                (ToUnix(new DateTime(2026, 8, 17, 12, 0, 0, DateTimeKind.Utc)), 101m, 12_000L),
+                (ToUnix(new DateTime(2026, 8, 18, 12, 0, 0, DateTimeKind.Utc)), 102m, 12_000L),
+                (ToUnix(new DateTime(2026, 8, 19, 12, 0, 0, DateTimeKind.Utc)), 103m, 12_000L),
+                (ToUnix(new DateTime(2026, 8, 20, 12, 0, 0, DateTimeKind.Utc)), 104m, 12_000L),
+                (ToUnix(new DateTime(2026, 8, 21, 12, 0, 0, DateTimeKind.Utc)), 105m, 12_000L)),
+            SuccessChartJson((ToUnix(now.AddHours(-1)), 110m, 1_000L)),
+            SuccessChartJson((ToUnix(now.AddMinutes(-5)), 111m, 500L)),
+            SuccessChartJson((ToUnix(new DateTime(2026, 7, 1, 12, 0, 0, DateTimeKind.Utc)), 200m, 100_000L)),
+            SuccessChartJson((ToUnix(new DateTime(2026, 8, 17, 12, 0, 0, DateTimeKind.Utc)), 201m, 90L)),
+            SuccessChartJson(
+                (ToUnix(new DateTime(2026, 8, 17, 12, 0, 0, DateTimeKind.Utc)), 201m, 13_000L),
+                (ToUnix(new DateTime(2026, 8, 18, 12, 0, 0, DateTimeKind.Utc)), 202m, 13_000L),
+                (ToUnix(new DateTime(2026, 8, 19, 12, 0, 0, DateTimeKind.Utc)), 203m, 13_000L),
+                (ToUnix(new DateTime(2026, 8, 20, 12, 0, 0, DateTimeKind.Utc)), 204m, 13_000L),
+                (ToUnix(new DateTime(2026, 8, 21, 12, 0, 0, DateTimeKind.Utc)), 205m, 13_000L)),
+            SuccessChartJson((ToUnix(now.AddHours(-1)), 210m, 1_000L)),
+            SuccessChartJson((ToUnix(now.AddMinutes(-5)), 211m, 500L)));
+        var service = CreateService(context, handler, new FixedTimeProvider(new DateTimeOffset(now)));
+
+        var firstBatch = await service.RebuildFrankfurtAggregatesAsync(batchSize: 1, afterStockId: null);
+        Assert.Equal(1, firstBatch.RebuiltStocks);
+        Assert.True(firstBatch.HasMore);
+        Assert.Equal(201, firstBatch.NextAfterStockId);
+
+        var secondBatch = await service.RebuildFrankfurtAggregatesAsync(batchSize: 10, afterStockId: firstBatch.NextAfterStockId);
+        Assert.Equal(1, secondBatch.RebuiltStocks);
+        Assert.False(secondBatch.HasMore);
+        Assert.Equal(202, secondBatch.NextAfterStockId);
+
+        var finished = await service.RebuildFrankfurtAggregatesAsync(batchSize: 10, afterStockId: secondBatch.NextAfterStockId);
+        Assert.Equal(0, finished.RebuiltStocks);
+        Assert.False(finished.HasMore);
+        Assert.Equal(10, handler.CallCount);
     }
 
     private static AppDbContext CreateInMemoryContext()

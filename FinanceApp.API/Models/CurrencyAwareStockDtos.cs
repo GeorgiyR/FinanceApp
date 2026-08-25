@@ -128,6 +128,25 @@ public sealed class StockHistoryRefreshResponse
     public DateTime? NextDueAtUtc { get; init; }
 }
 
+public sealed class FrankfurtAggregateRebuildRequest
+{
+    public int BatchSize { get; init; } = 25;
+    public int? AfterStockId { get; init; }
+}
+
+public sealed class FrankfurtAggregateRebuildResponse
+{
+    public int BatchSize { get; init; }
+    public int? StartedAfterStockId { get; init; }
+    public int? NextAfterStockId { get; init; }
+    public int ProcessedStocks { get; init; }
+    public int RebuiltStocks { get; init; }
+    public int FailedStocks { get; init; }
+    public bool StoppedDueToRateLimit { get; init; }
+    public bool HasMore { get; init; }
+    public IReadOnlyList<string> Errors { get; init; } = Array.Empty<string>();
+}
+
 public sealed class StockHistoryProviderSymbolValidationRequest
 {
     public string? CandidateProviderSymbol { get; init; }
