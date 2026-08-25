@@ -9,6 +9,7 @@ import {
   Tag,
   Tooltip,
   Input,
+  Modal,
   Select,
   Space,
 } from 'antd';
@@ -32,12 +33,14 @@ import {
   getStockCatalogPerformance,
   createStock,
   updateStockMetadata,
+  updateStockIdentity,
   updateStockQuote,
   getTrackedStocks,
   getPortfolios,
   getStockPrice,
   trackStock,
   untrackStock,
+  deleteStockPermanent,
 } from '../services/api';
 import AuthenticatedShell from '../components/AuthenticatedShell';
 import StockEditModal, {
@@ -58,6 +61,7 @@ import type {
   StockHistoryRange,
   StockTrackingStatus,
   StockQuoteResponse,
+  StockMutationBlockedResponse,
   UpdateStockQuoteRequest,
 } from '../types';
 import { groupStocks } from '../utils/stockGrouping';
@@ -113,6 +117,7 @@ const PORTFOLIO_ROW_CLASS = 'portfolio-stock-row';
 export const STOCK_DELETE_TOOLTIP = 'Удалить из отслеживаемых';
 export const PROTECTED_STOCK_DELETE_TOOLTIP = 'Акцию нельзя удалить из отслеживаемых, пока она находится в портфеле';
 const STOCK_DELETE_GENERIC_ERROR = 'Ошибка удаления из отслеживаемых';
+const STOCK_PERMANENT_DELETE_GENERIC_ERROR = 'Ошибка полного удаления акции';
 
 export const getStockDeleteErrorMessage = (err: unknown): string => {
   if (axios.isAxiosError(err) && typeof err.response?.data === 'string' && err.response.data.trim().length > 0) {
@@ -120,6 +125,46 @@ export const getStockDeleteErrorMessage = (err: unknown): string => {
   }
 
   return STOCK_DELETE_GENERIC_ERROR;
+};
+
+const getStockMutationBlockedResponse = (err: unknown): StockMutationBlockedResponse | null => {
+  if (!axios.isAxiosError(err)) {
+    return null;
+  }
+
+  const data = err.response?.data;
+  if (!data || typeof data !== 'object') {
+    return null;
+  }
+
+  if (!('message' in data) || !('diagnostics' in data)) {
+    return null;
+  }
+
+  return data as StockMutationBlockedResponse;
+};
+
+const renderBlockersMessage = (response: StockMutationBlockedResponse): string => {
+  const details = response.diagnostics.blockers
+    .map((blocker) => {
+      const names = blocker.relatedNames.length > 0 ? ` (${blocker.relatedNames.join(', ')})` : '';
+      return `• ${blocker.displayName}: ${blocker.count}${names}`;
+    })
+    .join('\n');
+  return details.length > 0 ? `${response.message}\n${details}` : response.message;
+};
+
+const getStockPermanentDeleteErrorMessage = (err: unknown): string => {
+  const blocked = getStockMutationBlockedResponse(err);
+  if (blocked) {
+    return renderBlockersMessage(blocked);
+  }
+
+  if (axios.isAxiosError(err) && typeof err.response?.data === 'string' && err.response.data.trim().length > 0) {
+    return err.response.data;
+  }
+
+  return STOCK_PERMANENT_DELETE_GENERIC_ERROR;
 };
 
 type StockDeleteActionProps = {
@@ -784,10 +829,56 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
     setModalOpen(true);
   };
 
-  const handleSubmit = async (values: Parameters<typeof buildUpdateStockMetadataPayload>[0]) => {
+  const confirmIdentityTransitionAsync = (transitionLabel: string) => new Promise<boolean>((resolve) => {
+    Modal.confirm({
+      title: 'Подтвердите изменение тикера / биржи',
+      content: (
+        <div style={{ display: 'grid', gap: 8 }}>
+          <Typography.Text strong>{transitionLabel}</Typography.Text>
+          <Typography.Text type="secondary">
+            Будут очищены история, снапшоты котировок и provider-данные. После сохранения потребуется повторная загрузка.
+          </Typography.Text>
+        </div>
+      ),
+      okText: 'Подтвердить изменение',
+      cancelText: 'Отмена',
+      onOk: () => resolve(true),
+      onCancel: () => resolve(false),
+    });
+  });
+
+  const handleSubmit = async (
+    values: Parameters<typeof buildUpdateStockMetadataPayload>[0],
+    context: { identityEditingEnabled: boolean },
+  ) => {
     setSubmitting(true);
     try {
       if (editingStock) {
+        const newTicker = values.ticker.trim().toUpperCase();
+        const newExchange = values.exchange;
+        const oldTicker = editingStock.ticker;
+        const oldExchange = editingStock.exchange;
+        const identityChanged = newTicker !== oldTicker || newExchange !== oldExchange;
+        if (identityChanged) {
+          if (!context.identityEditingEnabled) {
+            message.error('Сначала включите режим «Изменить тикер / биржу».');
+            return;
+          }
+
+          const transitionLabel = `${oldTicker} (${oldExchange}) → ${newTicker} (${newExchange})`;
+          const confirmed = await confirmIdentityTransitionAsync(transitionLabel);
+          if (!confirmed) {
+            return;
+          }
+
+          await updateStockIdentity(editingStock.id, {
+            ticker: newTicker,
+            exchange: newExchange,
+            confirmationText: transitionLabel,
+            retainProviderSymbol: false,
+          });
+        }
+
         await updateStockMetadata(editingStock.id, buildUpdateStockMetadataPayload(values));
         message.success('Акция обновлена');
       } else {
@@ -798,6 +889,12 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
       setEditingStock(null);
       fetchData();
     } catch (err: unknown) {
+      const blocked = getStockMutationBlockedResponse(err);
+      if (blocked) {
+        message.error(renderBlockersMessage(blocked), 8);
+        return;
+      }
+
       const errorMsg =
         err != null &&
         typeof err === 'object' &&
@@ -822,6 +919,55 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
     } catch (err: unknown) {
       message.error(getStockDeleteErrorMessage(err));
     }
+  };
+
+  const showPermanentDeleteDialog = (stock: Stock) => {
+    let confirmationText = '';
+    Modal.confirm({
+      title: 'Удалить акцию полностью',
+      okText: 'Удалить безвозвратно',
+      cancelText: 'Отмена',
+      okButtonProps: { danger: true },
+      content: (
+        <div style={{ display: 'grid', gap: 10 }}>
+          <Typography.Text>
+            Это действие необратимо. Будут удалены история котировок, фундаментальные данные и provider-артефакты.
+          </Typography.Text>
+          <Typography.Text type="secondary">
+            Если есть ссылки из портфелей, транзакций, ордеров или индексов — удаление будет заблокировано.
+          </Typography.Text>
+          <Input
+            placeholder={`Введите "${stock.ticker}" или "УДАЛИТЬ"`}
+            onChange={(event) => {
+              confirmationText = event.target.value;
+            }}
+          />
+        </div>
+      ),
+      onOk: async () => {
+        const normalized = confirmationText.trim().toUpperCase();
+        const valid = normalized === 'УДАЛИТЬ' || normalized === stock.ticker.trim().toUpperCase();
+        if (!valid) {
+          message.error('Подтверждение не пройдено.');
+          return Promise.reject();
+        }
+
+        try {
+          await deleteStockPermanent(stock.id, confirmationText.trim());
+          message.success('Акция удалена полностью');
+          if (editingStock?.id === stock.id) {
+            setModalOpen(false);
+            setEditingStock(null);
+          }
+          fetchData();
+        } catch (err: unknown) {
+          message.error(getStockPermanentDeleteErrorMessage(err), 8);
+          return Promise.reject();
+        }
+
+        return Promise.resolve();
+      },
+    });
   };
 
   const handleSetTracking = async (stock: Stock, tracked: boolean) => {
@@ -1164,18 +1310,29 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
           onOpenEdit: openEditModal,
           onDelete: handleDelete,
           trackingAction: isCatalogMode ? (
-            <Tooltip title={isTracked ? 'Акция уже отслеживается' : 'Добавить в отслеживаемые'}>
-              <span>
+            <Space size={6}>
+              <Tooltip title={isTracked ? 'Акция уже отслеживается' : 'Добавить в отслеживаемые'}>
+                <span>
+                  <Button
+                    icon={<StarOutlined />}
+                    size="small"
+                    aria-label={isTracked ? 'Акция уже отслеживается' : 'Добавить в отслеживаемые'}
+                    disabled={isTracked || trackingLoading}
+                    loading={trackingLoading}
+                    onClick={!isTracked && !trackingLoading ? () => handleSetTracking(stock, true) : undefined}
+                  />
+                </span>
+              </Tooltip>
+              <Tooltip title="Удалить акцию полностью">
                 <Button
-                  icon={<StarOutlined />}
+                  danger
+                  icon={<DeleteOutlined />}
                   size="small"
-                  aria-label={isTracked ? 'Акция уже отслеживается' : 'Добавить в отслеживаемые'}
-                  disabled={isTracked || trackingLoading}
-                  loading={trackingLoading}
-                  onClick={!isTracked && !trackingLoading ? () => handleSetTracking(stock, true) : undefined}
+                  aria-label="Удалить акцию полностью"
+                  onClick={() => showPermanentDeleteDialog(stock)}
                 />
-              </span>
-            </Tooltip>
+              </Tooltip>
+            </Space>
           ) : undefined,
         });
       },
@@ -1411,6 +1568,7 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
         submitting={submitting}
         onCancel={() => { setModalOpen(false); setEditingStock(null); }}
         onSubmit={handleSubmit}
+        onPermanentDelete={editingStock ? () => showPermanentDeleteDialog(editingStock) : undefined}
       />
     </>
   );

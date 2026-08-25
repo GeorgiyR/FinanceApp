@@ -18,6 +18,7 @@ public class StocksController : ControllerBase
     private readonly IStockHistoryService _stockHistoryService;
     private readonly IStockPerformanceCalculationService _stockPerformanceCalculationService;
     private readonly StockQuoteSnapshotPersistenceService _stockQuoteSnapshotPersistenceService;
+    private readonly IStockDependencyDiagnosticsService _stockDependencyDiagnosticsService;
     private readonly IStockMetadataEnrichmentService? _stockMetadataEnrichmentService;
     private readonly ISystemProcessJournalService? _systemProcessJournalService;
     private readonly ILogger<StocksController> _logger;
@@ -28,6 +29,7 @@ public class StocksController : ControllerBase
         IStockPerformanceCalculationService stockPerformanceCalculationService,
         StockQuoteSnapshotPersistenceService stockQuoteSnapshotPersistenceService,
         ILogger<StocksController> logger,
+        IStockDependencyDiagnosticsService? stockDependencyDiagnosticsService = null,
         IStockMetadataEnrichmentService? stockMetadataEnrichmentService = null,
         ISystemProcessJournalService? systemProcessJournalService = null)
     {
@@ -35,6 +37,7 @@ public class StocksController : ControllerBase
         _stockHistoryService = stockHistoryService;
         _stockPerformanceCalculationService = stockPerformanceCalculationService;
         _stockQuoteSnapshotPersistenceService = stockQuoteSnapshotPersistenceService;
+        _stockDependencyDiagnosticsService = stockDependencyDiagnosticsService ?? new StockDependencyDiagnosticsService(context);
         _stockMetadataEnrichmentService = stockMetadataEnrichmentService;
         _systemProcessJournalService = systemProcessJournalService;
         _logger = logger;
@@ -42,6 +45,7 @@ public class StocksController : ControllerBase
 
     /// <summary>Normalizes WKN/ISIN: trim whitespace, uppercase; blank becomes null.</summary>
     private static string? NormalizeIdentifier(string? value) => StockIdentifiers.Normalize(value);
+    private static string NormalizeTicker(string? value) => (value ?? string.Empty).Trim().ToUpperInvariant();
 
     /// <summary>Validates a finanzen.net slug. Returns a 400 result when invalid, otherwise null.</summary>
     private ActionResult? ValidateFinanzenNetSlug(string? slug)
@@ -561,6 +565,311 @@ public class StocksController : ControllerBase
         return NoContent();
     }
 
+    [HttpGet("{id}/dependency-diagnostics")]
+    public async Task<ActionResult<StockDependencyDiagnosticsResponse>> GetDependencyDiagnostics(int id, CancellationToken cancellationToken = default)
+    {
+        var exists = await _context.Stocks.AsNoTracking().AnyAsync(s => s.Id == id, cancellationToken);
+        if (!exists)
+        {
+            return NotFound();
+        }
+
+        var diagnostics = await _stockDependencyDiagnosticsService.GetDiagnosticsAsync(id, cancellationToken);
+        return Ok(diagnostics);
+    }
+
+    [HttpPut("{id}/identity")]
+    public async Task<ActionResult<StockIdentityChangeResponse>> UpdateIdentity(
+        int id,
+        UpdateStockIdentityRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var stock = await _context.Stocks.FirstOrDefaultAsync(s => s.Id == id, cancellationToken);
+        if (stock is null)
+        {
+            return NotFound();
+        }
+
+        var newTicker = NormalizeTicker(request.Ticker);
+        if (string.IsNullOrWhiteSpace(newTicker))
+        {
+            return BadRequest("Тикер не может быть пустым.");
+        }
+
+        if (!StockExchanges.TryNormalize(request.Exchange, out var newExchange))
+        {
+            return BadRequest(new ValidationProblemDetails(new Dictionary<string, string[]>
+            {
+                [nameof(request.Exchange)] = [$"Exchange must be one of: {string.Join(", ", StockExchanges.Supported)}."]
+            }));
+        }
+
+        var oldTicker = stock.Ticker;
+        var oldExchange = stock.Exchange;
+        var identityChanged = !string.Equals(oldTicker, newTicker, StringComparison.Ordinal)
+                              || !string.Equals(oldExchange, newExchange, StringComparison.Ordinal);
+        var transitionLabel = $"{oldTicker} ({oldExchange}) → {newTicker} ({newExchange})";
+
+        if (!identityChanged)
+        {
+            return Ok(new StockIdentityChangeResponse
+            {
+                StockId = stock.Id,
+                OldTicker = oldTicker,
+                OldExchange = oldExchange,
+                NewTicker = oldTicker,
+                NewExchange = oldExchange,
+                IdentityChanged = false,
+                ClearedHistoryRows = 0,
+                ClearedFundamentalsSnapshot = false,
+                ClearedEnrichmentResultRows = 0,
+                RefreshScheduled = false,
+            });
+        }
+
+        if (!string.Equals(request.ConfirmationText?.Trim(), transitionLabel, StringComparison.OrdinalIgnoreCase))
+        {
+            return BadRequest($"Подтверждение не пройдено. Введите точно: {transitionLabel}");
+        }
+
+        var diagnostics = await _stockDependencyDiagnosticsService.GetDiagnosticsAsync(stock.Id, cancellationToken);
+        if (diagnostics.HasBlockers)
+        {
+            return Conflict(BuildBlockedResponse(
+                "Невозможно изменить тикер/биржу: обнаружены бизнес-зависимости. Исправление идентичности разрешено только для нереференсной акции.",
+                diagnostics));
+        }
+
+        var duplicateListing = await _context.Stocks
+            .AsNoTracking()
+            .AnyAsync(
+                s => s.Id != stock.Id
+                     && s.Ticker == newTicker
+                     && s.Exchange == newExchange,
+                cancellationToken);
+        if (duplicateListing)
+        {
+            return Conflict(new StockMutationBlockedResponse
+            {
+                Message = BuildListingDuplicateMessage(newTicker, newExchange),
+                Diagnostics = new StockDependencyDiagnosticsResponse
+                {
+                    StockId = stock.Id,
+                    HasBlockers = true,
+                    Blockers =
+                    [
+                        new StockDependencyBlockerResponse
+                        {
+                            Category = "duplicateListing",
+                            DisplayName = "Конфликт листинга",
+                            Count = 1,
+                            RelatedNames = [$"{newTicker} ({newExchange})"],
+                        },
+                    ],
+                },
+            });
+        }
+
+        if (request.RetainProviderSymbol && !string.IsNullOrWhiteSpace(stock.ProviderSymbol))
+        {
+            var providerSymbol = stock.ProviderSymbol.Trim();
+            var providerConflict = await _context.Stocks
+                .AsNoTracking()
+                .AnyAsync(s => s.Id != stock.Id && s.ProviderSymbol == providerSymbol, cancellationToken);
+            if (providerConflict)
+            {
+                return Conflict(new StockMutationBlockedResponse
+                {
+                    Message = BuildProviderSymbolDuplicateMessage(providerSymbol),
+                    Diagnostics = new StockDependencyDiagnosticsResponse
+                    {
+                        StockId = stock.Id,
+                        HasBlockers = true,
+                        Blockers =
+                        [
+                            new StockDependencyBlockerResponse
+                            {
+                                Category = "duplicateProviderSymbol",
+                                DisplayName = "Конфликт ProviderSymbol",
+                                Count = 1,
+                                RelatedNames = [providerSymbol],
+                            },
+                        ],
+                    },
+                });
+            }
+        }
+
+        var hasRelationalTransactions = _context.Database.IsRelational();
+        await using var transaction = hasRelationalTransactions
+            ? await _context.Database.BeginTransactionAsync(cancellationToken)
+            : null;
+        var recheckDiagnostics = await _stockDependencyDiagnosticsService.GetDiagnosticsAsync(stock.Id, cancellationToken);
+        if (recheckDiagnostics.HasBlockers)
+        {
+            if (transaction is not null)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+            }
+            return Conflict(BuildBlockedResponse("Невозможно изменить тикер/биржу: обнаружены зависимости при повторной проверке.", recheckDiagnostics));
+        }
+
+        var historyRows = await _context.StockHistoricalPrices.Where(x => x.StockId == stock.Id).ToListAsync(cancellationToken);
+        var fundamentals = await _context.FundamentalsSnapshots.Where(x => x.StockId == stock.Id).ToListAsync(cancellationToken);
+        var enrichmentResults = await _context.StockMetadataEnrichmentResults.Where(x => x.StockId == stock.Id).ToListAsync(cancellationToken);
+
+        stock.Ticker = newTicker;
+        stock.Exchange = newExchange;
+        stock.ProviderSymbol = request.RetainProviderSymbol ? stock.ProviderSymbol?.Trim() : null;
+        stock.FinanzenNetSlug = null;
+        stock.CurrentPrice = 0m;
+        stock.CurrentPriceChange = null;
+        stock.CurrentPriceChangePercent = null;
+        stock.CurrentPriceAt = null;
+        stock.CurrentPriceIsDelayed = false;
+        stock.CurrentPriceDelayWarning = null;
+        stock.LastIncrementalHistoryRefreshSucceededAtUtc = null;
+        stock.LastHistoryReconciliationSucceededAtUtc = null;
+        stock.LastFullHistoryBackfillSucceededAtUtc = null;
+        stock.NextIncrementalHistoryRefreshAtUtc = DateTime.UtcNow;
+        stock.NextHistoryReconciliationAtUtc = DateTime.UtcNow;
+        stock.NextFullHistoryBackfillAtUtc = DateTime.UtcNow;
+        stock.UpdatedAt = DateTime.UtcNow;
+
+        if (historyRows.Count > 0)
+        {
+            _context.StockHistoricalPrices.RemoveRange(historyRows);
+        }
+
+        if (fundamentals.Count > 0)
+        {
+            _context.FundamentalsSnapshots.RemoveRange(fundamentals);
+        }
+
+        if (enrichmentResults.Count > 0)
+        {
+            _context.StockMetadataEnrichmentResults.RemoveRange(enrichmentResults);
+        }
+
+        try
+        {
+            await _context.SaveChangesAsync(cancellationToken);
+            if (transaction is not null)
+            {
+                await transaction.CommitAsync(cancellationToken);
+            }
+        }
+        catch (DbUpdateException ex) when (IsDuplicateKeyException(ex))
+        {
+            if (transaction is not null)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+            }
+            return Conflict("Нарушено ограничение уникальности при изменении тикера/биржи.");
+        }
+
+        string? refreshWarning = null;
+        if (_stockMetadataEnrichmentService is not null)
+        {
+            try
+            {
+                var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+                await _stockMetadataEnrichmentService.EnqueueSelectedAsync([stock.Id], userId, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                refreshWarning = $"Не удалось запланировать enrichment: {ex.Message}";
+            }
+        }
+
+        _logger.LogInformation(
+            "Stock identity corrected. StockId={StockId} Old={OldTicker}/{OldExchange} New={NewTicker}/{NewExchange} ClearedHistoryRows={ClearedHistoryRows} ClearedFundamentals={ClearedFundamentals}",
+            stock.Id,
+            oldTicker,
+            oldExchange,
+            newTicker,
+            newExchange,
+            historyRows.Count,
+            fundamentals.Count > 0);
+
+        return Ok(new StockIdentityChangeResponse
+        {
+            StockId = stock.Id,
+            OldTicker = oldTicker,
+            OldExchange = oldExchange,
+            NewTicker = newTicker,
+            NewExchange = newExchange,
+            IdentityChanged = true,
+            ClearedHistoryRows = historyRows.Count,
+            ClearedFundamentalsSnapshot = fundamentals.Count > 0,
+            ClearedEnrichmentResultRows = enrichmentResults.Count,
+            RefreshScheduled = true,
+            RefreshWarning = refreshWarning,
+        });
+    }
+
+    [HttpDelete("{id}/permanent")]
+    public async Task<IActionResult> DeletePermanent(
+        int id,
+        [FromBody] DeleteStockPermanentRequest? request,
+        CancellationToken cancellationToken = default)
+    {
+        var stock = await _context.Stocks.FirstOrDefaultAsync(s => s.Id == id, cancellationToken);
+        if (stock is null)
+        {
+            return NotFound();
+        }
+
+        var confirmation = request?.ConfirmationText?.Trim();
+        var confirmed =
+            string.Equals(confirmation, "УДАЛИТЬ", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(confirmation, stock.Ticker, StringComparison.OrdinalIgnoreCase);
+        if (!confirmed)
+        {
+            return BadRequest("Подтверждение не пройдено. Введите тикер или слово «УДАЛИТЬ».");
+        }
+
+        var diagnostics = await _stockDependencyDiagnosticsService.GetDiagnosticsAsync(stock.Id, cancellationToken);
+        if (diagnostics.HasBlockers)
+        {
+            return Conflict(BuildBlockedResponse(
+                "Невозможно удалить акцию полностью: сначала устраните зависимости (портфели, транзакции, ордера, индексы).",
+                diagnostics));
+        }
+
+        var hasRelationalTransactions = _context.Database.IsRelational();
+        await using var transaction = hasRelationalTransactions
+            ? await _context.Database.BeginTransactionAsync(cancellationToken)
+            : null;
+        var recheckDiagnostics = await _stockDependencyDiagnosticsService.GetDiagnosticsAsync(stock.Id, cancellationToken);
+        if (recheckDiagnostics.HasBlockers)
+        {
+            if (transaction is not null)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+            }
+            return Conflict(BuildBlockedResponse("Удаление отменено: при повторной проверке появились зависимости.", recheckDiagnostics));
+        }
+
+        var enrichmentResults = await _context.StockMetadataEnrichmentResults
+            .Where(x => x.StockId == stock.Id)
+            .ToListAsync(cancellationToken);
+        if (enrichmentResults.Count > 0)
+        {
+            _context.StockMetadataEnrichmentResults.RemoveRange(enrichmentResults);
+        }
+
+        _context.Stocks.Remove(stock);
+        await _context.SaveChangesAsync(cancellationToken);
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync(cancellationToken);
+        }
+
+        _logger.LogInformation("Stock permanently deleted. StockId={StockId} Ticker={Ticker} Exchange={Exchange}", stock.Id, stock.Ticker, stock.Exchange);
+        return NoContent();
+    }
+
     private static UpdateStockQuoteResponse BuildQuoteResponse(int stockId, Stock stock, bool applied) => new()
     {
         StockId = stockId,
@@ -919,4 +1228,11 @@ public class StocksController : ControllerBase
 
     private static string BuildListingDuplicateMessage(string ticker, string exchange)
         => $"Акция с тикером «{ticker}» на бирже «{exchange}» уже существует.";
+
+    private static StockMutationBlockedResponse BuildBlockedResponse(string message, StockDependencyDiagnosticsResponse diagnostics)
+        => new()
+        {
+            Message = message,
+            Diagnostics = diagnostics,
+        };
 }

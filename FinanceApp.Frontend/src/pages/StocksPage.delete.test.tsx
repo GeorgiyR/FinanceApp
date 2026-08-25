@@ -1,6 +1,9 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { Button, Popconfirm, Tooltip } from 'antd';
+import { readFileSync } from 'fs';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
 import {
   getStockDeleteErrorMessage,
   PROTECTED_STOCK_DELETE_TOOLTIP,
@@ -8,6 +11,9 @@ import {
   StockDeleteAction,
   IDENTITY_IMMUTABLE_HELPER,
 } from './StocksPage';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const stocksPageSource = readFileSync(join(__dirname, 'StocksPage.tsx'), 'utf8');
 
 const getProtectedDeleteButton = (node: React.ReactElement) => {
   const tooltip = node;
@@ -84,5 +90,13 @@ describe('identity immutability in edit mode', () => {
 
   it('IDENTITY_IMMUTABLE_HELPER instructs user to create a new stock for a different ticker/exchange', () => {
     expect(IDENTITY_IMMUTABLE_HELPER.toLowerCase()).toContain('создайте новую акцию');
+  });
+});
+
+describe('permanent delete source contracts', () => {
+  it('keeps untrack wording and adds explicit permanent-delete wording', () => {
+    expect(stocksPageSource).toContain('Удалить из отслеживаемых');
+    expect(stocksPageSource).toContain('Удалить акцию полностью');
+    expect(stocksPageSource).toContain('deleteStockPermanent(');
   });
 });

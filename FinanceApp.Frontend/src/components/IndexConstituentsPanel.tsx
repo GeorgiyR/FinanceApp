@@ -774,7 +774,10 @@ const IndexConstituentsPanel: React.FC<IndexConstituentsPanelProps> = ({
     }
   }, [ensureEditLookupsLoaded, messageApi]);
 
-  const handleEditSubmit = useCallback(async (values: Parameters<typeof buildUpdateStockMetadataPayload>[0]) => {
+  const handleEditSubmit = useCallback(async (
+    values: Parameters<typeof buildUpdateStockMetadataPayload>[0],
+    _context: { identityEditingEnabled: boolean },
+  ) => {
     if (editingStock == null) {
       return;
     }

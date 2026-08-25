@@ -527,6 +527,31 @@ export interface UpdateStockMetadataRequest {
   marketIndexIds?: number[];
 }
 
+export interface UpdateStockIdentityRequest {
+  ticker: string;
+  exchange: StockExchange;
+  confirmationText: string;
+  retainProviderSymbol?: boolean;
+}
+
+export interface StockDependencyBlockerResponse {
+  category: string;
+  displayName: string;
+  count: number;
+  relatedNames: string[];
+}
+
+export interface StockDependencyDiagnosticsResponse {
+  stockId: number;
+  hasBlockers: boolean;
+  blockers: StockDependencyBlockerResponse[];
+}
+
+export interface StockMutationBlockedResponse {
+  message: string;
+  diagnostics: StockDependencyDiagnosticsResponse;
+}
+
 export interface CreateMarketIndexRequest {
   name: string;
   code: string;
