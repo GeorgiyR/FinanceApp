@@ -46,6 +46,10 @@ public sealed class MarketIndexHistoryResponse
     public int MarketIndexId { get; init; }
     public string Range { get; init; } = string.Empty;
     public string Interval { get; init; } = string.Empty;
+    public decimal? CurrentPrice { get; init; }
+    public DateTime? CurrentPriceAt { get; init; }
+    public bool CurrentPriceIsDelayed { get; init; }
+    public string? CurrentPriceDelayWarning { get; init; }
     public bool IsStale { get; init; }
     public string? StaleReason { get; init; }
     public IReadOnlyList<MarketIndexHistoryPointDto> Points { get; init; } = Array.Empty<MarketIndexHistoryPointDto>();

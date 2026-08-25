@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Segmented, Spin, Typography, Empty, Alert, Button, Tooltip, message, Popconfirm } from 'antd';
+import { Segmented, Spin, Typography, Empty, Alert, Button, Tooltip, message, Popconfirm, Modal, Input } from 'antd';
 import { LinkOutlined, ReloadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
@@ -17,7 +17,10 @@ import {
 import {
   getIndexConstituentHistory,
   getStockHistory,
+  getStockHistoryRoutingDiagnostics,
+  hardResetStockHistory,
   refreshStockHistory,
+  validateStockHistoryProviderSymbol,
 } from '../services/api';
 import {
   getStockPriceChartSummary,
@@ -43,6 +46,7 @@ import type {
   IndexConstituentHistoryRefreshJobResponse,
   IndexConstituentHistoryRefreshJobState,
   StockHistoryRange,
+  StockHistoryRepairDiagnosticsResponse,
   StockHistoryResponse,
   StockQuoteResponse,
 } from '../types';
@@ -177,6 +181,13 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyRefreshing, setHistoryRefreshing] = useState(false);
   const [historyResponse, setHistoryResponse] = useState<StockHistoryResponse | null>(null);
+  const [hardResetModalOpen, setHardResetModalOpen] = useState(false);
+  const [hardResetLoading, setHardResetLoading] = useState(false);
+  const [validationLoading, setValidationLoading] = useState(false);
+  const [providerSymbolCandidate, setProviderSymbolCandidate] = useState('');
+  const [hardResetConfirmation, setHardResetConfirmation] = useState('');
+  const [repairDiagnostics, setRepairDiagnostics] = useState<StockHistoryRepairDiagnosticsResponse | null>(null);
+  const [repairValidation, setRepairValidation] = useState<StockHistoryRepairDiagnosticsResponse | null>(null);
   const historyRefreshAbortRef = useRef<AbortController | null>(null);
   const historyRefreshStateChangeRef = useRef(onIndexHistoryRefreshStateChange);
   const chartLayoutRef = useRef<HTMLDivElement | null>(null);
@@ -307,6 +318,61 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
     ticker,
   ]);
 
+  const openHardResetModal = useCallback(async () => {
+    setHardResetModalOpen(true);
+    setRepairValidation(null);
+    setHardResetConfirmation('');
+    setValidationLoading(true);
+    try {
+      const response = await getStockHistoryRoutingDiagnostics(stockId);
+      setRepairDiagnostics(response.data);
+      setProviderSymbolCandidate(response.data.configuredProviderSymbol ?? '');
+    } catch (error: unknown) {
+      setRepairDiagnostics(null);
+      message.error(getHistoryRefreshErrorMessage(error, 'Не удалось загрузить диагностику маршрутизации истории.'));
+    } finally {
+      setValidationLoading(false);
+    }
+  }, [stockId]);
+
+  const handleValidateProviderSymbol = useCallback(async () => {
+    setValidationLoading(true);
+    try {
+      const response = await validateStockHistoryProviderSymbol(stockId, providerSymbolCandidate || null);
+      setRepairValidation(response.data);
+      if (response.data.resultBucket === 'success' || response.data.resultBucket === 'partial') {
+        message.success('Символ поставщика успешно проверен.');
+      } else {
+        message.warning('Проверка завершилась с предупреждениями или ошибками. Сброс не будет выполнен.');
+      }
+    } catch (error: unknown) {
+      message.error(getHistoryRefreshErrorMessage(error, 'Не удалось проверить символ поставщика.'));
+    } finally {
+      setValidationLoading(false);
+    }
+  }, [providerSymbolCandidate, stockId]);
+
+  const handleHardReset = useCallback(async () => {
+    setHardResetLoading(true);
+    try {
+      const response = await hardResetStockHistory(stockId, hardResetConfirmation, providerSymbolCandidate || null);
+      setRepairValidation(response.data);
+      if (!response.data.resetPerformed) {
+        message.warning('Полный сброс не выполнен. Проверьте диагностику и повторите попытку.');
+        return;
+      }
+
+      message.success(`История полностью восстановлена: удалено ${response.data.deletedRows}, вставлено ${response.data.insertedRows}.`);
+      setHistoryResponse(null);
+      await fetchHistory();
+      setHardResetModalOpen(false);
+    } catch (error: unknown) {
+      message.error(getHistoryRefreshErrorMessage(error, 'Не удалось выполнить полный сброс истории.'));
+    } finally {
+      setHardResetLoading(false);
+    }
+  }, [fetchHistory, hardResetConfirmation, providerSymbolCandidate, stockId]);
+
   useEffect(() => () => {
     historyRefreshAbortRef.current?.abort();
     historyRefreshAbortRef.current = null;
@@ -337,6 +403,11 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
     return expectedProviderSymbol.toUpperCase() === liveQuote.symbol.toUpperCase();
   }, [expectedProviderSymbol, liveQuote?.symbol]);
   const listingLiveQuote = quoteMatchesListing ? liveQuote : null;
+  const hardResetConfirmationValid = useMemo(() => {
+    const normalized = hardResetConfirmation.trim().toUpperCase();
+    return normalized === 'УДАЛИТЬ' || normalized === ticker.trim().toUpperCase();
+  }, [hardResetConfirmation, ticker]);
+  const hardResetValidationPassed = repairValidation?.resultBucket === 'success' || repairValidation?.resultBucket === 'partial';
   const historyHasEurConversion = historyResponse?.rateToEur != null;
   const historyCurrencyCode = historyHasEurConversion
     ? 'EUR'
@@ -415,6 +486,7 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
           ? (selectedSessionSnapshot.liveQuote?.rawCurrentPrice ?? selectedSessionSnapshot.currentPrice)
           : selectedSessionSnapshot.currentPrice,
         isStale: selectedSessionSnapshot.isDelayed,
+        isForRequestedInstrument: selectedSessionSnapshot.source !== 'live' || quoteMatchesListing,
       };
     }
 
@@ -428,11 +500,18 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
         timestampUtc: listingLiveQuote.priceTimestampUtc,
         closeChart: currentPriceDisplayValue,
         rawClose: listingLiveQuote.rawCurrentPrice,
+        isForRequestedInstrument: quoteMatchesListing,
       };
     }
 
     return null;
-  }, [currentPriceDisplayValue, historyHasEurConversion, listingLiveQuote, selectedSessionSnapshot]);
+  }, [
+    currentPriceDisplayValue,
+    historyHasEurConversion,
+    listingLiveQuote,
+    quoteMatchesListing,
+    selectedSessionSnapshot,
+  ]);
 
   const historyChartData = useMemo(
     () => currentQuoteOverlay == null
@@ -753,6 +832,14 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
               Перезагрузить историю
             </Button>
           </Popconfirm>
+          <Button
+            size="small"
+            danger
+            onClick={() => void openHardResetModal()}
+            disabled={historyRefreshing || hardResetLoading || validationLoading}
+          >
+            Полностью восстановить историю
+          </Button>
           <Segmented
             className="stock-price-chart-segmented"
             value={historyRange}
@@ -1007,6 +1094,76 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
         </div>
       )}
       <StockTechnicalAnalysisPanel stockId={stockId} />
+      <Modal
+        title="Сбросить и загрузить историю заново"
+        open={hardResetModalOpen}
+        onCancel={() => setHardResetModalOpen(false)}
+        footer={[
+          <Button key="cancel" onClick={() => setHardResetModalOpen(false)}>
+            Отмена
+          </Button>,
+          <Button
+            key="reset"
+            danger
+            type="primary"
+            loading={hardResetLoading}
+            disabled={!hardResetValidationPassed || !hardResetConfirmationValid || validationLoading}
+            onClick={() => void handleHardReset()}
+          >
+            Полностью восстановить историю
+          </Button>,
+        ]}
+      >
+        <div style={{ display: 'grid', gap: 10 }}>
+          <Alert
+            type="warning"
+            showIcon
+            message="Операция разрушительная: старые исторические ряды будут удалены без сохранения."
+          />
+          <Text>StockId: <b>{stockId}</b> · {ticker} — {name}</Text>
+          <Text type="secondary">
+            ProviderSymbol: configured {repairDiagnostics?.configuredProviderSymbol ?? '—'} · effective {repairDiagnostics?.effectiveProviderSymbol ?? '—'}
+          </Text>
+          <Input
+            value={providerSymbolCandidate}
+            onChange={(event) => setProviderSymbolCandidate(event.target.value)}
+            placeholder="Кандидат ProviderSymbol (например ENR.DE)"
+            disabled={validationLoading || hardResetLoading}
+          />
+          <Button onClick={() => void handleValidateProviderSymbol()} loading={validationLoading} disabled={hardResetLoading}>
+            Проверить символ
+          </Button>
+          {repairValidation && (
+            <>
+              <Alert
+                type={repairValidation.resultBucket === 'success' || repairValidation.resultBucket === 'partial' ? 'info' : 'error'}
+                showIcon
+                message={`Результат: ${repairValidation.resultBucket}`}
+              />
+              <Text type="secondary">
+                Удалено: {repairValidation.deletedRows} · Вставлено: {repairValidation.insertedRows} · Финал: {repairValidation.finalRows}
+              </Text>
+              {repairValidation.intervals.map((interval) => (
+                <Text key={interval.interval} type={interval.isUnavailable ? 'warning' : undefined}>
+                  {interval.interval}: fetched={interval.fetchedCount}, accepted={interval.acceptedCount}, rejected={interval.rejectedCount}
+                </Text>
+              ))}
+              {repairValidation.warnings.map((warning, index) => (
+                <Text key={`warning-${index}`} type="warning">{warning}</Text>
+              ))}
+              {repairValidation.errors.map((errorText, index) => (
+                <Text key={`error-${index}`} type="danger">{errorText}</Text>
+              ))}
+            </>
+          )}
+          <Input
+            value={hardResetConfirmation}
+            onChange={(event) => setHardResetConfirmation(event.target.value)}
+            placeholder={`Введите "${ticker}" или "УДАЛИТЬ"`}
+            disabled={hardResetLoading}
+          />
+        </div>
+      </Modal>
     </div>
   );
 };

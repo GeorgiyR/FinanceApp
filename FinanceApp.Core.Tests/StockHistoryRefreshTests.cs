@@ -1102,12 +1102,164 @@ public class StockHistoryRefreshTests
         Assert.Null(response.VolumeMetrics.Turnover);
     }
 
+    [Fact]
+    public async Task HardResetHistoryAsync_Success_DeletesAllRowsAcrossIntervals_AndPersistsProviderOverride()
+    {
+        await using var context = CreateInMemoryContext();
+        var stock = new Stock
+        {
+            Id = 7,
+            Ticker = "SMEGF",
+            Exchange = StockExchanges.Frankfurt,
+            Name = "Siemens Energy AG",
+            ProviderSymbol = "SMEGF",
+        };
+        context.Stocks.Add(stock);
+        context.StockHistoricalPrices.AddRange(
+            new StockHistoricalPrice
+            {
+                StockId = stock.Id,
+                Interval = "10m",
+                Timestamp = new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc),
+                Open = 1m, High = 1m, Low = 1m, Close = 1m, Volume = 1,
+                QuoteCurrency = "USD", FinancialCurrency = "USD", NormalizedQuoteCurrency = "USD", QuoteUnitMultiplier = 1m,
+                IsQuoteDerived = true,
+            },
+            new StockHistoricalPrice
+            {
+                StockId = stock.Id,
+                Interval = "1d",
+                Timestamp = new DateTime(2000, 1, 2, 0, 0, 0, DateTimeKind.Utc),
+                Open = 2m, High = 2m, Low = 2m, Close = 2m, Volume = 2,
+                QuoteCurrency = "USD", FinancialCurrency = "USD", NormalizedQuoteCurrency = "USD", QuoteUnitMultiplier = 1m,
+            });
+        await context.SaveChangesAsync();
+
+        var now = new DateTime(2026, 8, 25, 0, 0, 0, DateTimeKind.Utc);
+        var handler = new CountingHandler(
+            SuccessChartJson(BuildCandles(ToUnix(now.AddMonths(-18)), 12, TimeSpan.FromDays(30), 10m)),
+            SuccessChartJson(BuildCandles(ToUnix(now.AddDays(-220)), 30, TimeSpan.FromDays(7), 20m)),
+            SuccessChartJson(BuildCandles(ToUnix(now.AddDays(-160)), 140, TimeSpan.FromDays(1), 30m)),
+            SuccessChartJson(BuildCandles(ToUnix(now.AddDays(-2)), 8, TimeSpan.FromHours(1), 40m)),
+            SuccessChartJson(BuildCandles(ToUnix(now.AddHours(-8)), 12, TimeSpan.FromMinutes(5), 50m)));
+        var service = CreateService(context, handler, new FixedTimeProvider(new DateTimeOffset(now)));
+
+        var result = await service.HardResetHistoryAsync(stock, "ENR.DE");
+
+        Assert.True(result.ResetPerformed);
+        Assert.Equal("success", result.ResultBucket);
+        Assert.Equal("ENR.DE", await context.Stocks.Where(x => x.Id == stock.Id).Select(x => x.ProviderSymbol).SingleAsync());
+        Assert.True(result.DeletedRows >= 2);
+        Assert.Equal(result.InsertedRows, await context.StockHistoricalPrices.CountAsync(x => x.StockId == stock.Id));
+        Assert.False(await context.StockHistoricalPrices.AnyAsync(x => x.StockId == stock.Id && x.IsQuoteDerived));
+        Assert.False(await context.StockHistoricalPrices.AnyAsync(x => x.StockId == stock.Id && x.Timestamp.Year == 2000));
+    }
+
+    [Fact]
+    public async Task HardResetHistoryAsync_ValidationFailure_DoesNotDeleteExistingHistory()
+    {
+        await using var context = CreateInMemoryContext();
+        var stock = new Stock { Id = 8, Ticker = "TEST", Exchange = StockExchanges.Nyse, Name = "Test" };
+        context.Stocks.Add(stock);
+        context.StockHistoricalPrices.Add(new StockHistoricalPrice
+        {
+            StockId = stock.Id,
+            Interval = "1d",
+            Timestamp = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc),
+            Open = 10m, High = 10m, Low = 10m, Close = 10m, Volume = 10,
+            QuoteCurrency = "USD", FinancialCurrency = "USD", NormalizedQuoteCurrency = "USD", QuoteUnitMultiplier = 1m,
+        });
+        await context.SaveChangesAsync();
+
+        var handler = new CountingHandler(
+            SuccessChartJson(1704067200, 10m), // 1mo insufficient
+            SuccessChartJson(1704067200, 10m), // 1wk insufficient
+            SuccessChartJson(1704067200, 10m), // 1d insufficient
+            SuccessChartJson(1704067200, 10m), // 1h
+            SuccessChartJson(1704067200, 10m)); // 5m
+        var service = CreateService(context, handler);
+
+        var beforeCount = await context.StockHistoricalPrices.CountAsync(x => x.StockId == stock.Id);
+        var result = await service.HardResetHistoryAsync(stock, null);
+        var afterCount = await context.StockHistoricalPrices.CountAsync(x => x.StockId == stock.Id);
+
+        Assert.False(result.ResetPerformed);
+        Assert.Equal("validationFailed", result.ResultBucket);
+        Assert.Equal(beforeCount, afterCount);
+    }
+
+    [Fact]
+    public async Task HardResetHistoryAsync_WhenIntradayUnavailable_RemovesOldIntradayAndReturnsPartial()
+    {
+        await using var context = CreateInMemoryContext();
+        var stock = new Stock { Id = 9, Ticker = "TEST2", Exchange = StockExchanges.Nyse, Name = "Test2" };
+        context.Stocks.Add(stock);
+        context.StockHistoricalPrices.Add(new StockHistoricalPrice
+        {
+            StockId = stock.Id,
+            Interval = "10m",
+            Timestamp = new DateTime(2026, 8, 1, 12, 0, 0, DateTimeKind.Utc),
+            Open = 20m, High = 20m, Low = 20m, Close = 20m, Volume = 20,
+            QuoteCurrency = "USD", FinancialCurrency = "USD", NormalizedQuoteCurrency = "USD", QuoteUnitMultiplier = 1m,
+            IsQuoteDerived = true,
+        });
+        await context.SaveChangesAsync();
+
+        var now = new DateTime(2026, 8, 25, 0, 0, 0, DateTimeKind.Utc);
+        var handler = new CountingHandler(
+            SuccessChartJson(BuildCandles(ToUnix(now.AddMonths(-18)), 12, TimeSpan.FromDays(30), 10m)),
+            SuccessChartJson(BuildCandles(ToUnix(now.AddDays(-220)), 30, TimeSpan.FromDays(7), 20m)),
+            SuccessChartJson(BuildCandles(ToUnix(now.AddDays(-160)), 140, TimeSpan.FromDays(1), 30m)),
+            """{"chart":{"result":[]}}""",
+            """{"chart":{"result":[]}}""");
+        var service = CreateService(context, handler, new FixedTimeProvider(new DateTimeOffset(now)));
+
+        var result = await service.HardResetHistoryAsync(stock, null);
+
+        Assert.True(result.ResetPerformed);
+        Assert.Equal("partial", result.ResultBucket);
+        Assert.Contains(result.Intervals, x => x.Interval == "10m" && x.IsUnavailable);
+        Assert.False(await context.StockHistoricalPrices.AnyAsync(x => x.StockId == stock.Id && x.Interval == "10m"));
+    }
+
+    [Fact]
+    public async Task ValidateProviderSymbolAsync_InvalidCandidate_IsRejectedBeforeProviderCalls()
+    {
+        await using var context = CreateInMemoryContext();
+        var stock = new Stock { Id = 10, Ticker = "AAPL", Exchange = StockExchanges.Nyse, Name = "Apple" };
+        context.Stocks.Add(stock);
+        await context.SaveChangesAsync();
+
+        var handler = new CountingHandler();
+        var service = CreateService(context, handler);
+
+        var result = await service.ValidateProviderSymbolAsync(stock, "bad symbol with space");
+
+        Assert.Equal("validationFailed", result.ResultBucket);
+        Assert.NotEmpty(result.Errors);
+        Assert.Equal(0, handler.CallCount);
+    }
+
     private static AppDbContext CreateInMemoryContext()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
             .Options;
         return new AppDbContext(options);
+    }
+
+    private static (long Timestamp, decimal Close, long Volume)[] BuildCandles(
+        long startUnixSeconds,
+        int count,
+        TimeSpan step,
+        decimal startClose)
+    {
+        return Enumerable.Range(0, count)
+            .Select(i => (
+                Timestamp: startUnixSeconds + (long)(step.TotalSeconds * i),
+                Close: startClose + i,
+                Volume: 100L + i))
+            .ToArray();
     }
 
     private static async Task<SqliteHarness> CreateSqliteHarnessAsync()

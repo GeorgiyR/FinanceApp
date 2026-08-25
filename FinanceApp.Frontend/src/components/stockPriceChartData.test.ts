@@ -270,7 +270,7 @@ describe('buildHistoryChartData', () => {
     expect(formatHistoryTimestamp('2026-08-21T22:30:00.000Z', '1m', 'DD.MM.YYYY')).toBe('21.08.2026');
   });
 
-  it('does not regress longer ranges by appending quote overlays outside 1m/3m/6m', () => {
+  it('appends a valid newer current snapshot for 1y weekly history', () => {
     const data = buildHistoryChartData([
       {
         timestamp: '2026-08-18T00:00:00.000Z',
@@ -295,7 +295,54 @@ describe('buildHistoryChartData', () => {
       rawClose: 21,
     });
 
-    expect(data).toHaveLength(1);
-    expect(data[0]?.timestamp).toBe('2026-08-18T00:00:00.000Z');
+    expect(data).toHaveLength(2);
+    expect(data[1]?.timestamp).toBe('2026-08-19T13:45:00.000Z');
+    expect(data[1]).toMatchObject({ closeChart: 21, volumeChart: null });
+  });
+
+  it('does not append equal/older/invalid/future snapshots for 1y', () => {
+    const basePoint = {
+      timestamp: '2026-08-19T13:45:00.000Z',
+      interval: '1wk',
+      openRaw: 20,
+      highRaw: 20,
+      lowRaw: 20,
+      closeRaw: 20,
+      openNormalized: 20,
+      highNormalized: 20,
+      lowNormalized: 20,
+      closeNormalized: 20,
+      openEur: 20,
+      highEur: 20,
+      lowEur: 20,
+      closeEur: 20,
+      volume: 300,
+    } satisfies StockHistoryPoint;
+
+    const equal = buildHistoryChartData([basePoint], '1y', {
+      timestampUtc: '2026-08-19T13:45:00.000Z',
+      closeChart: 21,
+      rawClose: 21,
+    });
+    const older = buildHistoryChartData([basePoint], '1y', {
+      timestampUtc: '2026-08-19T10:00:00.000Z',
+      closeChart: 21,
+      rawClose: 21,
+    });
+    const invalid = buildHistoryChartData([basePoint], '1y', {
+      timestampUtc: 'not-a-date',
+      closeChart: 21,
+      rawClose: 21,
+    });
+    const future = buildHistoryChartData([basePoint], '1y', {
+      timestampUtc: '2999-01-01T00:00:00.000Z',
+      closeChart: 21,
+      rawClose: 21,
+    });
+
+    expect(equal).toHaveLength(1);
+    expect(older).toHaveLength(1);
+    expect(invalid).toHaveLength(1);
+    expect(future).toHaveLength(1);
   });
 });

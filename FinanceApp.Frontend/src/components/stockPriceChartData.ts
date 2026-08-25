@@ -30,10 +30,12 @@ export type CurrentQuoteOverlayPoint = {
   closeChart: number | null | undefined;
   rawClose?: number | null | undefined;
   isStale?: boolean | null;
+  isForRequestedInstrument?: boolean | null;
 };
 
 const DATE_ONLY_HISTORY_RANGE_SET = new Set<StockHistoryRange>(['5y', '3y', '1y', '6m', '3m', '1m']);
 const SHORT_DAILY_HISTORY_RANGE_SET = new Set<StockHistoryRange>(['6m', '3m', '1m']);
+const APPEND_CURRENT_POINT_HISTORY_RANGE_SET = new Set<StockHistoryRange>(['1y', '6m', '3m', '1m']);
 
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
@@ -73,19 +75,26 @@ export const buildHistoryChartData = (
     }))
     .sort((left, right) => left.timestampMs - right.timestampMs);
 
-  if (SHORT_DAILY_HISTORY_RANGE_SET.has(historyRange) && currentQuoteOverlay?.isStale !== true) {
+  if (APPEND_CURRENT_POINT_HISTORY_RANGE_SET.has(historyRange)
+      && currentQuoteOverlay?.isStale !== true
+      && currentQuoteOverlay?.isForRequestedInstrument !== false) {
     const overlayTimestamp = currentQuoteOverlay?.timestampUtc ?? null;
     const overlayClose = currentQuoteOverlay?.closeChart ?? null;
     const overlayTimestampMs = overlayTimestamp ? dayjs.utc(overlayTimestamp).valueOf() : Number.NaN;
+    const nowMs = Date.now();
     const latestPoint = sortedPoints[sortedPoints.length - 1];
+    const hasSameTradingDay = latestPoint != null
+      && SHORT_DAILY_HISTORY_RANGE_SET.has(historyRange)
+      && getEffectiveHistoryDateKey(overlayTimestamp ?? '', historyRange) === getEffectiveHistoryDateKey(latestPoint.timestamp, historyRange);
 
     if (
       latestPoint != null
       && overlayTimestamp != null
       && Number.isFinite(overlayTimestampMs)
+      && overlayTimestampMs <= nowMs
       && isFiniteNumber(overlayClose)
       && overlayTimestampMs > latestPoint.timestampMs
-      && getEffectiveHistoryDateKey(overlayTimestamp, historyRange) !== getEffectiveHistoryDateKey(latestPoint.timestamp, historyRange)
+      && !hasSameTradingDay
     ) {
       sortedPoints.push({
         timestamp: overlayTimestamp,

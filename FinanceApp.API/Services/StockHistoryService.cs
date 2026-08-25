@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using FinanceApp.API.Models;
 using FinanceApp.Core.Models;
 using FinanceApp.Data.Data;
@@ -17,6 +18,7 @@ public class StockHistoryService : IStockHistoryService
     private static readonly TimeSpan YahooRetryMaxDelay = TimeSpan.FromSeconds(20);
     private static readonly ConcurrentDictionary<int, SemaphoreSlim> StockRefreshLocks = new();
     private static readonly ConcurrentDictionary<int, DateTime> LastOnDemandIntradayRefreshAttemptUtc = new();
+    private static readonly Regex ProviderSymbolRegex = new(@"^[A-Za-z0-9\^\.\-_]{1,50}$", RegexOptions.Compiled);
 
     private readonly AppDbContext _dbContext;
     private readonly IYahooRequestCoordinator _yahooRequestCoordinator;
@@ -194,7 +196,6 @@ public class StockHistoryService : IStockHistoryService
                     await _dbContext.SaveChangesAsync(CancellationToken.None);
                 }
             }
-
             throw;
         }
         finally
@@ -202,6 +203,396 @@ public class StockHistoryService : IStockHistoryService
             stockLock.Release();
         }
     }
+
+    public Task<StockHistoryRepairDiagnosticsResponse> GetRepairDiagnosticsAsync(Stock stock, CancellationToken cancellationToken = default)
+            {
+                var configuredProviderSymbol = string.IsNullOrWhiteSpace(stock.ProviderSymbol) ? null : stock.ProviderSymbol.Trim();
+                return Task.FromResult(new StockHistoryRepairDiagnosticsResponse
+                {
+                    StockId = stock.Id,
+                    Ticker = stock.Ticker,
+                    Exchange = stock.Exchange,
+                    Name = stock.Name,
+                    ConfiguredProviderSymbol = configuredProviderSymbol,
+                    EffectiveProviderSymbol = ResolveStockProviderSymbol(stock),
+                    ResultBucket = "success",
+                    ResetPerformed = false,
+                    FinalRows = 0,
+                    DeletedRows = 0,
+                    InsertedRows = 0,
+                });
+            }
+
+            public async Task<StockHistoryRepairDiagnosticsResponse> ValidateProviderSymbolAsync(
+                Stock stock,
+                string? candidateProviderSymbol,
+                CancellationToken cancellationToken = default)
+            {
+                var persisted = await _dbContext.Stocks.AsNoTracking().FirstOrDefaultAsync(x => x.Id == stock.Id, cancellationToken);
+                if (persisted is null)
+                {
+                    return new StockHistoryRepairDiagnosticsResponse
+                    {
+                        StockId = stock.Id,
+                        Ticker = stock.Ticker,
+                        Exchange = stock.Exchange,
+                        Name = stock.Name,
+                        ConfiguredProviderSymbol = stock.ProviderSymbol,
+                        EffectiveProviderSymbol = ResolveStockProviderSymbol(stock),
+                        CandidateOverrideSymbol = NormalizeCandidateProviderSymbol(candidateProviderSymbol),
+                        ResultBucket = "failed",
+                        Errors = new[] { "Акция не найдена." },
+                    };
+                }
+
+                var preparation = await PrepareHardResetAsync(persisted, candidateProviderSymbol, cancellationToken);
+                return preparation.Diagnostics;
+            }
+
+            public async Task<StockHistoryRepairDiagnosticsResponse> HardResetHistoryAsync(
+                Stock stock,
+                string? candidateProviderSymbol,
+                CancellationToken cancellationToken = default)
+            {
+                var stockLock = StockRefreshLocks.GetOrAdd(stock.Id, static _ => new SemaphoreSlim(1, 1));
+                await stockLock.WaitAsync(cancellationToken);
+                try
+                {
+                    var persisted = await _dbContext.Stocks.FirstOrDefaultAsync(x => x.Id == stock.Id, cancellationToken);
+                    if (persisted is null)
+                    {
+                        return new StockHistoryRepairDiagnosticsResponse
+                        {
+                            StockId = stock.Id,
+                            Ticker = stock.Ticker,
+                            Exchange = stock.Exchange,
+                            Name = stock.Name,
+                            ConfiguredProviderSymbol = stock.ProviderSymbol,
+                            EffectiveProviderSymbol = ResolveStockProviderSymbol(stock),
+                            CandidateOverrideSymbol = NormalizeCandidateProviderSymbol(candidateProviderSymbol),
+                            ResultBucket = "failed",
+                            Errors = new[] { "Акция не найдена." },
+                        };
+                    }
+
+                    var preparation = await PrepareHardResetAsync(persisted, candidateProviderSymbol, cancellationToken);
+                    if (preparation.Diagnostics.ResultBucket is not ("success" or "partial"))
+                    {
+                        return preparation.Diagnostics with { ResetPerformed = false };
+                    }
+
+                    var overrideProviderSymbol = preparation.CandidateProviderSymbol;
+                    var replacementRows = preparation.ReplacementRows;
+
+                    try
+                    {
+                        var (deletedRows, insertedRows) = await ReplaceHistoryAndOptionallyOverrideProviderSymbolAsync(
+                            persisted,
+                            overrideProviderSymbol,
+                            replacementRows,
+                            cancellationToken);
+
+                        var finalRows = await _dbContext.StockHistoricalPrices
+                            .AsNoTracking()
+                            .CountAsync(x => x.StockId == persisted.Id, cancellationToken);
+
+                        var intervalFinalCounts = await _dbContext.StockHistoricalPrices
+                            .AsNoTracking()
+                            .Where(x => x.StockId == persisted.Id)
+                            .GroupBy(x => x.Interval)
+                            .Select(group => new { Interval = group.Key, Count = group.Count() })
+                            .ToDictionaryAsync(x => x.Interval, x => x.Count, cancellationToken);
+
+                        var updatedIntervals = preparation.Diagnostics.Intervals
+                            .Select(interval => interval with
+                            {
+                                InsertedCount = interval.AcceptedCount,
+                                FinalCount = intervalFinalCounts.TryGetValue(interval.Interval, out var count) ? count : 0,
+                            })
+                            .ToList();
+
+                        return preparation.Diagnostics with
+                        {
+                            ResultBucket = preparation.Diagnostics.ResultBucket,
+                            DeletedRows = deletedRows,
+                            InsertedRows = insertedRows,
+                            FinalRows = finalRows,
+                            ResetPerformed = true,
+                            Intervals = updatedIntervals,
+                            EffectiveProviderSymbol = ResolveStockProviderSymbol(persisted),
+                            ConfiguredProviderSymbol = persisted.ProviderSymbol,
+                        };
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+                    {
+                        return preparation.Diagnostics with
+                        {
+                            ResultBucket = "failed",
+                            ResetPerformed = false,
+                            Errors = preparation.Diagnostics.Errors.Append("Сбой записи в БД: полное восстановление не выполнено.").ToArray(),
+                        };
+                    }
+                }
+                finally
+                {
+                    stockLock.Release();
+                }
+            }
+
+            private async Task<HardResetPreparation> PrepareHardResetAsync(
+                Stock stock,
+                string? candidateProviderSymbol,
+                CancellationToken cancellationToken)
+            {
+                var warnings = new List<string>();
+                var errors = new List<string>();
+                var normalizedCandidate = NormalizeCandidateProviderSymbol(candidateProviderSymbol);
+                var configuredProviderSymbol = string.IsNullOrWhiteSpace(stock.ProviderSymbol) ? null : stock.ProviderSymbol.Trim();
+                var effectiveProviderSymbol = normalizedCandidate ?? ResolveStockProviderSymbol(stock);
+
+                if (string.IsNullOrWhiteSpace(effectiveProviderSymbol))
+                {
+                    errors.Add("Не удалось определить effective ProviderSymbol.");
+                }
+                else if (!ProviderSymbolRegex.IsMatch(effectiveProviderSymbol))
+                {
+                    errors.Add("Кандидат ProviderSymbol содержит недопустимые символы.");
+                }
+
+                var baseDiagnostics = new StockHistoryRepairDiagnosticsResponse
+                {
+                    StockId = stock.Id,
+                    Ticker = stock.Ticker,
+                    Exchange = stock.Exchange,
+                    Name = stock.Name,
+                    ConfiguredProviderSymbol = configuredProviderSymbol,
+                    EffectiveProviderSymbol = effectiveProviderSymbol,
+                    CandidateOverrideSymbol = normalizedCandidate,
+                    Provider = "yahoo",
+                    ResultBucket = "validationFailed",
+                    Warnings = warnings,
+                    Errors = errors,
+                };
+
+                if (errors.Count > 0)
+                {
+                    return new HardResetPreparation(baseDiagnostics, normalizedCandidate, Array.Empty<StockHistoricalPrice>());
+                }
+
+                var monthly = await FetchCandlesAsync(effectiveProviderSymbol, "1mo", "5y", cancellationToken);
+                var weekly = await FetchCandlesAsync(effectiveProviderSymbol, "1wk", "1y", cancellationToken);
+                var daily = await FetchCandlesAsync(effectiveProviderSymbol, "1d", "2y", cancellationToken);
+                var hourly = await FetchCandlesAsync(effectiveProviderSymbol, "1h", "7d", cancellationToken);
+                var fiveMinute = await FetchCandlesAsync(effectiveProviderSymbol, "5m", "1d", cancellationToken);
+                var tenMinute = fiveMinute.WasRateLimited ? CandleFetchResult.RateLimited() : CandleFetchResult.Success(AggregateToTenMinute(fiveMinute.Batch));
+
+                if (monthly.WasRateLimited || weekly.WasRateLimited || daily.WasRateLimited || hourly.WasRateLimited || fiveMinute.WasRateLimited)
+                {
+                    var rateLimitedDiagnostics = baseDiagnostics with
+                    {
+                        ResultBucket = "rateLimited",
+                        Errors = new[] { "Поставщик временно ограничил запросы. Сброс не выполнен." },
+                    };
+                    return new HardResetPreparation(rateLimitedDiagnostics, normalizedCandidate, Array.Empty<StockHistoricalPrice>());
+                }
+
+                var intervalPlan = new (string Interval, CandleBatch Batch, bool Required, int MinCount)[]
+                {
+                    ("1mo", monthly.Batch, true, 12),
+                    ("1wk", weekly.Batch, true, 26),
+                    ("1d", daily.Batch, true, 120),
+                    ("1h", hourly.Batch, false, 1),
+                    ("10m", tenMinute.Batch, false, 1),
+                };
+
+                var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+                var replacementRows = new List<StockHistoricalPrice>();
+                var intervalDiagnostics = new List<StockHistoryRepairIntervalDiagnosticsResponse>();
+
+                foreach (var (interval, batch, required, minCount) in intervalPlan)
+                {
+                    var requestedCount = batch.Candles.Count;
+                    var accepted = new List<CandleData>();
+                    var rejectedCount = 0;
+                    var seenTimestamps = new HashSet<DateTime>();
+                    DateTime? previousTimestamp = null;
+
+                    foreach (var candle in batch.Candles.OrderBy(x => x.Timestamp))
+                    {
+                        var isOrdered = !previousTimestamp.HasValue || candle.Timestamp > previousTimestamp.Value;
+                        var isUnique = seenTimestamps.Add(candle.Timestamp);
+                        var timestampValid = candle.Timestamp <= nowUtc;
+                        var ohlcValid = IsValidOhlc(candle);
+
+                        if (!isOrdered || !isUnique || !timestampValid || !ohlcValid)
+                        {
+                            rejectedCount++;
+                            continue;
+                        }
+
+                        accepted.Add(candle);
+                        previousTimestamp = candle.Timestamp;
+                    }
+
+                    if (required && accepted.Count < minCount)
+                    {
+                        errors.Add($"Недостаточно валидных данных для интервала {interval}: {accepted.Count} < {minCount}.");
+                    }
+
+                    if (!required && accepted.Count == 0)
+                    {
+                        warnings.Add($"Интервал {interval} недоступен у поставщика и будет пропущен.");
+                    }
+
+                    foreach (var candle in accepted)
+                    {
+                        replacementRows.Add(new StockHistoricalPrice
+                        {
+                            StockId = stock.Id,
+                            Timestamp = candle.Timestamp,
+                            Interval = interval,
+                            Open = candle.Open,
+                            High = candle.High,
+                            Low = candle.Low,
+                            Close = candle.Close,
+                            AdjustedClose = candle.AdjustedClose,
+                            QuoteCurrency = batch.QuoteCurrency,
+                            FinancialCurrency = batch.FinancialCurrency,
+                            NormalizedQuoteCurrency = batch.NormalizedQuoteCurrency,
+                            QuoteUnitMultiplier = batch.QuoteUnitMultiplier,
+                            Volume = candle.Volume,
+                            IsQuoteDerived = false,
+                        });
+                    }
+
+                    intervalDiagnostics.Add(new StockHistoryRepairIntervalDiagnosticsResponse
+                    {
+                        Interval = interval,
+                        RequestedCount = requestedCount,
+                        FetchedCount = requestedCount,
+                        AcceptedCount = accepted.Count,
+                        RejectedCount = rejectedCount,
+                        InsertedCount = 0,
+                        FinalCount = 0,
+                        FirstTimestampUtc = accepted.Count > 0 ? accepted.First().Timestamp : null,
+                        LastTimestampUtc = accepted.Count > 0 ? accepted.Last().Timestamp : null,
+                        IsUnavailable = !required && accepted.Count == 0,
+                        Message = !required && accepted.Count == 0 ? "Поставщик не вернул исторические данные для интервала." : null,
+                    });
+                }
+
+                var hasAnyAccepted = intervalDiagnostics.Any(x => x.AcceptedCount > 0);
+                var resultBucket = errors.Count > 0
+                    ? "validationFailed"
+                    : !hasAnyAccepted
+                        ? "empty"
+                        : warnings.Count > 0
+                            ? "partial"
+                            : "success";
+
+                var latestAcceptedPoint = replacementRows.Count > 0
+                    ? replacementRows.Max(x => x.Timestamp)
+                    : (DateTime?)null;
+                var providerCurrency = intervalPlan
+                    .Select(plan => plan.Batch.NormalizedQuoteCurrency ?? plan.Batch.QuoteCurrency)
+                    .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
+
+                var diagnostics = baseDiagnostics with
+                {
+                    ResultBucket = resultBucket,
+                    ProviderQuoteSymbol = effectiveProviderSymbol,
+                    ProviderCurrency = providerCurrency,
+                    ProviderPriceTimestampUtc = latestAcceptedPoint,
+                    Intervals = intervalDiagnostics,
+                    Warnings = warnings,
+                    Errors = errors,
+                };
+
+                return new HardResetPreparation(diagnostics, normalizedCandidate, replacementRows);
+            }
+
+            private static string? NormalizeCandidateProviderSymbol(string? value)
+            {
+                var normalized = value?.Trim();
+                return string.IsNullOrWhiteSpace(normalized) ? null : normalized;
+            }
+
+            private static bool IsValidOhlc(CandleData candle)
+            {
+                if (candle.Open <= 0 || candle.High <= 0 || candle.Low <= 0 || candle.Close <= 0)
+                {
+                    return false;
+                }
+
+                if (candle.Low > candle.High)
+                {
+                    return false;
+                }
+
+                var maxBody = Math.Max(candle.Open, candle.Close);
+                var minBody = Math.Min(candle.Open, candle.Close);
+                return candle.High >= maxBody && candle.Low <= minBody;
+            }
+
+            private async Task<(int DeletedRows, int InsertedRows)> ReplaceHistoryAndOptionallyOverrideProviderSymbolAsync(
+                Stock persistedStock,
+                string? overrideProviderSymbol,
+                IReadOnlyCollection<StockHistoricalPrice> replacementRows,
+                CancellationToken cancellationToken)
+            {
+                if (!_dbContext.Database.IsRelational())
+                {
+                    var existingRows = await _dbContext.StockHistoricalPrices
+                        .Where(x => x.StockId == persistedStock.Id)
+                        .ToListAsync(cancellationToken);
+
+                    var deletedRows = existingRows.Count;
+                    if (deletedRows > 0)
+                    {
+                        _dbContext.StockHistoricalPrices.RemoveRange(existingRows);
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(overrideProviderSymbol))
+                    {
+                        persistedStock.ProviderSymbol = overrideProviderSymbol;
+                    }
+
+                    _dbContext.StockHistoricalPrices.AddRange(CloneReplacementRows(replacementRows));
+                    await _dbContext.SaveChangesAsync(cancellationToken);
+                    return (deletedRows, replacementRows.Count);
+                }
+
+                var executionStrategy = _dbContext.Database.CreateExecutionStrategy();
+                var deleted = 0;
+
+                await executionStrategy.ExecuteAsync(async () =>
+                {
+                    _dbContext.ChangeTracker.Clear();
+                    var trackedStock = await _dbContext.Stocks.FirstAsync(x => x.Id == persistedStock.Id, cancellationToken);
+                    await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+
+                    var existingRows = await _dbContext.StockHistoricalPrices
+                        .Where(x => x.StockId == persistedStock.Id)
+                        .ToListAsync(cancellationToken);
+                    deleted = existingRows.Count;
+                    if (deleted > 0)
+                    {
+                        _dbContext.StockHistoricalPrices.RemoveRange(existingRows);
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(overrideProviderSymbol))
+                    {
+                        trackedStock.ProviderSymbol = overrideProviderSymbol;
+                    }
+
+                    _dbContext.StockHistoricalPrices.AddRange(CloneReplacementRows(replacementRows));
+                    await _dbContext.SaveChangesAsync(cancellationToken);
+                    await transaction.CommitAsync(cancellationToken);
+                });
+
+                _dbContext.ChangeTracker.Clear();
+                return (deleted, replacementRows.Count);
+            }
 
     public async Task<StockHistoryResponse> GetHistoryAsync(Stock stock, string range, CancellationToken cancellationToken = default)
     {
@@ -354,6 +745,10 @@ public class StockHistoryService : IStockHistoryService
     }
 
     private sealed record IntervalBatch(string Interval, CandleBatch Batch);
+    private sealed record HardResetPreparation(
+        StockHistoryRepairDiagnosticsResponse Diagnostics,
+        string? CandidateProviderSymbol,
+        IReadOnlyCollection<StockHistoricalPrice> ReplacementRows);
 
     private static List<StockHistoricalPrice> BuildReplacementRows(int stockId, IEnumerable<IntervalBatch> batches)
     {
