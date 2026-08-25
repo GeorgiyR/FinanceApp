@@ -3,6 +3,7 @@ using FinanceApp.API.Models;
 using FinanceApp.API.Services;
 using FinanceApp.Core.Models;
 using FinanceApp.Data.Data;
+using Microsoft.Data.Sqlite;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -635,6 +636,103 @@ public class StocksControllerTests
     }
 
     [Fact]
+    public async Task UpdateEdit_IdentityAndMetadata_AppliesAtomicallyAndClearsUnchangedLegacyIdentifiers()
+    {
+        await using var context = CreateContext();
+        var stock = new Stock
+        {
+            Id = 311,
+            Ticker = "ALMTF",
+            Name = "Almonty Industries",
+            CommonName = "Almonty",
+            Exchange = StockExchanges.Nyse,
+            CurrentPrice = 10m,
+            Wkn = "A1JSSD",
+            Isin = "CA0203981034",
+            FinanzenNetSlug = "almonty-industries-aktie",
+            ProviderSymbol = "ALMTF",
+            UpdatedAt = DateTime.UtcNow,
+        };
+        context.Stocks.Add(stock);
+        context.StockHistoricalPrices.Add(new StockHistoricalPrice
+        {
+            StockId = stock.Id,
+            Interval = "1d",
+            Timestamp = DateTime.UtcNow.Date,
+            Open = 10,
+            High = 11,
+            Low = 9,
+            Close = 10,
+        });
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context);
+        var result = await controller.UpdateEdit(stock.Id, new UpdateStockEditRequest
+        {
+            Ticker = "ALM",
+            Exchange = StockExchanges.Nasdaq,
+            Name = "Almonty Industries Corp.",
+            CommonName = "Almonty",
+            Wkn = "A1JSSD",
+            Isin = "CA0203981034",
+            FinanzenNetSlug = "almonty-industries-aktie",
+            CurrentPrice = 11m,
+            ConfirmationText = "ALMTF (NYSE) → ALM (NASDAQ)",
+            IdentityEditingEnabled = true,
+            RetainProviderSymbol = false,
+        });
+
+        Assert.IsType<NoContentResult>(result);
+        var persisted = await context.Stocks.SingleAsync(x => x.Id == stock.Id);
+        Assert.Equal("ALM", persisted.Ticker);
+        Assert.Equal(StockExchanges.Nasdaq, persisted.Exchange);
+        Assert.Equal("Almonty Industries Corp.", persisted.Name);
+        Assert.Null(persisted.Wkn);
+        Assert.Null(persisted.Isin);
+        Assert.Null(persisted.FinanzenNetSlug);
+        Assert.Null(persisted.ProviderSymbol);
+        Assert.Equal(0, await context.StockHistoricalPrices.CountAsync(x => x.StockId == stock.Id));
+    }
+
+    [Fact]
+    public async Task UpdateEdit_InvalidMetadata_DoesNotApplyIdentityChange()
+    {
+        await using var context = CreateContext();
+        var stock = new Stock
+        {
+            Id = 312,
+            Ticker = "ALMTF",
+            Name = "Almonty Industries",
+            CommonName = "Almonty",
+            Exchange = StockExchanges.Nyse,
+            CurrentPrice = 10m,
+            UpdatedAt = DateTime.UtcNow,
+        };
+        context.Stocks.Add(stock);
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context);
+        var result = await controller.UpdateEdit(stock.Id, new UpdateStockEditRequest
+        {
+            Ticker = "ALM",
+            Exchange = StockExchanges.Nasdaq,
+            Name = "Almonty Industries",
+            CommonName = "Almonty",
+            Wkn = "BAD",
+            CurrentPrice = 11m,
+            ConfirmationText = "ALMTF (NYSE) → ALM (NASDAQ)",
+            IdentityEditingEnabled = true,
+            RetainProviderSymbol = false,
+        });
+
+        Assert.IsType<BadRequestObjectResult>(result);
+        var persisted = await context.Stocks.SingleAsync(x => x.Id == stock.Id);
+        Assert.Equal("ALMTF", persisted.Ticker);
+        Assert.Equal(StockExchanges.Nyse, persisted.Exchange);
+        Assert.Equal("Almonty Industries", persisted.Name);
+    }
+
+    [Fact]
     public async Task DeletePermanent_WithDependencies_ReturnsStructuredConflict()
     {
         await using var context = CreateContext();
@@ -715,6 +813,60 @@ public class StocksControllerTests
         Assert.False(await context.Stocks.AnyAsync(x => x.Id == stock.Id));
         Assert.Equal(0, await context.StockHistoricalPrices.CountAsync(x => x.StockId == stock.Id));
         Assert.Equal(0, await context.FundamentalsSnapshots.CountAsync(x => x.StockId == stock.Id));
+    }
+
+    [Fact]
+    public async Task DeletePermanent_WithoutBodyConfirmation_StillDeletes()
+    {
+        await using var context = CreateContext();
+        var stock = new Stock
+        {
+            Id = 502,
+            Ticker = "NOCONF",
+            Name = "No Confirm",
+            CommonName = "No Confirm",
+            Exchange = StockExchanges.Nyse,
+            CurrentPrice = 10m,
+            UpdatedAt = DateTime.UtcNow,
+        };
+        context.Stocks.Add(stock);
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context);
+        var result = await controller.DeletePermanent(stock.Id, null);
+
+        Assert.IsType<NoContentResult>(result);
+        Assert.False(await context.Stocks.AnyAsync(x => x.Id == stock.Id));
+    }
+
+    [Fact]
+    public async Task DeletePermanent_UnexpectedForeignKeyConflict_ReturnsStructuredConflict()
+    {
+        await using var context = await CreateSqliteRelationalContextAsync();
+        var stock = new Stock
+        {
+            Id = 503,
+            Ticker = "FKFAIL",
+            Name = "Foreign Key Failure",
+            CommonName = "Foreign Key Failure",
+            Exchange = StockExchanges.Nyse,
+            CurrentPrice = 10m,
+            UpdatedAt = DateTime.UtcNow,
+        };
+        context.Stocks.Add(stock);
+        await context.SaveChangesAsync();
+
+        await context.Database.ExecuteSqlRawAsync(
+            "CREATE TABLE UnknownStockRefs (Id INTEGER PRIMARY KEY AUTOINCREMENT, StockId INTEGER NOT NULL, FOREIGN KEY(StockId) REFERENCES Stocks(Id) ON DELETE RESTRICT);");
+        await context.Database.ExecuteSqlRawAsync("INSERT INTO UnknownStockRefs (StockId) VALUES ({0});", stock.Id);
+
+        var controller = CreateController(context);
+        var result = await controller.DeletePermanent(stock.Id, null);
+
+        var conflict = Assert.IsType<ConflictObjectResult>(result);
+        var payload = Assert.IsType<StockMutationBlockedResponse>(conflict.Value);
+        Assert.Contains(payload.Diagnostics.Blockers, b => b.Category == "unexpectedForeignKeyConflict");
+        Assert.True(await context.Stocks.AnyAsync(x => x.Id == stock.Id));
     }
 
 
@@ -2978,6 +3130,19 @@ public class StocksControllerTests
             .Options;
 
         return new AppDbContext(options);
+    }
+
+    private static async Task<AppDbContext> CreateSqliteRelationalContextAsync()
+    {
+        var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseSqlite(connection)
+            .Options;
+
+        var context = new AppDbContext(options);
+        await context.Database.EnsureCreatedAsync();
+        return context;
     }
 
     private static StocksController CreateController(AppDbContext context, IStockHistoryService? stockHistoryService = null)

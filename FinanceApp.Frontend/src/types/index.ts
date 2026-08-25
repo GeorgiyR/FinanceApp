@@ -534,6 +534,23 @@ export interface UpdateStockIdentityRequest {
   retainProviderSymbol?: boolean;
 }
 
+export interface UpdateStockEditRequest {
+  ticker: string;
+  exchange: StockExchange;
+  name: string;
+  commonName?: string;
+  wkn?: string | null;
+  isin?: string | null;
+  finanzenNetSlug?: string | null;
+  currentPrice: number;
+  sectorId?: number | null;
+  industryId?: number | null;
+  marketIndexIds?: number[];
+  confirmationText: string;
+  identityEditingEnabled: boolean;
+  retainProviderSymbol?: boolean;
+}
+
 export interface StockDependencyBlockerResponse {
   category: string;
   displayName: string;

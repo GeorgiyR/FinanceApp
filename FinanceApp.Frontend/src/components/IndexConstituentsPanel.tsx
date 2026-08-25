@@ -1603,6 +1603,7 @@ const IndexConstituentsPanel: React.FC<IndexConstituentsPanelProps> = ({
         marketIndices={marketIndices}
         loading={editModalLoading}
         submitting={editSubmitting}
+        allowIdentityEditing={false}
         onCancel={handleEditCancel}
         onSubmit={handleEditSubmit}
       />

@@ -12,6 +12,7 @@ import {
   Modal,
   Select,
   Space,
+  Alert,
 } from 'antd';
 import axios from 'axios';
 import {
@@ -32,8 +33,7 @@ import {
   getStockCatalog,
   getStockCatalogPerformance,
   createStock,
-  updateStockMetadata,
-  updateStockIdentity,
+  updateStockEdit,
   updateStockQuote,
   getTrackedStocks,
   getPortfolios,
@@ -62,6 +62,7 @@ import type {
   StockTrackingStatus,
   StockQuoteResponse,
   StockMutationBlockedResponse,
+  StockDependencyBlockerResponse,
   UpdateStockQuoteRequest,
 } from '../types';
 import { groupStocks } from '../utils/stockGrouping';
@@ -166,6 +167,17 @@ const getStockPermanentDeleteErrorMessage = (err: unknown): string => {
 
   return STOCK_PERMANENT_DELETE_GENERIC_ERROR;
 };
+
+const renderBlockersList = (blockers: StockDependencyBlockerResponse[]) => (
+  <ul style={{ margin: 0, paddingInlineStart: 18 }}>
+    {blockers.map((blocker) => (
+      <li key={`${blocker.category}-${blocker.displayName}`}>
+        {`${blocker.displayName}: ${blocker.count}`}
+        {blocker.relatedNames.length > 0 ? ` (${blocker.relatedNames.join(', ')})` : ''}
+      </li>
+    ))}
+  </ul>
+);
 
 type StockDeleteActionProps = {
   isProtected: boolean;
@@ -367,6 +379,13 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingStock, setEditingStock] = useState<Stock | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const submitInFlightRef = useRef(false);
+  const [editInlineError, setEditInlineError] = useState<string | null>(null);
+  const [editInlineBlockers, setEditInlineBlockers] = useState<StockDependencyBlockerResponse[]>([]);
+  const [permanentDeleteTarget, setPermanentDeleteTarget] = useState<Stock | null>(null);
+  const [permanentDeleteSubmitting, setPermanentDeleteSubmitting] = useState(false);
+  const [permanentDeleteInlineError, setPermanentDeleteInlineError] = useState<string | null>(null);
+  const [permanentDeleteInlineBlockers, setPermanentDeleteInlineBlockers] = useState<StockDependencyBlockerResponse[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [livePrices, setLivePrices] = useState<Record<number, LivePriceEntry>>({});
   const [expandedStockId, setExpandedStockId] = useState<number | null>(null);
@@ -821,11 +840,15 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
 
   const openCreateModal = () => {
     setEditingStock(null);
+    setEditInlineError(null);
+    setEditInlineBlockers([]);
     setModalOpen(true);
   };
 
   const openEditModal = (stock: Stock) => {
     setEditingStock(stock);
+    setEditInlineError(null);
+    setEditInlineBlockers([]);
     setModalOpen(true);
   };
 
@@ -851,6 +874,13 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
     values: Parameters<typeof buildUpdateStockMetadataPayload>[0],
     context: { identityEditingEnabled: boolean },
   ) => {
+    if (submitInFlightRef.current) {
+      return;
+    }
+
+    submitInFlightRef.current = true;
+    setEditInlineError(null);
+    setEditInlineBlockers([]);
     setSubmitting(true);
     try {
       if (editingStock) {
@@ -861,7 +891,7 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
         const identityChanged = newTicker !== oldTicker || newExchange !== oldExchange;
         if (identityChanged) {
           if (!context.identityEditingEnabled) {
-            message.error('Сначала включите режим «Изменить тикер / биржу».');
+            setEditInlineError('Сначала включите режим «Изменить тикер / биржу».');
             return;
           }
 
@@ -870,16 +900,25 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
           if (!confirmed) {
             return;
           }
-
-          await updateStockIdentity(editingStock.id, {
+          await updateStockEdit(editingStock.id, {
+            ...buildUpdateStockMetadataPayload(values),
             ticker: newTicker,
             exchange: newExchange,
             confirmationText: transitionLabel,
+            identityEditingEnabled: true,
+            retainProviderSymbol: false,
+          });
+        } else {
+          await updateStockEdit(editingStock.id, {
+            ...buildUpdateStockMetadataPayload(values),
+            ticker: oldTicker,
+            exchange: oldExchange,
+            confirmationText: '',
+            identityEditingEnabled: false,
             retainProviderSymbol: false,
           });
         }
 
-        await updateStockMetadata(editingStock.id, buildUpdateStockMetadataPayload(values));
         message.success('Акция обновлена');
       } else {
         await createStock(buildCreateStockPayload(values));
@@ -887,11 +926,14 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
       }
       setModalOpen(false);
       setEditingStock(null);
+      setEditInlineError(null);
+      setEditInlineBlockers([]);
       fetchData();
     } catch (err: unknown) {
       const blocked = getStockMutationBlockedResponse(err);
       if (blocked) {
-        message.error(renderBlockersMessage(blocked), 8);
+        setEditInlineError(blocked.message);
+        setEditInlineBlockers(blocked.diagnostics.blockers);
         return;
       }
 
@@ -905,9 +947,10 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
         typeof err.response.data === 'string'
           ? err.response.data
           : 'Ошибка сохранения акции';
-      message.error(errorMsg);
+      setEditInlineError(errorMsg);
     } finally {
       setSubmitting(false);
+      submitInFlightRef.current = false;
     }
   };
 
@@ -922,52 +965,52 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
   };
 
   const showPermanentDeleteDialog = (stock: Stock) => {
-    let confirmationText = '';
-    Modal.confirm({
-      title: 'Удалить акцию полностью',
-      okText: 'Удалить безвозвратно',
-      cancelText: 'Отмена',
-      okButtonProps: { danger: true },
-      content: (
-        <div style={{ display: 'grid', gap: 10 }}>
-          <Typography.Text>
-            Это действие необратимо. Будут удалены история котировок, фундаментальные данные и provider-артефакты.
-          </Typography.Text>
-          <Typography.Text type="secondary">
-            Если есть ссылки из портфелей, транзакций, ордеров или индексов — удаление будет заблокировано.
-          </Typography.Text>
-          <Input
-            placeholder={`Введите "${stock.ticker}" или "УДАЛИТЬ"`}
-            onChange={(event) => {
-              confirmationText = event.target.value;
-            }}
-          />
-        </div>
-      ),
-      onOk: async () => {
-        const normalized = confirmationText.trim().toUpperCase();
-        const valid = normalized === 'УДАЛИТЬ' || normalized === stock.ticker.trim().toUpperCase();
-        if (!valid) {
-          message.error('Подтверждение не пройдено.');
-          return Promise.reject();
-        }
+    setPermanentDeleteTarget(stock);
+    setPermanentDeleteSubmitting(false);
+    setPermanentDeleteInlineError(null);
+    setPermanentDeleteInlineBlockers([]);
+  };
 
-        try {
-          await deleteStockPermanent(stock.id, confirmationText.trim());
-          message.success('Акция удалена полностью');
-          if (editingStock?.id === stock.id) {
-            setModalOpen(false);
-            setEditingStock(null);
-          }
-          fetchData();
-        } catch (err: unknown) {
-          message.error(getStockPermanentDeleteErrorMessage(err), 8);
-          return Promise.reject();
-        }
+  const closePermanentDeleteDialog = (force = false) => {
+    if (permanentDeleteSubmitting && !force) {
+      return;
+    }
 
-        return Promise.resolve();
-      },
-    });
+    setPermanentDeleteTarget(null);
+    setPermanentDeleteInlineError(null);
+    setPermanentDeleteInlineBlockers([]);
+  };
+
+  const handlePermanentDelete = async () => {
+    if (permanentDeleteTarget == null || permanentDeleteSubmitting) {
+      return;
+    }
+
+    setPermanentDeleteSubmitting(true);
+    setPermanentDeleteInlineError(null);
+    setPermanentDeleteInlineBlockers([]);
+    try {
+      await deleteStockPermanent(permanentDeleteTarget.id);
+      message.success('Акция удалена полностью');
+      if (editingStock?.id === permanentDeleteTarget.id) {
+        setModalOpen(false);
+        setEditingStock(null);
+        setEditInlineError(null);
+        setEditInlineBlockers([]);
+      }
+      closePermanentDeleteDialog(true);
+      fetchData();
+    } catch (err: unknown) {
+      const blocked = getStockMutationBlockedResponse(err);
+      if (blocked) {
+        setPermanentDeleteInlineError(blocked.message);
+        setPermanentDeleteInlineBlockers(blocked.diagnostics.blockers);
+        return;
+      }
+      setPermanentDeleteInlineError(getStockPermanentDeleteErrorMessage(err));
+    } finally {
+      setPermanentDeleteSubmitting(false);
+    }
   };
 
   const handleSetTracking = async (stock: Stock, tracked: boolean) => {
@@ -1566,10 +1609,42 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
         sectors={sectors}
         marketIndices={marketIndices}
         submitting={submitting}
-        onCancel={() => { setModalOpen(false); setEditingStock(null); }}
+        inlineError={editInlineError}
+        inlineBlockers={editInlineBlockers}
+        onCancel={() => {
+          setModalOpen(false);
+          setEditingStock(null);
+          setEditInlineError(null);
+          setEditInlineBlockers([]);
+        }}
         onSubmit={handleSubmit}
         onPermanentDelete={editingStock ? () => showPermanentDeleteDialog(editingStock) : undefined}
       />
+      <Modal
+        open={permanentDeleteTarget != null}
+        title="Удалить акцию полностью?"
+        okText="Удалить"
+        cancelText="Отмена"
+        okButtonProps={{ danger: true, loading: permanentDeleteSubmitting, disabled: permanentDeleteSubmitting }}
+        cancelButtonProps={{ disabled: permanentDeleteSubmitting }}
+        onOk={handlePermanentDelete}
+        onCancel={() => closePermanentDeleteDialog()}
+        destroyOnHidden
+      >
+        <div style={{ display: 'grid', gap: 10 }}>
+          <Typography.Text>
+            История котировок, фундаментальные и технические данные будут удалены.
+          </Typography.Text>
+          {(permanentDeleteInlineError || permanentDeleteInlineBlockers.length > 0) && (
+            <Alert
+              type="error"
+              showIcon
+              message={permanentDeleteInlineError ?? 'Удаление заблокировано.'}
+              description={permanentDeleteInlineBlockers.length > 0 ? renderBlockersList(permanentDeleteInlineBlockers) : undefined}
+            />
+          )}
+        </div>
+      </Modal>
     </>
   );
 };
