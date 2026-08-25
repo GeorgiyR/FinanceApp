@@ -1108,6 +1108,86 @@ describe('StocksPage catalog period-performance sorting', () => {
     await waitFor(() => expect(screen.queryByText('Рост за период')).not.toBeInTheDocument());
     expect(vi.mocked(api.getStockCatalogPerformance).mock.calls.length).toBe(callCount);
   });
+
+  it('applies advanced filters from drawer and supports external reset without clearing search', async () => {
+    const user = userEvent.setup();
+    const api = await import('../services/api');
+    window.history.replaceState({}, '', '/stocks/catalog');
+    vi.mocked(api.getSectors).mockResolvedValue([
+      {
+        id: 15,
+        name: 'Information Technology',
+        normalizedName: 'INFORMATION TECHNOLOGY',
+        isArchived: false,
+        sortOrder: 1,
+        createdAtUtc: '',
+        updatedAtUtc: '',
+        industryCount: 1,
+        stockCount: 1,
+        industries: [{ id: 1501, sectorId: 15, name: 'Software', normalizedName: 'SOFTWARE', isArchived: false, sortOrder: 1, createdAtUtc: '', updatedAtUtc: '', stockCount: 1 }],
+      },
+      {
+        id: 20,
+        name: 'Materials',
+        normalizedName: 'MATERIALS',
+        isArchived: false,
+        sortOrder: 2,
+        createdAtUtc: '',
+        updatedAtUtc: '',
+        industryCount: 1,
+        stockCount: 1,
+        industries: [{ id: 2001, sectorId: 20, name: 'Chemicals', normalizedName: 'CHEMICALS', isArchived: false, sortOrder: 1, createdAtUtc: '', updatedAtUtc: '', stockCount: 1 }],
+      },
+    ]);
+
+    renderPage('catalog');
+    await waitFor(() => expect(screen.getAllByText('AAPL').length).toBeGreaterThan(0));
+
+    const searchInput = screen.getByPlaceholderText('Поиск: тикер, название, биржа, индекс');
+    await user.type(searchInput, 'A');
+
+    await user.click(screen.getByRole('button', { name: 'Открыть расширенные фильтры' }));
+    await user.click(screen.getByRole('combobox', { name: 'Фильтр по бирже' }));
+    await user.click(await screen.findByText('Frankfurt (FRA)'));
+    await user.click(screen.getByRole('button', { name: 'Применить' }));
+
+    await waitFor(() => expect(screen.queryByText('AAPL')).not.toBeInTheDocument());
+    expect(screen.getAllByText('BAS').length).toBeGreaterThan(0);
+    expect(screen.getByText('Фильтры (1)')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Сбросить расширенные фильтры' }));
+    await waitFor(() => expect(screen.getAllByText('AAPL').length).toBeGreaterThan(0));
+    expect((searchInput as HTMLInputElement).value).toBe('A');
+  });
+
+  it('resets catalog pagination to page 1 when advanced filters are applied', async () => {
+    const user = userEvent.setup();
+    const api = await import('../services/api');
+    window.history.replaceState({}, '', '/stocks/catalog');
+    const fiftyOneStocks = Array.from({ length: 51 }, (_, index) => ({
+      ...buildCatalogStock(index + 1),
+      exchange: index === 50 ? 'Frankfurt' : 'NYSE',
+    }));
+    vi.mocked(api.getStockCatalog).mockResolvedValue({ data: fiftyOneStocks });
+    vi.mocked(api.getSectors).mockResolvedValue([]);
+
+    renderPage('catalog');
+    await waitFor(() => expect(screen.getAllByText('T001').length).toBeGreaterThan(0));
+
+    const page2Trigger = document.querySelector('li.ant-pagination-item-2 a, li.ant-pagination-item-2 button');
+    expect(page2Trigger).not.toBeNull();
+    await user.click(page2Trigger as HTMLElement);
+    expect(document.querySelector('li.ant-pagination-item-2.ant-pagination-item-active')).not.toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'Открыть расширенные фильтры' }));
+    await user.click(screen.getByRole('combobox', { name: 'Фильтр по бирже' }));
+    await user.click(await screen.findByText('Frankfurt (FRA)'));
+    await user.click(screen.getByRole('button', { name: 'Применить' }));
+
+    await waitFor(() => {
+      expect(document.querySelector('li.ant-pagination-item-1.ant-pagination-item-active')).not.toBeNull();
+    });
+  });
 });
 
 describe('StocksPage tracked mode regression', () => {

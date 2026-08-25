@@ -618,7 +618,9 @@ export interface IndexConstituentDto {
   providerSymbol?: string | null;
   name: string;
   commonName?: string | null;
+  sectorId?: number | null;
   sector?: string | null;
+  industryId?: number | null;
   industry?: string | null;
   exchange: StockExchange;
   isin?: string | null;
