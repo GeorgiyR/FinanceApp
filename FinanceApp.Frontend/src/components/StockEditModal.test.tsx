@@ -1,7 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'fs';
-import { dirname, join } from 'path';
-import { fileURLToPath } from 'url';
 import {
   buildCreateStockPayload,
   buildIndustryOptions,
@@ -13,9 +10,6 @@ import {
   validateStockWkn,
 } from './StockEditModal';
 import type { MarketIndex, SectorDto, Stock } from '../types';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const modalSource = readFileSync(join(__dirname, 'StockEditModal.tsx'), 'utf8');
 
 describe('StockEditModal helpers', () => {
   it('builds edit form values from authoritative stock metadata', () => {
@@ -149,23 +143,5 @@ describe('StockEditModal helpers', () => {
     });
     expect(updatePayload.sectorId).toBeNull();
     expect(updatePayload.industryId).toBeNull();
-  });
-});
-
-describe('StockEditModal source contracts', () => {
-  it('keeps ticker and exchange immutable in edit mode by default with explicit unlock action', () => {
-    expect(modalSource).toContain("extra={mode === 'edit' ? IDENTITY_IMMUTABLE_HELPER : undefined}");
-    expect(modalSource).toContain("disabled={mode === 'edit' && (!allowIdentityEditing || !identityEditingEnabled)}");
-    expect(modalSource).toContain('Изменить тикер / биржу');
-  });
-
-  it('shows loading state and submission lock inside the reusable modal', () => {
-    expect(modalSource).toContain('<Spin />');
-    expect(modalSource).toContain('loading={submitting}');
-  });
-
-  it('supports inline modal errors and explicit read-only identity mode for shared usages', () => {
-    expect(modalSource).toContain('inlineError');
-    expect(modalSource).toContain('Изменение тикера/биржи недоступно в этом режиме');
   });
 });

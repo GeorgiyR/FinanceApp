@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Button, Form, Input, InputNumber, Modal, Select, Spin, Tag, Typography } from 'antd';
+import type { NamePath } from 'antd/es/form/interface';
 import type { RuleObject } from 'antd/es/form';
 import type { StoreValue } from 'antd/es/form/interface';
 import { getMarketIndices, getSectors } from '../services/api';
@@ -291,18 +292,29 @@ const StockEditModal: React.FC<StockEditModalProps> = ({
 }) => {
   const [form] = Form.useForm<StockFormValues>();
   const [identityEditingEnabled, setIdentityEditingEnabled] = useState(false);
+  const [validationSummary, setValidationSummary] = useState<string | null>(null);
+  const initializedFormKeyRef = useRef<string | null>(null);
   const selectedFormSectorId = Form.useWatch('sectorId', form) as number | undefined;
 
   useEffect(() => {
     if (!open) {
       form.resetFields();
       setIdentityEditingEnabled(false);
+      setValidationSummary(null);
+      initializedFormKeyRef.current = null;
+      return;
+    }
+
+    const formKey = mode === 'edit' ? `edit:${stock?.id ?? 'none'}` : 'create';
+    if (initializedFormKeyRef.current === formKey) {
       return;
     }
 
     form.setFieldsValue(buildStockFormValues(mode === 'edit' ? stock : null));
     setIdentityEditingEnabled(false);
-  }, [form, mode, open, stock]);
+    setValidationSummary(null);
+    initializedFormKeyRef.current = formKey;
+  }, [form, mode, open, stock?.id]);
 
   const sectorOptions = useMemo(
     () => buildSectorOptions(sectors, mode === 'edit' ? stock : null),
@@ -326,7 +338,19 @@ const StockEditModal: React.FC<StockEditModalProps> = ({
 
   const handleCancel = () => {
     form.resetFields();
+    setValidationSummary(null);
+    initializedFormKeyRef.current = null;
     onCancel();
+  };
+
+  const focusErrorField = (namePath: NamePath) => {
+    form.scrollToField(namePath, { block: 'center' });
+    requestAnimationFrame(() => {
+      const firstInput = document.querySelector<HTMLElement>(
+        '.ant-form-item-has-error input, .ant-form-item-has-error textarea, .ant-form-item-has-error .ant-select-selector',
+      );
+      firstInput?.focus();
+    });
   };
 
   return (
@@ -346,7 +370,23 @@ const StockEditModal: React.FC<StockEditModalProps> = ({
           form={form}
           layout="vertical"
           initialValues={{ exchange: DEFAULT_STOCK_EXCHANGE }}
-          onFinish={(values) => onSubmit(values, { identityEditingEnabled })}
+          scrollToFirstError={{ block: 'center' }}
+          onValuesChange={() => {
+            if (validationSummary) {
+              setValidationSummary(null);
+            }
+          }}
+          onFinish={async (values) => {
+            setValidationSummary(null);
+            await onSubmit(values, { identityEditingEnabled });
+          }}
+          onFinishFailed={(errorInfo) => {
+            const firstError = errorInfo.errorFields[0];
+            if (firstError) {
+              focusErrorField(firstError.name);
+            }
+            setValidationSummary('Проверьте обязательные поля и исправьте ошибки формы.');
+          }}
         >
           {inlineError && (
             <Form.Item>
@@ -401,6 +441,7 @@ const StockEditModal: React.FC<StockEditModalProps> = ({
               {!identityEditingEnabled ? (
                 <Button
                   block
+                  htmlType="button"
                   onClick={() => {
                     Modal.confirm({
                       title: 'Изменить тикер / биржу',
@@ -522,12 +563,21 @@ const StockEditModal: React.FC<StockEditModalProps> = ({
               {mode === 'edit' ? 'Сохранить' : 'Добавить'}
             </Button>
           </Form.Item>
+          {(validationSummary || inlineError) && (
+            <Form.Item>
+              <Alert
+                type="error"
+                showIcon
+                message={validationSummary ?? inlineError}
+              />
+            </Form.Item>
+          )}
           {mode === 'edit' && onPermanentDelete && (
             <Form.Item style={{ marginBottom: 0 }}>
               <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
                 Необратимо удаляет акцию и технические данные. Бизнес-ссылки блокируют удаление.
               </Typography.Text>
-              <Button danger block onClick={onPermanentDelete}>
+              <Button danger block htmlType="button" onClick={onPermanentDelete}>
                 Удалить акцию полностью
               </Button>
             </Form.Item>
