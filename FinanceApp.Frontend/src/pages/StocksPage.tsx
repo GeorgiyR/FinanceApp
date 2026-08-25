@@ -1408,15 +1408,6 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
                   />
                 </span>
               </Tooltip>
-              <Tooltip title="Удалить акцию полностью">
-                <Button
-                  danger
-                  icon={<DeleteOutlined />}
-                  size="small"
-                  aria-label="Удалить акцию полностью"
-                  onClick={() => showPermanentDeleteDialog(stock)}
-                />
-              </Tooltip>
             </Space>
           ) : undefined,
         });

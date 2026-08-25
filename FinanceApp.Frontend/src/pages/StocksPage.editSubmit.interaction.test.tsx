@@ -287,7 +287,30 @@ describe('StocksPage stock edit submit interactions', () => {
     resolveUpdate?.();
   });
 
-  it('keeps permanent delete behavior unchanged from edit modal', async () => {
+  it('shows permanent delete only inside edit modal and confirms deletion without typed input', async () => {
+    const api = await import('../services/api');
+
+    renderPage('catalog');
+    await waitFor(() => expect(screen.getByText('ALMTF')).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: 'Удалить акцию полностью' })).not.toBeInTheDocument();
+
+    await openEditModal();
+
+    const editDialog = screen.getByRole('dialog', { name: 'Редактировать акцию' });
+    const permanentDeleteButton = within(editDialog).getByRole('button', { name: 'Удалить акцию полностью' });
+    expect(permanentDeleteButton).toBeInTheDocument();
+    await userEvent.click(permanentDeleteButton);
+
+    const confirmTitle = await screen.findByText('Удалить акцию полностью?');
+    const confirmModal = confirmTitle.closest('.ant-modal');
+    expect(confirmModal).not.toBeNull();
+    expect(within(confirmModal as HTMLElement).queryByRole('textbox')).not.toBeInTheDocument();
+    await userEvent.click(within(confirmModal as HTMLElement).getByRole('button', { name: 'Удалить' }));
+
+    await waitFor(() => expect(vi.mocked(api.deleteStockPermanent)).toHaveBeenCalledTimes(1));
+  });
+
+  it('does not delete permanently when cancellation is chosen in confirmation dialog', async () => {
     const api = await import('../services/api');
 
     renderPage('catalog');
@@ -296,9 +319,11 @@ describe('StocksPage stock edit submit interactions', () => {
     const editDialog = screen.getByRole('dialog', { name: 'Редактировать акцию' });
     await userEvent.click(within(editDialog).getByRole('button', { name: 'Удалить акцию полностью' }));
 
-    await screen.findByText('Удалить акцию полностью?');
-    await userEvent.click(screen.getByRole('button', { name: 'Удалить' }));
+    const confirmTitle = await screen.findByText('Удалить акцию полностью?');
+    const confirmModal = confirmTitle.closest('.ant-modal');
+    expect(confirmModal).not.toBeNull();
+    await userEvent.click(within(confirmModal as HTMLElement).getByRole('button', { name: 'Отмена' }));
 
-    await waitFor(() => expect(vi.mocked(api.deleteStockPermanent)).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(vi.mocked(api.deleteStockPermanent)).toHaveBeenCalledTimes(0));
   });
 });
