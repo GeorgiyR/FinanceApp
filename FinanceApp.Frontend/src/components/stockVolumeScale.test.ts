@@ -8,39 +8,60 @@ import {
 } from './stockVolumeScale';
 
 describe('stockVolumeScale', () => {
-  it('activates adaptive mode for Frankfurt skewed/outlier-dominated volume distribution', () => {
+  it('activates adaptive mode for Frankfurt with a single dominant outlier', () => {
     const analysis = analyzeAdaptiveVolumeScale('Frankfurt', [120, 160, 200, 300, 42000]);
     expect(analysis.adaptiveScaleActive).toBe(true);
     expect(analysis.hasPositiveFiniteVolume).toBe(true);
     expect(analysis.actualUpperBound).toBe(42000);
     expect(analysis.displayUpperBound).toBeLessThan(analysis.actualUpperBound ?? 0);
+    expect(analysis.activationReason).toBe('maxToMedian');
+  });
+
+  it('activates for Frankfurt upper-tail cluster where max/p95<2 but p95/median is extreme', () => {
+    const volumes = [100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200, 210, 220, 230, 240, 250, 260, 30000, 45000, 60000];
+    const analysis = analyzeAdaptiveVolumeScale('frankfurt', volumes);
+    expect(analysis.adaptiveScaleActive).toBe(true);
+    expect(analysis.activationReason).toBe('combined');
+    expect((analysis.actualUpperBound ?? 0) / (analysis.p95 ?? 1)).toBeLessThan(2);
+  });
+
+  it('activates on AMD-like long-range Frankfurt shape and keeps a materially lower display upper bound', () => {
+    const amdLikeFrankfurt = [281, 320, 410, 520, 610, 700, 780, 860, 940, 1010, 1090, 1180, 1270, 1350, 1440, 1530, 1610, 1700, 1820, 1950, 2200, 2600, 3200, 3800, 4700, 6200, 8400, 12000, 30000, 52000, 78000];
+    const analysis = analyzeAdaptiveVolumeScale('Frankfurt', amdLikeFrankfurt);
+    expect(analysis.adaptiveScaleActive).toBe(true);
+    expect(analysis.displayUpperBound).toBeGreaterThan(6000);
+    expect(analysis.displayUpperBound).toBeLessThan(10000);
   });
 
   it('keeps ordinary scaling for Frankfurt when distribution is not materially skewed', () => {
-    const analysis = analyzeAdaptiveVolumeScale('Frankfurt', [120, 150, 170, 200, 230]);
+    const analysis = analyzeAdaptiveVolumeScale('Frankfurt', [120, 150, 170, 200, 230, 250, 270]);
     expect(analysis.adaptiveScaleActive).toBe(false);
-    expect(analysis.displayUpperBound).toBe(230);
+    expect(analysis.displayUpperBound).toBe(270);
   });
 
-  it('keeps existing behavior for non-Frankfurt listings even on skewed values', () => {
-    const analysis = analyzeAdaptiveVolumeScale('NASDAQ', [120, 160, 200, 300, 42000]);
-    expect(analysis.adaptiveScaleActive).toBe(false);
-    expect(analysis.displayUpperBound).toBe(42000);
+  it('keeps existing behavior for non-Frankfurt listings even on skewed values (NYSE/NASDAQ unchanged)', () => {
+    expect(analyzeAdaptiveVolumeScale('NASDAQ', [120, 160, 200, 300, 42000]).adaptiveScaleActive).toBe(false);
+    expect(analyzeAdaptiveVolumeScale('NYSE', [120, 160, 200, 300, 42000]).adaptiveScaleActive).toBe(false);
   });
 
   it('calculates deterministic robust upper bound', () => {
     const input = [100, 120, 130, 140, 1000, 1100, 1200, 90000];
     const first = analyzeAdaptiveVolumeScale('Frankfurt', input);
     const second = analyzeAdaptiveVolumeScale('Frankfurt', [...input]);
-    expect(first.displayUpperBound).toBe(1380);
-    expect(second.displayUpperBound).toBe(1380);
+    expect(first.displayUpperBound).toBe(2420);
+    expect(second.displayUpperBound).toBe(2420);
+    expect(first.sampleSize).toBe(8);
+    expect(first.median).toBe(140);
+    expect(first.p75).toBe(1100);
+    expect(first.p95).toBe(1200);
+    expect(first.activationReason).toBe('combined');
   });
 
   it('caps only display value for outlier while preserving actual value for tooltip/metrics', () => {
     const analysis = analyzeAdaptiveVolumeScale('Frankfurt', [100, 110, 120, 130, 80000]);
     const display = toDisplayVolume(80000, analysis);
     expect(display.volumeCapped).toBe(true);
-    expect(display.displayVolume).toBe(149.5);
+    expect(display.displayVolume).toBe(528);
     expect(80000).toBe(80000);
   });
 

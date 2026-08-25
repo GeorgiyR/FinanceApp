@@ -1,11 +1,18 @@
 import type { StockHistoryRange } from '../types';
 
 const FRANKFURT_EXCHANGE = 'frankfurt';
-const MIN_SKEW_SAMPLE_SIZE = 4;
-const MAX_TO_MEDIAN_SKEW_THRESHOLD = 12;
-const MAX_TO_P95_SKEW_THRESHOLD = 2;
-const ROBUST_PERCENTILE = 0.95;
-const ROBUST_HEADROOM_MULTIPLIER = 1.15;
+// Require enough positive points so weekly/monthly long-range series do not overreact to tiny samples.
+const MIN_SKEW_SAMPLE_SIZE = 5;
+// Frankfurt adaptation should trigger either on one dominant outlier or on a heavy upper-tail cluster.
+const MAX_TO_MEDIAN_ACTIVATION_THRESHOLD = 8;
+const P95_TO_MEDIAN_ACTIVATION_THRESHOLD = 6;
+// Keep headroom for visual continuity while still making ordinary bars materially visible.
+const ROBUST_HEADROOM_MULTIPLIER = 1.1;
+const ROBUST_P75_MULTIPLIER = 2;
+const ROBUST_MEDIAN_MULTIPLIER = 4;
+// Avoid enabling adaptive mode when the robust and actual bounds are too close to matter visually.
+const MIN_RELATIVE_SEPARATION = 0.12;
+const MIN_ABSOLUTE_SEPARATION_TO_MEDIAN = 2;
 
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
@@ -30,6 +37,11 @@ export type VolumeScaleAnalysis = {
   adaptiveScaleActive: boolean;
   actualUpperBound: number | null;
   displayUpperBound: number | null;
+  sampleSize: number;
+  median: number | null;
+  p75: number | null;
+  p95: number | null;
+  activationReason: 'maxToMedian' | 'p95ToMedian' | 'combined' | null;
 };
 
 export const analyzeAdaptiveVolumeScale = (
@@ -43,40 +55,80 @@ export const analyzeAdaptiveVolumeScale = (
       adaptiveScaleActive: false,
       actualUpperBound: null,
       displayUpperBound: null,
+      sampleSize: 0,
+      median: null,
+      p75: null,
+      p95: null,
+      activationReason: null,
     };
   }
 
+  const sampleSize = positiveVolumes.length;
   const actualUpperBound = positiveVolumes[positiveVolumes.length - 1];
   const median = lowerQuantile(positiveVolumes, 0.5);
-  const p95 = lowerQuantile(positiveVolumes, ROBUST_PERCENTILE);
+  const p75 = lowerQuantile(positiveVolumes, 0.75);
+  const p95 = lowerQuantile(positiveVolumes, 0.95);
   const maxToMedian = median > 0 ? actualUpperBound / median : Number.POSITIVE_INFINITY;
-  const maxToP95 = p95 > 0 ? actualUpperBound / p95 : Number.POSITIVE_INFINITY;
-  const skewedDistribution =
-    positiveVolumes.length >= MIN_SKEW_SAMPLE_SIZE
-    && median > 0
-    && maxToMedian >= MAX_TO_MEDIAN_SKEW_THRESHOLD
-    && maxToP95 >= MAX_TO_P95_SKEW_THRESHOLD;
+  const p95ToMedian = median > 0 ? p95 / median : Number.POSITIVE_INFINITY;
 
-  if (!isFrankfurtListing(exchange) || !skewedDistribution) {
+  const maxSkewSignal = maxToMedian >= MAX_TO_MEDIAN_ACTIVATION_THRESHOLD;
+  const p95SkewSignal = p95ToMedian >= P95_TO_MEDIAN_ACTIVATION_THRESHOLD;
+  const activationReason =
+    maxSkewSignal && p95SkewSignal
+      ? 'combined'
+      : maxSkewSignal
+        ? 'maxToMedian'
+        : p95SkewSignal
+          ? 'p95ToMedian'
+          : null;
+
+  const hasSkewSignal = sampleSize >= MIN_SKEW_SAMPLE_SIZE && median > 0 && activationReason !== null;
+
+  if (!isFrankfurtListing(exchange) || !hasSkewSignal) {
     return {
       hasPositiveFiniteVolume: true,
       adaptiveScaleActive: false,
       actualUpperBound,
       displayUpperBound: actualUpperBound,
+      sampleSize,
+      median,
+      p75,
+      p95,
+      activationReason: null,
     };
   }
 
-  const robustBase = Math.max(median, p95);
-  const robustUpperBound = Math.min(
-    actualUpperBound,
-    Math.max(robustBase * ROBUST_HEADROOM_MULTIPLIER, median),
-  );
+  const robustBase = Math.max(p75 * ROBUST_P75_MULTIPLIER, median * ROBUST_MEDIAN_MULTIPLIER);
+  const robustUpperBound = Math.min(actualUpperBound, robustBase * ROBUST_HEADROOM_MULTIPLIER);
+  const absoluteSeparation = actualUpperBound - robustUpperBound;
+  const relativeSeparation = actualUpperBound > 0 ? absoluteSeparation / actualUpperBound : 0;
+  const hasMeaningfulSeparation = absoluteSeparation >= median * MIN_ABSOLUTE_SEPARATION_TO_MEDIAN
+    && relativeSeparation >= MIN_RELATIVE_SEPARATION;
+
+  if (!hasMeaningfulSeparation) {
+    return {
+      hasPositiveFiniteVolume: true,
+      adaptiveScaleActive: false,
+      actualUpperBound,
+      displayUpperBound: actualUpperBound,
+      sampleSize,
+      median,
+      p75,
+      p95,
+      activationReason: null,
+    };
+  }
 
   return {
     hasPositiveFiniteVolume: true,
     adaptiveScaleActive: true,
     actualUpperBound,
     displayUpperBound: robustUpperBound,
+    sampleSize,
+    median,
+    p75,
+    p95,
+    activationReason,
   };
 };
 
