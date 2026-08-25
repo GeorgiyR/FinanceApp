@@ -49,6 +49,12 @@ type Filters = {
   activeOnly: boolean;
 };
 
+type ProcessRunRow = Partial<SystemProcessRunListItem> & {
+  __rowKey: string;
+  status?: unknown;
+  trigger?: unknown;
+};
+
 const STATUS_META: Record<SystemProcessRunStatus, { label: string; color: string }> = {
   Pending: { label: 'Ожидает', color: 'default' },
   Running: { label: 'Выполняется', color: 'processing' },
@@ -73,7 +79,54 @@ const STATUS_OPTIONS = Object.keys(STATUS_META) as SystemProcessRunStatus[];
 const TRIGGER_OPTIONS = Object.keys(TRIGGER_LABELS) as SystemProcessTrigger[];
 const PAGE_SIZE_OPTIONS = ['10', '25', '50', '100'];
 
-const formatDate = (value?: string | null): string => (value ? dayjs(value).format('DD.MM.YYYY HH:mm:ss') : '—');
+const isRecord = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object';
+
+const toFiniteNumber = (value: unknown): number | null =>
+  typeof value === 'number' && Number.isFinite(value) ? value : null;
+
+const formatUnknownValue = (value: unknown): string => {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : 'Неизвестно';
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return String(value);
+  }
+  return 'Неизвестно';
+};
+
+const getStatusTagMeta = (value: unknown): { label: string; color: string } => {
+  if (typeof value === 'string' && value in STATUS_META) {
+    return STATUS_META[value as SystemProcessRunStatus];
+  }
+  return { label: formatUnknownValue(value), color: 'default' };
+};
+
+const getTriggerLabel = (value: unknown): string => {
+  if (typeof value === 'string' && value in TRIGGER_LABELS) {
+    return TRIGGER_LABELS[value as SystemProcessTrigger];
+  }
+  return formatUnknownValue(value);
+};
+
+const normalizeRunItem = (value: unknown, index: number): ProcessRunRow | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const id = toFiniteNumber(value.id);
+  return {
+    ...(value as Partial<SystemProcessRunListItem>),
+    __rowKey: id != null ? `id-${id}` : `invalid-${index}`,
+  };
+};
+
+const formatDate = (value?: string | null): string => {
+  if (!value) {
+    return '—';
+  }
+  const parsed = dayjs(value);
+  return parsed.isValid() ? parsed.format('DD.MM.YYYY HH:mm:ss') : '—';
+};
 
 const formatDuration = (seconds?: number | null): string => {
   if (seconds == null || Number.isNaN(seconds) || seconds < 0) {
@@ -97,7 +150,7 @@ const SystemProcessRunsPage: React.FC = () => {
   const { user, logout } = useAuth();
   const [messageApi, contextHolder] = message.useMessage();
   const [portfolios, setPortfolios] = useState<Portfolio[]>([]);
-  const [runs, setRuns] = useState<SystemProcessRunListItem[]>([]);
+  const [runs, setRuns] = useState<ProcessRunRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [totalCount, setTotalCount] = useState(0);
@@ -150,9 +203,14 @@ const SystemProcessRunsPage: React.FC = () => {
       ]);
 
       if (requestId !== requestIdRef.current) return;
-      setRuns(listRes.data.items ?? []);
-      setTotalCount(listRes.data.totalCount ?? 0);
-      setServerNowUtc(listRes.data.serverNowUtc ?? null);
+      const items = Array.isArray(listRes.data?.items)
+        ? listRes.data.items
+          .map((item, index) => normalizeRunItem(item, index))
+          .filter((item): item is ProcessRunRow => item != null)
+        : [];
+      setRuns(items);
+      setTotalCount(toFiniteNumber(listRes.data?.totalCount) ?? 0);
+      setServerNowUtc(typeof listRes.data?.serverNowUtc === 'string' ? listRes.data.serverNowUtc : null);
       setSummaryActiveCount(summaryRes.data.activeCount ?? 0);
     } catch {
       if (requestId !== requestIdRef.current) return;
@@ -212,18 +270,24 @@ const SystemProcessRunsPage: React.FC = () => {
   };
 
   const processTypeOptions = useMemo(() => {
-    const unique = Array.from(new Set(runs.map((x) => x.processType))).filter(Boolean);
+    const unique = Array.from(
+      new Set(
+        runs
+          .map((x) => (typeof x.processType === 'string' ? x.processType : ''))
+          .filter((value) => value.length > 0),
+      ),
+    );
     return unique.map((value) => ({ label: value, value }));
   }, [runs]);
 
-  const columns: ColumnsType<SystemProcessRunListItem> = [
+  const columns: ColumnsType<ProcessRunRow> = [
     {
       title: 'Запуск',
       key: 'startedAtUtc',
       width: 190,
       render: (_, row) => (
-        <Tooltip title={row.startedAtUtc ?? row.queuedAtUtc}>
-          <span>{formatDate(row.startedAtUtc ?? row.queuedAtUtc)}</span>
+        <Tooltip title={typeof row.startedAtUtc === 'string' ? row.startedAtUtc : row.queuedAtUtc ?? ''}>
+          <span>{formatDate(typeof row.startedAtUtc === 'string' ? row.startedAtUtc : row.queuedAtUtc)}</span>
         </Tooltip>
       ),
     },
@@ -232,7 +296,7 @@ const SystemProcessRunsPage: React.FC = () => {
       dataIndex: 'completedAtUtc',
       key: 'completedAtUtc',
       width: 190,
-      render: (value: string | null) => <Tooltip title={value ?? ''}><span>{formatDate(value)}</span></Tooltip>,
+      render: (value: unknown) => <Tooltip title={typeof value === 'string' ? value : ''}><span>{formatDate(typeof value === 'string' ? value : null)}</span></Tooltip>,
     },
     {
       title: 'Длительность',
@@ -240,12 +304,16 @@ const SystemProcessRunsPage: React.FC = () => {
       width: 160,
       render: (_, row) => {
         const isActive = row.completedAtUtc == null;
-        const base = row.durationSeconds ?? null;
+        const base = toFiniteNumber(row.durationSeconds);
         if (!isActive || base == null || !serverNowUtc) {
           return formatDuration(base);
         }
 
-        const driftSeconds = (Date.now() - dayjs(serverNowUtc).valueOf()) / 1000;
+        const serverNowMs = dayjs(serverNowUtc).valueOf();
+        if (!Number.isFinite(serverNowMs)) {
+          return formatDuration(base);
+        }
+        const driftSeconds = (Date.now() - serverNowMs) / 1000;
         return formatDuration(base + Math.max(0, driftSeconds));
       },
     },
@@ -255,10 +323,12 @@ const SystemProcessRunsPage: React.FC = () => {
       key: 'displayName',
       width: 260,
       ellipsis: true,
-      render: (value: string, row) => (
+      render: (value: unknown, row) => (
         <Space direction="vertical" size={0}>
-          <Text strong>{value}</Text>
-          <Text type="secondary" style={{ fontSize: 12 }}>{row.processType}</Text>
+          <Text strong>{typeof value === 'string' && value.trim().length > 0 ? value : '—'}</Text>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            {typeof row.processType === 'string' && row.processType.trim().length > 0 ? row.processType : '—'}
+          </Text>
         </Space>
       ),
     },
@@ -267,19 +337,21 @@ const SystemProcessRunsPage: React.FC = () => {
       dataIndex: 'trigger',
       key: 'trigger',
       width: 170,
-      render: (value: SystemProcessTrigger) => TRIGGER_LABELS[value] ?? value,
+      render: (value: unknown) => getTriggerLabel(value),
     },
     {
       title: 'Прогресс',
       key: 'progress',
       width: 210,
       render: (_, row) => {
-        const total = row.totalItems;
+        const total = toFiniteNumber(row.totalItems);
+        const processed = toFiniteNumber(row.processedItems) ?? 0;
+        const progress = toFiniteNumber(row.progressPercent) ?? 0;
         if (total && total > 0) {
-          return `${row.processedItems} / ${total} (${Math.round(row.progressPercent ?? 0)}%)`;
+          return `${processed} / ${total} (${Math.round(progress)}%)`;
         }
 
-        return row.processedItems > 0 ? `${row.processedItems}` : '—';
+        return processed > 0 ? `${processed}` : '—';
       },
     },
     {
@@ -287,15 +359,23 @@ const SystemProcessRunsPage: React.FC = () => {
       key: 'result',
       width: 320,
       ellipsis: true,
-      render: (_, row) => row.resultSummary ?? `Обработано ${row.processedItems}; успешно ${row.succeededItems}; ошибок ${row.failedItems}`,
+      render: (_, row) => {
+        if (typeof row.resultSummary === 'string' && row.resultSummary.trim().length > 0) {
+          return row.resultSummary;
+        }
+        const processed = toFiniteNumber(row.processedItems) ?? 0;
+        const succeeded = toFiniteNumber(row.succeededItems) ?? 0;
+        const failed = toFiniteNumber(row.failedItems) ?? 0;
+        return `Обработано ${processed}; успешно ${succeeded}; ошибок ${failed}`;
+      },
     },
     {
       title: 'Статус',
       dataIndex: 'status',
       key: 'status',
       width: 180,
-      render: (value: SystemProcessRunStatus) => {
-        const meta = STATUS_META[value];
+      render: (value: unknown) => {
+        const meta = getStatusTagMeta(value);
         return <Tag color={meta.color}>{meta.label}</Tag>;
       },
     },
@@ -304,7 +384,22 @@ const SystemProcessRunsPage: React.FC = () => {
       key: 'actions',
       width: 120,
       fixed: 'right',
-      render: (_, row) => <Button size="small" onClick={() => { void handleOpenDetails(row.id); }}>Детали</Button>,
+      render: (_, row) => {
+        const id = toFiniteNumber(row.id);
+        return (
+          <Button
+            size="small"
+            disabled={id == null}
+            onClick={() => {
+              if (id != null) {
+                void handleOpenDetails(id);
+              }
+            }}
+          >
+            Детали
+          </Button>
+        );
+      },
     },
   ];
 
@@ -384,8 +479,8 @@ const SystemProcessRunsPage: React.FC = () => {
 
         {error && <Alert type="error" showIcon message={error} />}
 
-        <Table<SystemProcessRunListItem>
-          rowKey="id"
+        <Table<ProcessRunRow>
+          rowKey="__rowKey"
           loading={loading}
           columns={columns}
           dataSource={runs}
@@ -420,7 +515,7 @@ const SystemProcessRunsPage: React.FC = () => {
             <Text><strong>Correlation ID:</strong> {selectedDetails.correlationId ?? '—'}</Text>
             <Text><strong>Процесс:</strong> {selectedDetails.displayName}</Text>
             <Text><strong>Тип:</strong> {selectedDetails.processType}</Text>
-            <Text><strong>Источник:</strong> {TRIGGER_LABELS[selectedDetails.trigger] ?? selectedDetails.trigger}</Text>
+            <Text><strong>Источник:</strong> {getTriggerLabel(selectedDetails.trigger)}</Text>
             <Text><strong>Инициатор:</strong> {selectedDetails.initiatedByUserId ?? '—'}</Text>
             <Text><strong>Постановка:</strong> {formatDate(selectedDetails.queuedAtUtc)}</Text>
             <Text><strong>Запуск:</strong> {formatDate(selectedDetails.startedAtUtc)}</Text>
