@@ -8,6 +8,13 @@ import {
 } from './stockVolumeScale';
 
 describe('stockVolumeScale', () => {
+  const abeafOneYearWeeklyFixture = [
+    60000, 58000, 55000, 52000, 50000, 47000, 45000, 43000, 41000, 39000, 37000, 35000, 33000,
+    31000, 29000, 27000, 25000, 24000, 23000, 22000, 21000, 20000, 19000, 18000, 17000, 16000,
+    15000, 14500, 14000, 13500, 13000, 12500, 12000, 18000, 17000, 16000, 15500, 15000, 14500,
+    14000, 13500, 13000, 12500, 12000, 11500, 11000, 10500, 10000, 9500, 9000, 8500, 8000, 932,
+  ];
+
   it('activates adaptive mode for Frankfurt with a single dominant outlier', () => {
     const analysis = analyzeAdaptiveVolumeScale('Frankfurt', [120, 160, 200, 300, 42000]);
     expect(analysis.adaptiveScaleActive).toBe(true);
@@ -55,6 +62,43 @@ describe('stockVolumeScale', () => {
     expect(first.p75).toBe(1100);
     expect(first.p95).toBe(1200);
     expect(first.activationReason).toBe('combined');
+  });
+
+  it('enables deterministic robust mode for Frankfurt 1y weekly fixture even when legacy skew thresholds are not met', () => {
+    const deterministic = analyzeAdaptiveVolumeScale(
+      'Frankfurt',
+      abeafOneYearWeeklyFixture,
+      { historyRange: '1y', interval: '1wk' },
+    );
+    expect(deterministic.adaptiveScaleActive).toBe(true);
+    expect(deterministic.activationReason).toBe('deterministicFrankfurtLongRange');
+    expect(deterministic.actualUpperBound).toBe(60000);
+    expect(deterministic.displayUpperBound).toBeGreaterThan(25000);
+    expect(deterministic.displayUpperBound).toBeLessThan(35000);
+
+    const maxToMedian = (deterministic.actualUpperBound ?? 0) / (deterministic.median ?? 1);
+    const p95ToMedian = (deterministic.p95 ?? 0) / (deterministic.median ?? 1);
+    expect(maxToMedian).toBeLessThan(8);
+    expect(p95ToMedian).toBeLessThan(6);
+  });
+
+  it('uses deterministic robust visualization for Frankfurt 3y/5y monthly cadence', () => {
+    const monthlySeries = [42000, 38000, 36000, 34000, 32000, 30000, 28000, 26000, 24000, 22000, 21000, 19000, 17000, 15000, 13000, 11000, 9000, 7000, 5000, 3200, 2100, 1600, 1200, 980];
+    const analysis3y = analyzeAdaptiveVolumeScale('Frankfurt', monthlySeries, { historyRange: '3y', interval: '1mo' });
+    const analysis5y = analyzeAdaptiveVolumeScale('Frankfurt', monthlySeries, { historyRange: '5y', interval: '1mo' });
+    expect(analysis3y.activationReason).toBe('deterministicFrankfurtLongRange');
+    expect(analysis5y.activationReason).toBe('deterministicFrankfurtLongRange');
+    expect(analysis3y.displayUpperBound).toBeLessThan(analysis3y.actualUpperBound ?? 0);
+    expect(analysis5y.displayUpperBound).toBeLessThan(analysis5y.actualUpperBound ?? 0);
+  });
+
+  it('does not force deterministic mode for Frankfurt short ranges', () => {
+    const shortRangeAnalysis = analyzeAdaptiveVolumeScale(
+      'Frankfurt',
+      [120, 160, 200, 300, 42000],
+      { historyRange: '3m', interval: '1d' },
+    );
+    expect(shortRangeAnalysis.activationReason).toBe('maxToMedian');
   });
 
   it('caps only display value for outlier while preserving actual value for tooltip/metrics', () => {

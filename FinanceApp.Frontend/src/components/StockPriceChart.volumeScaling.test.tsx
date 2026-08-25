@@ -67,7 +67,7 @@ describe('StockPriceChart volume scaling behavior', () => {
     vi.clearAllMocks();
   });
 
-  it('shows Frankfurt adaptive-scale and weekly cadence explanation for skewed 1y volume', async () => {
+  it('shows Frankfurt robust-scale and weekly cadence explanation for 1y weekly volume', async () => {
     vi.mocked(api.getStockHistory).mockResolvedValueOnce({
       data: makeResponse('1y', '1wk', [120, 160, 200, 300, 42000]),
     } as never);
@@ -75,7 +75,7 @@ describe('StockPriceChart volume scaling behavior', () => {
     render(<StockPriceChart panelId="p1" stockId={1} ticker="AMD" name="AMD Frankfurt" exchange="Frankfurt" providerSymbol="AMD.F" />);
     await waitFor(() => expect(vi.mocked(api.getStockHistory)).toHaveBeenCalled());
 
-    expect(screen.getByText('Адаптивная шкала объёма: крупные выбросы визуально ограничены.')).toBeInTheDocument();
+    expect(screen.getByText('Робастная шкала объёма: для долгого диапазона Frankfurt крупные выбросы визуально ограничены.')).toBeInTheDocument();
     expect(screen.getByText('Объём по недельным свечам.')).toBeInTheDocument();
   });
 

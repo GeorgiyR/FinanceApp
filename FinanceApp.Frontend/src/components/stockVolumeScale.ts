@@ -1,6 +1,11 @@
 import type { StockHistoryRange } from '../types';
 
 const FRANKFURT_EXCHANGE = 'frankfurt';
+const FRANKFURT_LONG_RANGE_RECENT_SAMPLE_SIZE = 20;
+const FRANKFURT_LONG_RANGE_HEADROOM_MULTIPLIER = 1.1;
+const FRANKFURT_LONG_RANGE_RECENT_MEDIAN_MULTIPLIER = 2.2;
+const FRANKFURT_LONG_RANGE_RECENT_P75_MULTIPLIER = 1.7;
+const FRANKFURT_LONG_RANGE_FULL_P35_MULTIPLIER = 1.8;
 // Require enough positive points so weekly/monthly long-range series do not overreact to tiny samples.
 const MIN_SKEW_SAMPLE_SIZE = 5;
 // Frankfurt adaptation should trigger either on one dominant outlier or on a heavy upper-tail cluster.
@@ -41,12 +46,50 @@ export type VolumeScaleAnalysis = {
   median: number | null;
   p75: number | null;
   p95: number | null;
-  activationReason: 'maxToMedian' | 'p95ToMedian' | 'combined' | null;
+  activationReason: 'maxToMedian' | 'p95ToMedian' | 'combined' | 'deterministicFrankfurtLongRange' | null;
+};
+
+type VolumeScaleContext = {
+  historyRange?: StockHistoryRange | null;
+  interval?: string | null;
+};
+
+const getRecentPositiveFiniteVolumes = (
+  volumes: Array<number | null | undefined>,
+  sampleSize: number,
+): number[] => {
+  const recent: number[] = [];
+  for (let index = volumes.length - 1; index >= 0 && recent.length < sampleSize; index -= 1) {
+    const value = volumes[index];
+    if (isFiniteNumber(value) && value > 0) {
+      recent.push(value);
+    }
+  }
+  return recent;
+};
+
+const isFrankfurtLongRangeWithExpectedCadence = (
+  exchange: string | null | undefined,
+  historyRange: StockHistoryRange | null | undefined,
+  interval: string | null | undefined,
+): boolean => {
+  if (!isFrankfurtListing(exchange)) {
+    return false;
+  }
+  if (historyRange !== '1y' && historyRange !== '3y' && historyRange !== '5y') {
+    return false;
+  }
+  const cadence = getCadenceFromInterval(interval);
+  if (historyRange === '1y') {
+    return cadence === 'weekly';
+  }
+  return cadence === 'monthly';
 };
 
 export const analyzeAdaptiveVolumeScale = (
   exchange: string | null | undefined,
   volumes: Array<number | null | undefined>,
+  context?: VolumeScaleContext,
 ): VolumeScaleAnalysis => {
   const positiveVolumes = toPositiveFiniteVolumes(volumes).sort((left, right) => left - right);
   if (positiveVolumes.length === 0) {
@@ -68,6 +111,36 @@ export const analyzeAdaptiveVolumeScale = (
   const median = lowerQuantile(positiveVolumes, 0.5);
   const p75 = lowerQuantile(positiveVolumes, 0.75);
   const p95 = lowerQuantile(positiveVolumes, 0.95);
+
+  if (isFrankfurtLongRangeWithExpectedCadence(exchange, context?.historyRange, context?.interval)) {
+    const recentPositiveSorted = getRecentPositiveFiniteVolumes(volumes, FRANKFURT_LONG_RANGE_RECENT_SAMPLE_SIZE)
+      .sort((left, right) => left - right);
+    const recentMedian = lowerQuantile(recentPositiveSorted, 0.5);
+    const recentP75 = lowerQuantile(recentPositiveSorted, 0.75);
+    const fullP35 = lowerQuantile(positiveVolumes, 0.35);
+    const robustBase = Math.max(
+      recentMedian * FRANKFURT_LONG_RANGE_RECENT_MEDIAN_MULTIPLIER,
+      recentP75 * FRANKFURT_LONG_RANGE_RECENT_P75_MULTIPLIER,
+      fullP35 * FRANKFURT_LONG_RANGE_FULL_P35_MULTIPLIER,
+    );
+    const robustUpperBound = Math.min(
+      actualUpperBound,
+      robustBase * FRANKFURT_LONG_RANGE_HEADROOM_MULTIPLIER,
+    );
+
+    return {
+      hasPositiveFiniteVolume: true,
+      adaptiveScaleActive: true,
+      actualUpperBound,
+      displayUpperBound: robustUpperBound,
+      sampleSize,
+      median,
+      p75,
+      p95,
+      activationReason: 'deterministicFrankfurtLongRange',
+    };
+  }
+
   const maxToMedian = median > 0 ? actualUpperBound / median : Number.POSITIVE_INFINITY;
   const p95ToMedian = median > 0 ? p95 / median : Number.POSITIVE_INFINITY;
 
