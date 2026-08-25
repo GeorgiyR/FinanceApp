@@ -267,6 +267,40 @@ describe('StocksPage catalog mode', () => {
     expect(document.querySelector(`li.ant-pagination-item-${page}.ant-pagination-item-active`)).not.toBeNull();
   };
 
+  const expectRenderedBefore = (left: Element, right: Element) => {
+    expect(left.compareDocumentPosition(right) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+  };
+
+  it('renders catalog toolbar controls in expected order with wrap contract and accessible names', async () => {
+    const user = userEvent.setup();
+    renderPage('catalog');
+    await waitFor(() => expect(screen.getAllByText('AAPL').length).toBeGreaterThan(0));
+
+    const searchInput = screen.getByPlaceholderText('Поиск: тикер, название, биржа, индекс');
+    const openFiltersButton = screen.getByRole('button', { name: 'Открыть расширенные фильтры' });
+    const resetFiltersButton = screen.getByRole('button', { name: 'Сбросить расширенные фильтры' });
+    const sortLabel = screen.getByText('Сортировка:');
+    const sortSelect = screen.getByRole('combobox', { name: 'Сортировка' });
+    const addButton = screen.getByText('Добавить акцию').closest('button');
+    expect(addButton).not.toBeNull();
+
+    expectRenderedBefore(searchInput, openFiltersButton);
+    expectRenderedBefore(openFiltersButton, resetFiltersButton);
+    expectRenderedBefore(resetFiltersButton, sortLabel);
+    expectRenderedBefore(sortLabel, sortSelect);
+    expectRenderedBefore(sortSelect, addButton as Element);
+
+    expect(screen.queryByRole('button', { name: 'Сортировать по возрастанию' })).not.toBeInTheDocument();
+
+    await user.click(sortSelect);
+    await user.click(await screen.findByText('24 ч.'));
+    expect(screen.getByRole('button', { name: 'Сортировать по возрастанию' })).toBeInTheDocument();
+
+    const toolbar = addButton?.parentElement;
+    expect(toolbar).not.toBeNull();
+    expect(toolbar as HTMLElement).toHaveStyle({ flexWrap: 'wrap' });
+  });
+
   // Test 1: All exchange fixtures render in one table, not separate sections
   it('renders all stocks from different exchanges in a single unified table', async () => {
     renderPage('catalog');
