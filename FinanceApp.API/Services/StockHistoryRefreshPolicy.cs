@@ -17,7 +17,7 @@ public sealed class StockHistoryRefreshOptions
 {
     public int IncrementalLookbackDays { get; init; } = 10;
     public int ReconciliationLookbackDays { get; init; } = 183;
-    public int FullBackfillLookbackDays { get; init; } = 730;
+    public int FullBackfillLookbackDays { get; init; } = 1830;
 
     public TimeSpan IncrementalDailyCadence { get; init; } = TimeSpan.FromDays(1);
     public TimeSpan IncrementalWeeklyCadence { get; init; } = TimeSpan.FromDays(7);

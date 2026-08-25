@@ -99,6 +99,115 @@ public class StockHistoryRefreshTests
         Assert.Empty(await context.StockMarketIndices.ToListAsync());
     }
 
+    [Theory]
+    [InlineData(StockExchanges.Nyse)]
+    [InlineData(StockExchanges.Nasdaq)]
+    [InlineData(StockExchanges.Frankfurt)]
+    public async Task GetHistoryAsync_LongRangeFallbackFromDailyRows_ReturnsNonEmptyFor1y3y5y(string exchange)
+    {
+        await using var context = CreateInMemoryContext();
+        var now = new DateTime(2026, 8, 26, 12, 0, 0, DateTimeKind.Utc);
+        var stock = new Stock
+        {
+            Id = 11,
+            Ticker = "WPM",
+            Exchange = exchange,
+            Name = "WPM"
+        };
+        context.Stocks.Add(stock);
+        context.StockHistoricalPrices.AddRange(
+            CreateDailyRow(stock.Id, new DateTime(2026, 7, 15, 20, 0, 0, DateTimeKind.Utc), 9m, 10m, 8m, 9.5m, 90L, 9.1m),
+            CreateDailyRow(stock.Id, new DateTime(2026, 7, 31, 20, 0, 0, DateTimeKind.Utc), 9.5m, 10.5m, 9m, 10m, 95L, 9.8m),
+            CreateDailyRow(stock.Id, new DateTime(2026, 8, 10, 20, 0, 0, DateTimeKind.Utc), 10m, 15m, 9m, 11m, 100L, 10.5m),
+            CreateDailyRow(stock.Id, new DateTime(2026, 8, 11, 20, 0, 0, DateTimeKind.Utc), 11m, 16m, 10m, 12m, 110L, 11.5m),
+            CreateDailyRow(stock.Id, new DateTime(2026, 8, 12, 18, 0, 0, DateTimeKind.Utc), 12m, 17m, 11m, 13m, 120L, 12.5m),
+            CreateDailyRow(stock.Id, new DateTime(2026, 8, 12, 20, 0, 0, DateTimeKind.Utc), 12m, 18m, 11m, 14m, 130L, 13.5m),
+            CreateDailyRow(stock.Id, new DateTime(2026, 8, 13, 20, 0, 0, DateTimeKind.Utc), 14m, 19m, 13m, 15m, 140L, 14.5m),
+            CreateDailyRow(stock.Id, new DateTime(2026, 8, 17, 20, 0, 0, DateTimeKind.Utc), 16m, 20m, 15m, 17m, 150L, 16.5m),
+            CreateDailyRow(stock.Id, new DateTime(2026, 8, 18, 20, 0, 0, DateTimeKind.Utc), 17m, 21m, 16m, 18m, 160L, 17.5m),
+            CreateDailyRow(stock.Id, new DateTime(2026, 8, 19, 20, 0, 0, DateTimeKind.Utc), 18m, 22m, 17m, 19m, 170L, 18.5m),
+            CreateDailyRow(stock.Id, new DateTime(2026, 8, 20, 20, 0, 0, DateTimeKind.Utc), 19m, 23m, 18m, 20m, 180L, 19.5m),
+            CreateDailyRow(stock.Id, new DateTime(2026, 8, 21, 20, 0, 0, DateTimeKind.Utc), 20m, 24m, 19m, 21m, 190L, 20.5m));
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context, new CountingHandler(), new FixedTimeProvider(new DateTimeOffset(now)));
+
+        var oneYear = await service.GetHistoryAsync(stock, "1y");
+        Assert.Equal("1wk", oneYear.Interval);
+        Assert.True(oneYear.Points.Count >= 3);
+        var dedupedWeek = Assert.Single(oneYear.Points, point => point.CloseRaw == 15m);
+        Assert.Equal(10m, dedupedWeek.OpenRaw);
+        Assert.Equal(19m, dedupedWeek.HighRaw);
+        Assert.Equal(9m, dedupedWeek.LowRaw);
+        Assert.Equal(480L, dedupedWeek.Volume);
+        Assert.Null(oneYear.UnavailableReason);
+        Assert.Equal(oneYear.Points[^1].Timestamp, oneYear.AsOfUtc);
+
+        var threeYears = await service.GetHistoryAsync(stock, "3y");
+        Assert.Equal("1mo", threeYears.Interval);
+        Assert.NotEmpty(threeYears.Points);
+        Assert.Null(threeYears.UnavailableReason);
+
+        var fiveYears = await service.GetHistoryAsync(stock, "5y");
+        Assert.Equal("1mo", fiveYears.Interval);
+        Assert.NotEmpty(fiveYears.Points);
+        Assert.Null(fiveYears.UnavailableReason);
+        Assert.Equal(fiveYears.Points[^1].Timestamp, fiveYears.AsOfUtc);
+    }
+
+    [Theory]
+    [InlineData(StockExchanges.Nyse)]
+    [InlineData(StockExchanges.Nasdaq)]
+    public async Task GetHistoryAsync_LongRangeFallback_UsesDeterministicUtcBuckets(string exchange)
+    {
+        await using var context = CreateInMemoryContext();
+        var now = new DateTime(2026, 8, 26, 12, 0, 0, DateTimeKind.Utc);
+        var stock = new Stock { Id = 12, Ticker = "UTC", Exchange = exchange, Name = "UTC Buckets" };
+        context.Stocks.Add(stock);
+        context.StockHistoricalPrices.AddRange(
+            CreateDailyRow(stock.Id, new DateTime(2026, 7, 31, 20, 0, 0, DateTimeKind.Utc), 99m, 100m, 98m, 99m, 9L),
+            CreateDailyRow(stock.Id, new DateTime(2026, 8, 10, 20, 0, 0, DateTimeKind.Utc), 100m, 101m, 99m, 100m, 10L),
+            CreateDailyRow(stock.Id, new DateTime(2026, 8, 11, 20, 0, 0, DateTimeKind.Utc), 101m, 102m, 100m, 101m, 11L),
+            CreateDailyRow(stock.Id, new DateTime(2026, 8, 12, 20, 0, 0, DateTimeKind.Utc), 102m, 103m, 101m, 102m, 12L),
+            CreateDailyRow(stock.Id, new DateTime(2026, 8, 17, 20, 0, 0, DateTimeKind.Utc), 103m, 104m, 102m, 103m, 13L),
+            CreateDailyRow(stock.Id, new DateTime(2026, 8, 18, 20, 0, 0, DateTimeKind.Utc), 104m, 105m, 103m, 104m, 14L),
+            CreateDailyRow(stock.Id, new DateTime(2026, 8, 19, 20, 0, 0, DateTimeKind.Utc), 105m, 106m, 104m, 105m, 15L));
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context, new CountingHandler(), new FixedTimeProvider(new DateTimeOffset(now)));
+        var oneYear = await service.GetHistoryAsync(stock, "1y");
+        var threeYears = await service.GetHistoryAsync(stock, "3y");
+
+        Assert.Equal(new DateTime(2026, 7, 27, 0, 0, 0, DateTimeKind.Utc), oneYear.Points[0].Timestamp);
+        Assert.Equal(new DateTime(2026, 7, 1, 0, 0, 0, DateTimeKind.Utc), threeYears.Points[0].Timestamp);
+    }
+
+    [Theory]
+    [InlineData(StockExchanges.Nyse)]
+    [InlineData(StockExchanges.Nasdaq)]
+    [InlineData(StockExchanges.Frankfurt)]
+    public async Task GetHistoryAsync_LongRangeFallback_WithoutSuitableDailyRows_ReturnsUnavailable(string exchange)
+    {
+        await using var context = CreateInMemoryContext();
+        var stock = new Stock
+        {
+            Id = 13,
+            Ticker = string.Empty,
+            Exchange = exchange,
+            Name = "No Data"
+        };
+        context.Stocks.Add(stock);
+        context.StockHistoricalPrices.Add(CreateDailyRow(stock.Id, new DateTime(2026, 8, 10, 20, 0, 0, DateTimeKind.Utc), 10m, 10m, 10m, 10m, 10L, isQuoteDerived: true));
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context, new CountingHandler(), new FixedTimeProvider(new DateTimeOffset(new DateTime(2026, 8, 26, 12, 0, 0, DateTimeKind.Utc))));
+        var response = await service.GetHistoryAsync(stock, "1y");
+
+        Assert.Empty(response.Points);
+        Assert.Null(response.AsOfUtc);
+        Assert.NotNull(response.UnavailableReason);
+    }
+
     [Fact]
     public async Task GetHistoryAsync_Stale24hHistoryDuringOpenSession_RefreshesIntradayOnce()
     {
@@ -778,6 +887,78 @@ public class StockHistoryRefreshTests
     }
 
     [Fact]
+    public async Task RefreshHistoryAsync_AutomaticNewStock_UsesFullBackfillAndRequestsAtLeastFiveYears()
+    {
+        await using var context = CreateInMemoryContext();
+        var now = new DateTime(2026, 8, 26, 12, 0, 0, DateTimeKind.Utc);
+        var stock = new Stock
+        {
+            Id = 90,
+            Ticker = "WPM",
+            Exchange = StockExchanges.Nyse,
+            Name = "WPM"
+        };
+        context.Stocks.Add(stock);
+        await context.SaveChangesAsync();
+
+        var handler = new CountingHandler(
+            SuccessChartJson(
+                (ToUnix(new DateTime(2026, 6, 29, 20, 0, 0, DateTimeKind.Utc)), 100m, 100L),
+                (ToUnix(new DateTime(2026, 7, 15, 20, 0, 0, DateTimeKind.Utc)), 101m, 101L),
+                (ToUnix(new DateTime(2026, 7, 31, 20, 0, 0, DateTimeKind.Utc)), 102m, 102L),
+                (ToUnix(new DateTime(2026, 8, 20, 20, 0, 0, DateTimeKind.Utc)), 103m, 103L)),
+            SuccessChartJson((ToUnix(now.AddHours(-2)), 110m, 1000L)),
+            SuccessChartJson((ToUnix(now.AddMinutes(-10)), 111m, 500L)));
+        var service = CreateService(context, handler, new FixedTimeProvider(new DateTimeOffset(now)));
+
+        var refresh = await service.RefreshHistoryAsync(stock, StockHistoryRefreshTrigger.Automatic);
+
+        Assert.Equal(nameof(StockHistoryRefreshTier.FullBackfill), refresh.AppliedTier);
+
+        var dailyUrl = handler.RequestedUrls.Single(url => url.Contains("interval=1d", StringComparison.Ordinal) && url.Contains("period1=", StringComparison.Ordinal));
+        var period1 = long.Parse(GetQueryParam(dailyUrl, "period1"), System.Globalization.CultureInfo.InvariantCulture);
+        var period2 = long.Parse(GetQueryParam(dailyUrl, "period2"), System.Globalization.CultureInfo.InvariantCulture);
+        var lookbackDays = TimeSpan.FromSeconds(period2 - period1).TotalDays;
+        Assert.True(lookbackDays >= 1825d, $"Expected >= 1825 days but got {lookbackDays}.");
+    }
+
+    [Theory]
+    [InlineData(StockExchanges.Nyse)]
+    [InlineData(StockExchanges.Nasdaq)]
+    [InlineData(StockExchanges.Frankfurt)]
+    public async Task RefreshHistoryAsync_FullBackfill_PersistsWeeklyAndMonthlyAggregatesForAllSupportedExchanges(string exchange)
+    {
+        await using var context = CreateInMemoryContext();
+        var now = new DateTime(2026, 8, 26, 12, 0, 0, DateTimeKind.Utc);
+        var stock = new Stock
+        {
+            Id = 91,
+            Ticker = "WPM",
+            Exchange = exchange,
+            Name = "WPM"
+        };
+        context.Stocks.Add(stock);
+        await context.SaveChangesAsync();
+
+        var handler = new CountingHandler(
+            SuccessChartJson(
+                (ToUnix(new DateTime(2026, 6, 29, 20, 0, 0, DateTimeKind.Utc)), 100m, 100L),
+                (ToUnix(new DateTime(2026, 7, 1, 20, 0, 0, DateTimeKind.Utc)), 101m, 101L),
+                (ToUnix(new DateTime(2026, 7, 15, 20, 0, 0, DateTimeKind.Utc)), 102m, 102L),
+                (ToUnix(new DateTime(2026, 7, 31, 20, 0, 0, DateTimeKind.Utc)), 103m, 103L),
+                (ToUnix(new DateTime(2026, 8, 18, 20, 0, 0, DateTimeKind.Utc)), 104m, 104L)),
+            SuccessChartJson((ToUnix(now.AddHours(-2)), 110m, 1000L)),
+            SuccessChartJson((ToUnix(now.AddMinutes(-10)), 111m, 500L)));
+        var service = CreateService(context, handler, new FixedTimeProvider(new DateTimeOffset(now)));
+
+        var refresh = await service.RefreshHistoryAsync(stock, StockHistoryRefreshTrigger.Automatic);
+
+        Assert.False(refresh.RateLimited);
+        Assert.True(await context.StockHistoricalPrices.AnyAsync(x => x.StockId == stock.Id && x.Interval == "1wk"));
+        Assert.True(await context.StockHistoricalPrices.AnyAsync(x => x.StockId == stock.Id && x.Interval == "1mo"));
+    }
+
+    [Fact]
     public async Task SyncHistoricalDataForAllStocksAsync_NotDueStock_SkipsProviderCall()
     {
         await using var context = CreateInMemoryContext();
@@ -1437,6 +1618,44 @@ public class StockHistoryRefreshTests
                 Close: startClose + i,
                 Volume: 100L + i))
             .ToArray();
+    }
+
+    private static StockHistoricalPrice CreateDailyRow(
+        int stockId,
+        DateTime timestamp,
+        decimal open,
+        decimal high,
+        decimal low,
+        decimal close,
+        long volume,
+        decimal? adjustedClose = null,
+        bool isQuoteDerived = false)
+        => new()
+        {
+            StockId = stockId,
+            Interval = "1d",
+            Timestamp = timestamp,
+            Open = open,
+            High = high,
+            Low = low,
+            Close = close,
+            AdjustedClose = adjustedClose,
+            QuoteCurrency = "USD",
+            FinancialCurrency = "USD",
+            NormalizedQuoteCurrency = "USD",
+            QuoteUnitMultiplier = 1m,
+            Volume = volume,
+            IsQuoteDerived = isQuoteDerived
+        };
+
+    private static string GetQueryParam(string url, string key)
+    {
+        var uri = new Uri(url);
+        var query = uri.Query.TrimStart('?')
+            .Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .Select(part => part.Split('=', 2))
+            .ToDictionary(parts => parts[0], parts => parts.Length > 1 ? Uri.UnescapeDataString(parts[1]) : string.Empty, StringComparer.Ordinal);
+        return query[key];
     }
 
     private static async Task<SqliteHarness> CreateSqliteHarnessAsync()

@@ -302,7 +302,7 @@ History refresh now uses tiered windows and durable per-stock schedule metadata 
 
 - **Incremental** (default lookback: `10` calendar days): overlapping near-term upsert for daily candles (`OHLC`, `Volume`, `AdjustedClose`, currency/source metadata).
 - **Reconciliation** (default lookback: `183` days): wider repair pass for provider corrections and late backfills.
-- **FullBackfill** (default lookback: `730` days): broad re-sync for initial/no-history stocks and explicit/manual refreshes.
+- **FullBackfill** (default lookback: `1830` days): broad re-sync for initial/no-history stocks and explicit/manual refreshes, covering the advertised 5-year chart range.
 
 Cadence policy is stored on `Stocks.HistoryRefreshCadence`:
 - `Daily` (default for `Tracked`)
@@ -338,7 +338,7 @@ Configuration (`StockHistoryRefresh` in `appsettings`):
 |---|---|
 | `IncrementalLookbackDays` | `10` |
 | `ReconciliationLookbackDays` | `183` |
-| `FullBackfillLookbackDays` | `730` |
+| `FullBackfillLookbackDays` | `1830` |
 | `IncrementalDailyCadence` | `1.00:00:00` |
 | `IncrementalWeeklyCadence` | `7.00:00:00` |
 | `ReconciliationTrackedCadence` | `7.00:00:00` |

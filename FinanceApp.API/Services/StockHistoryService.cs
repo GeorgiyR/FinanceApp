@@ -14,7 +14,7 @@ namespace FinanceApp.API.Services;
 public class StockHistoryService : IStockHistoryService
 {
     private const int MaxYahooRequestAttempts = 5;
-    private const int FrankfurtLongRangeDailyLookbackDays = 366 * 5;
+    private const int FullBackfillMinimumLookbackDays = 366 * 5;
     private static readonly TimeSpan YahooRetryBaseDelay = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan YahooRetryMaxDelay = TimeSpan.FromSeconds(20);
     private static readonly ConcurrentDictionary<int, SemaphoreSlim> StockRefreshLocks = new();
@@ -694,16 +694,14 @@ public class StockHistoryService : IStockHistoryService
         var intradayWindow = BuildIntradayWindow(stock, normalizedRange, nowUtc);
         var from = intradayWindow?.QueryFromUtc ?? GetFromTimestamp(normalizedRange, nowUtc);
 
-        var useFrankfurtDailyAggregation = ShouldUseFrankfurtDailyAggregation(stock, interval);
-        var data = await LoadHistoryRowsAsync(stock.Id, useFrankfurtDailyAggregation ? "1d" : interval, from, cancellationToken);
-        if (useFrankfurtDailyAggregation)
-        {
-            data = AggregateFrankfurtFromDailyRows(stock.Id, data, interval, nowUtc);
-        }
-        else
-        {
-            data = FilterRowsForRange(data, intradayWindow, normalizedRange);
-        }
+        var (data, usedDailyAggregationFallback) = await LoadHistoryWithDailyAggregationFallbackAsync(
+            stock,
+            interval,
+            from,
+            normalizedRange,
+            intradayWindow,
+            nowUtc,
+            cancellationToken);
         var shouldRefreshStaleIntraday = ShouldRefreshIntradayOnDemand(stock, normalizedRange, interval, data, nowUtc);
         var shouldRefresh = data.Count == 0 || data.Any(NeedsMetadataBackfill) || shouldRefreshStaleIntraday;
         var onDemandRefreshFailed = false;
@@ -713,15 +711,14 @@ public class StockHistoryService : IStockHistoryService
             {
                 var refresh = await RefreshHistoryAsync(stock, StockHistoryRefreshTrigger.Automatic, cancellationToken);
                 onDemandRefreshFailed = refresh.RateLimited;
-                data = await LoadHistoryRowsAsync(stock.Id, useFrankfurtDailyAggregation ? "1d" : interval, from, cancellationToken);
-                if (useFrankfurtDailyAggregation)
-                {
-                    data = AggregateFrankfurtFromDailyRows(stock.Id, data, interval, nowUtc);
-                }
-                else
-                {
-                    data = FilterRowsForRange(data, intradayWindow, normalizedRange);
-                }
+                (data, usedDailyAggregationFallback) = await LoadHistoryWithDailyAggregationFallbackAsync(
+                    stock,
+                    interval,
+                    from,
+                    normalizedRange,
+                    intradayWindow,
+                    nowUtc,
+                    cancellationToken);
             }
             catch (Exception ex)
             {
@@ -735,7 +732,11 @@ public class StockHistoryService : IStockHistoryService
             currencyMetadata?.QuoteCurrency,
             currencyMetadata?.FinancialCurrency,
             cancellationToken);
-        var volumeMetrics = BuildVolumeMetrics(data, interval, conversionContext, useFrankfurtDailyAggregation);
+        var volumeMetrics = BuildVolumeMetrics(
+            data,
+            interval,
+            conversionContext,
+            usedDailyAggregationFallback || (IsFrankfurtExchange(stock.Exchange) && IsLongRangeAggregateInterval(interval)));
         var asOfUtc = data.LastOrDefault()?.Timestamp;
         var isPotentiallyStale = IsPotentiallyStale(interval, asOfUtc, nowUtc);
         var staleReason = BuildHistoryStaleReason(stock.Exchange, normalizedRange, interval, asOfUtc, nowUtc, isPotentiallyStale, onDemandRefreshFailed);
@@ -815,9 +816,9 @@ public class StockHistoryService : IStockHistoryService
             StockHistoryRefreshTier.Reconciliation => _options.ReconciliationLookbackDays,
             _ => _options.FullBackfillLookbackDays,
         };
-        if (IsFrankfurtExchange(stock.Exchange) && tier == StockHistoryRefreshTier.FullBackfill)
+        if (tier == StockHistoryRefreshTier.FullBackfill)
         {
-            lookbackDays = Math.Max(lookbackDays, FrankfurtLongRangeDailyLookbackDays);
+            lookbackDays = Math.Max(lookbackDays, FullBackfillMinimumLookbackDays);
         }
 
         var fromUtc = nowUtc.Date.AddDays(-lookbackDays);
@@ -846,10 +847,10 @@ public class StockHistoryService : IStockHistoryService
             new("1h", hourly),
             new("10m", tenMinute),
         };
-        if (IsFrankfurtExchange(stock.Exchange))
+        if (tier is StockHistoryRefreshTier.Reconciliation or StockHistoryRefreshTier.FullBackfill)
         {
-            var weekly = AggregateFrankfurtDailyBatch(daily, "1wk", nowUtc);
-            var monthly = AggregateFrankfurtDailyBatch(daily, "1mo", nowUtc);
+            var weekly = AggregateDailyBatch(daily, "1wk", nowUtc, stock.Exchange);
+            var monthly = AggregateDailyBatch(daily, "1mo", nowUtc, stock.Exchange);
             batches.Add(new IntervalBatch("1wk", weekly));
             batches.Add(new IntervalBatch("1mo", monthly));
         }
@@ -1223,9 +1224,314 @@ public class StockHistoryService : IStockHistoryService
         => StockExchanges.TryNormalize(exchange, out var normalizedExchange)
             && string.Equals(normalizedExchange, StockExchanges.Frankfurt, StringComparison.Ordinal);
 
-    private static bool ShouldUseFrankfurtDailyAggregation(Stock stock, string interval)
-        => IsFrankfurtExchange(stock.Exchange)
-            && (string.Equals(interval, "1wk", StringComparison.Ordinal) || string.Equals(interval, "1mo", StringComparison.Ordinal));
+    private static bool IsLongRangeAggregateInterval(string interval)
+        => string.Equals(interval, "1wk", StringComparison.Ordinal)
+           || string.Equals(interval, "1mo", StringComparison.Ordinal);
+
+    private async Task<(List<StockHistoricalPrice> Data, bool UsedDailyAggregationFallback)> LoadHistoryWithDailyAggregationFallbackAsync(
+        Stock stock,
+        string interval,
+        DateTime from,
+        string normalizedRange,
+        IntradaySessionRange? intradayWindow,
+        DateTime nowUtc,
+        CancellationToken cancellationToken)
+    {
+        var aggregateRows = await LoadHistoryRowsAsync(stock.Id, interval, from, cancellationToken);
+        aggregateRows = FilterRowsForRange(aggregateRows, intradayWindow, normalizedRange);
+
+        if (!IsLongRangeAggregateInterval(interval))
+        {
+            return (aggregateRows, false);
+        }
+
+        var dailyRows = await LoadHistoryRowsAsync(stock.Id, "1d", from, cancellationToken);
+        if (dailyRows.Count == 0)
+        {
+            return (aggregateRows, false);
+        }
+
+        var fallbackRows = AggregateDailyFromRows(stock.Id, dailyRows, interval, nowUtc, stock.Exchange)
+            .Where(x => x.Timestamp >= from)
+            .OrderBy(x => x.Timestamp)
+            .ToList();
+
+        if (fallbackRows.Count == 0)
+        {
+            return (aggregateRows, false);
+        }
+
+        if (aggregateRows.Count == 0)
+        {
+            return (fallbackRows, true);
+        }
+
+        var aggregateCoverage = ComputeCoverageRatio(aggregateRows, interval, from, nowUtc, stock.Exchange);
+        var fallbackCoverage = ComputeCoverageRatio(fallbackRows, interval, from, nowUtc, stock.Exchange);
+        var fallbackMateriallyImprovesCoverage = fallbackRows.Count > aggregateRows.Count
+                                                 && fallbackCoverage >= aggregateCoverage + 0.15m;
+        var fallbackIsNewer = fallbackRows[^1].Timestamp > aggregateRows[^1].Timestamp
+                              && fallbackCoverage >= aggregateCoverage;
+
+        return fallbackMateriallyImprovesCoverage || fallbackIsNewer
+            ? (fallbackRows, true)
+            : (aggregateRows, false);
+    }
+
+    private static decimal ComputeCoverageRatio(
+        IReadOnlyList<StockHistoricalPrice> rows,
+        string interval,
+        DateTime from,
+        DateTime nowUtc,
+        string? exchange)
+    {
+        if (rows.Count == 0)
+        {
+            return 0m;
+        }
+
+        var expectedCount = EstimateExpectedBucketCount(interval, from, nowUtc, exchange);
+        if (expectedCount <= 0)
+        {
+            return 1m;
+        }
+
+        return Math.Min(1m, rows.Count / (decimal)expectedCount);
+    }
+
+    private static int EstimateExpectedBucketCount(
+        string interval,
+        DateTime from,
+        DateTime nowUtc,
+        string? exchange)
+    {
+        TimeZoneInfo? timeZone = null;
+        if (IsFrankfurtExchange(exchange)
+            && TradingSessionCalendar.TryGetSessionSpec(StockExchanges.Frankfurt, out var sessionSpec))
+        {
+            timeZone = TradingSessionCalendar.TryResolveTimeZone(sessionSpec);
+        }
+        var fromDate = timeZone is null
+            ? DateOnly.FromDateTime(from.Date)
+            : TradingSessionCalendar.ConvertUtcToLocalDate(from, timeZone);
+        var currentDate = timeZone is null
+            ? DateOnly.FromDateTime(nowUtc.Date)
+            : TradingSessionCalendar.ConvertUtcToLocalDate(nowUtc, timeZone);
+
+        if (string.Equals(interval, "1wk", StringComparison.Ordinal))
+        {
+            var firstWeek = GetIsoWeekStart(fromDate);
+            var currentWeek = GetIsoWeekStart(currentDate);
+            var lastCompletedWeek = currentWeek.AddDays(-7);
+            if (lastCompletedWeek < firstWeek)
+            {
+                return 0;
+            }
+
+            return ((lastCompletedWeek.DayNumber - firstWeek.DayNumber) / 7) + 1;
+        }
+
+        var firstMonth = new DateOnly(fromDate.Year, fromDate.Month, 1);
+        var currentMonth = new DateOnly(currentDate.Year, currentDate.Month, 1);
+        var lastCompletedMonth = currentMonth.AddMonths(-1);
+        if (lastCompletedMonth < firstMonth)
+        {
+            return 0;
+        }
+
+        return ((lastCompletedMonth.Year - firstMonth.Year) * 12) + (lastCompletedMonth.Month - firstMonth.Month) + 1;
+    }
+
+    private static List<StockHistoricalPrice> AggregateDailyFromRows(
+        int stockId,
+        IReadOnlyList<StockHistoricalPrice> dailyRows,
+        string targetInterval,
+        DateTime nowUtc,
+        string? exchange)
+    {
+        return IsFrankfurtExchange(exchange)
+            ? AggregateFrankfurtFromDailyRows(stockId, dailyRows, targetInterval, nowUtc)
+            : AggregateUtcFromDailyRows(stockId, dailyRows, targetInterval, nowUtc);
+    }
+
+    private static CandleBatch AggregateDailyBatch(
+        CandleBatch dailyBatch,
+        string targetInterval,
+        DateTime nowUtc,
+        string? exchange)
+    {
+        return IsFrankfurtExchange(exchange)
+            ? AggregateFrankfurtDailyBatch(dailyBatch, targetInterval, nowUtc)
+            : AggregateUtcDailyBatch(dailyBatch, targetInterval, nowUtc);
+    }
+
+    private static List<StockHistoricalPrice> AggregateUtcFromDailyRows(
+        int stockId,
+        IReadOnlyList<StockHistoricalPrice> dailyRows,
+        string targetInterval,
+        DateTime nowUtc)
+    {
+        var dedupedRows = dailyRows
+            .Where(x => !x.IsQuoteDerived)
+            .GroupBy(x => DateOnly.FromDateTime(x.Timestamp.Date))
+            .Select(g => g.OrderBy(x => x.Timestamp).Last())
+            .OrderBy(x => x.Timestamp)
+            .ToList();
+        if (dedupedRows.Count == 0)
+        {
+            return new List<StockHistoricalPrice>();
+        }
+
+        var currentUtcDate = DateOnly.FromDateTime(nowUtc.Date);
+        var currentWeekStart = GetIsoWeekStart(currentUtcDate);
+        var bucketed = targetInterval == "1wk"
+            ? dedupedRows.GroupBy(x => GetIsoWeekStart(DateOnly.FromDateTime(x.Timestamp.Date)))
+            : dedupedRows.GroupBy(x =>
+            {
+                var date = DateOnly.FromDateTime(x.Timestamp.Date);
+                return new DateOnly(date.Year, date.Month, 1);
+            });
+
+        var result = new List<StockHistoricalPrice>();
+        foreach (var bucket in bucketed.OrderBy(x => x.Key))
+        {
+            var isCompleted = targetInterval == "1wk"
+                ? bucket.Key < currentWeekStart
+                : bucket.Key.Year < currentUtcDate.Year
+                  || (bucket.Key.Year == currentUtcDate.Year && bucket.Key.Month < currentUtcDate.Month);
+            if (!isCompleted)
+            {
+                continue;
+            }
+
+            var ordered = bucket.OrderBy(x => x.Timestamp).ToList();
+            if (ordered.Count == 0 || ordered.Any(x => x.Volume < 0))
+            {
+                continue;
+            }
+
+            long totalVolume;
+            try
+            {
+                totalVolume = 0L;
+                foreach (var row in ordered)
+                {
+                    checked
+                    {
+                        totalVolume += row.Volume;
+                    }
+                }
+            }
+            catch (OverflowException)
+            {
+                continue;
+            }
+
+            var first = ordered[0];
+            var last = ordered[^1];
+            result.Add(new StockHistoricalPrice
+            {
+                StockId = stockId,
+                Interval = targetInterval,
+                Timestamp = DateTime.SpecifyKind(bucket.Key.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc),
+                Open = first.Open,
+                High = ordered.Max(x => x.High),
+                Low = ordered.Min(x => x.Low),
+                Close = last.Close,
+                AdjustedClose = last.AdjustedClose,
+                QuoteCurrency = last.QuoteCurrency,
+                FinancialCurrency = last.FinancialCurrency,
+                NormalizedQuoteCurrency = last.NormalizedQuoteCurrency,
+                QuoteUnitMultiplier = last.QuoteUnitMultiplier,
+                Volume = totalVolume,
+                IsQuoteDerived = false,
+            });
+        }
+
+        return result;
+    }
+
+    private static CandleBatch AggregateUtcDailyBatch(CandleBatch dailyBatch, string targetInterval, DateTime nowUtc)
+    {
+        var dedupedCandles = dailyBatch.Candles
+            .GroupBy(x => DateOnly.FromDateTime(x.Timestamp.Date))
+            .Select(g => g.OrderBy(x => x.Timestamp).Last())
+            .OrderBy(x => x.Timestamp)
+            .ToList();
+        if (dedupedCandles.Count == 0)
+        {
+            return new CandleBatch(
+                new List<CandleData>(),
+                dailyBatch.QuoteCurrency,
+                dailyBatch.FinancialCurrency,
+                dailyBatch.NormalizedQuoteCurrency,
+                dailyBatch.QuoteUnitMultiplier);
+        }
+
+        var currentUtcDate = DateOnly.FromDateTime(nowUtc.Date);
+        var currentWeekStart = GetIsoWeekStart(currentUtcDate);
+        var bucketed = targetInterval == "1wk"
+            ? dedupedCandles.GroupBy(x => GetIsoWeekStart(DateOnly.FromDateTime(x.Timestamp.Date)))
+            : dedupedCandles.GroupBy(x =>
+            {
+                var date = DateOnly.FromDateTime(x.Timestamp.Date);
+                return new DateOnly(date.Year, date.Month, 1);
+            });
+
+        var aggregated = new List<CandleData>();
+        foreach (var bucket in bucketed.OrderBy(x => x.Key))
+        {
+            var isCompleted = targetInterval == "1wk"
+                ? bucket.Key < currentWeekStart
+                : bucket.Key.Year < currentUtcDate.Year
+                  || (bucket.Key.Year == currentUtcDate.Year && bucket.Key.Month < currentUtcDate.Month);
+            if (!isCompleted)
+            {
+                continue;
+            }
+
+            var ordered = bucket.OrderBy(x => x.Timestamp).ToList();
+            if (ordered.Count == 0 || ordered.Any(x => x.Volume < 0))
+            {
+                continue;
+            }
+
+            long totalVolume;
+            try
+            {
+                totalVolume = 0L;
+                foreach (var candle in ordered)
+                {
+                    checked
+                    {
+                        totalVolume += candle.Volume;
+                    }
+                }
+            }
+            catch (OverflowException)
+            {
+                continue;
+            }
+
+            var first = ordered[0];
+            var last = ordered[^1];
+            aggregated.Add(new CandleData(
+                DateTime.SpecifyKind(bucket.Key.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc),
+                first.Open,
+                ordered.Max(x => x.High),
+                ordered.Min(x => x.Low),
+                last.Close,
+                last.AdjustedClose,
+                totalVolume));
+        }
+
+        return new CandleBatch(
+            aggregated,
+            dailyBatch.QuoteCurrency,
+            dailyBatch.FinancialCurrency,
+            dailyBatch.NormalizedQuoteCurrency,
+            dailyBatch.QuoteUnitMultiplier);
+    }
 
     private static List<StockHistoricalPrice> AggregateFrankfurtFromDailyRows(
         int stockId,
@@ -2283,7 +2589,7 @@ public class StockHistoryService : IStockHistoryService
         {
             IncrementalLookbackDays = raw.IncrementalLookbackDays > 0 ? raw.IncrementalLookbackDays : 10,
             ReconciliationLookbackDays = raw.ReconciliationLookbackDays > 0 ? raw.ReconciliationLookbackDays : 183,
-            FullBackfillLookbackDays = raw.FullBackfillLookbackDays > 0 ? raw.FullBackfillLookbackDays : 730,
+            FullBackfillLookbackDays = raw.FullBackfillLookbackDays > 0 ? raw.FullBackfillLookbackDays : FullBackfillMinimumLookbackDays,
             IncrementalDailyCadence = raw.IncrementalDailyCadence > TimeSpan.Zero ? raw.IncrementalDailyCadence : TimeSpan.FromDays(1),
             IncrementalWeeklyCadence = raw.IncrementalWeeklyCadence > TimeSpan.Zero ? raw.IncrementalWeeklyCadence : TimeSpan.FromDays(7),
             ReconciliationTrackedCadence = raw.ReconciliationTrackedCadence > TimeSpan.Zero ? raw.ReconciliationTrackedCadence : TimeSpan.FromDays(7),
