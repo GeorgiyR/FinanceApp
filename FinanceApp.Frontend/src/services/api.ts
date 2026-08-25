@@ -18,6 +18,7 @@ import type {
   UpdateStockQuoteResponse,
   StockHistoryResponse,
   StockHistoryRefreshResponse,
+  StockHistoryRepairDiagnosticsResponse,
   StockHistoryRange,
   StockQuoteResponse,
   StockExchange,
@@ -132,6 +133,21 @@ export const getStockHistory = (id: number, range: StockHistoryRange) =>
   api.get<StockHistoryResponse>(`/Stocks/${id}/history`, { params: { range } });
 export const refreshStockHistory = (id: number) =>
   api.post<StockHistoryRefreshResponse>(`/Stocks/${id}/history/refresh`);
+export const getStockHistoryRoutingDiagnostics = (id: number) =>
+  api.get<StockHistoryRepairDiagnosticsResponse>(`/Stocks/${id}/history/routing-diagnostics`);
+export const validateStockHistoryProviderSymbol = (id: number, candidateProviderSymbol?: string | null) =>
+  api.post<StockHistoryRepairDiagnosticsResponse>(`/Stocks/${id}/history/provider-symbol/validate`, {
+    candidateProviderSymbol: candidateProviderSymbol ?? null,
+  });
+export const hardResetStockHistory = (
+  id: number,
+  confirmationText: string,
+  candidateProviderSymbol?: string | null,
+) =>
+  api.post<StockHistoryRepairDiagnosticsResponse>(`/Stocks/${id}/history/hard-reset`, {
+    candidateProviderSymbol: candidateProviderSymbol ?? null,
+    confirmationText,
+  });
 export const getStockFundamentals = (id: number) =>
   api.get<FundamentalsResponse>(`/Stocks/${id}/fundamentals`);
 export const refreshStockFundamentals = (id: number) =>

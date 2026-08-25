@@ -21,15 +21,18 @@ public class MarketIndexHistoryService : IMarketIndexHistoryService
 
     private readonly AppDbContext _dbContext;
     private readonly IYahooRequestCoordinator _yahooRequestCoordinator;
+    private readonly IYahooQuoteService _yahooQuoteService;
     private readonly ILogger<MarketIndexHistoryService> _logger;
 
     public MarketIndexHistoryService(
         AppDbContext dbContext,
         IYahooRequestCoordinator yahooRequestCoordinator,
+        IYahooQuoteService yahooQuoteService,
         ILogger<MarketIndexHistoryService> logger)
     {
         _dbContext = dbContext;
         _yahooRequestCoordinator = yahooRequestCoordinator;
+        _yahooQuoteService = yahooQuoteService;
         _logger = logger;
     }
 
@@ -46,6 +49,10 @@ public class MarketIndexHistoryService : IMarketIndexHistoryService
 
         bool isStale = false;
         string? staleReason = null;
+        decimal? currentPrice = null;
+        DateTime? currentPriceAt = null;
+        bool currentPriceIsDelayed = false;
+        string? currentPriceDelayWarning = null;
 
         if (data.Count == 0 && !string.IsNullOrWhiteSpace(index.ProviderSymbol))
         {
@@ -62,15 +69,50 @@ public class MarketIndexHistoryService : IMarketIndexHistoryService
             }
         }
 
+        if (!string.IsNullOrWhiteSpace(index.ProviderSymbol))
+        {
+            var quoteSnapshot = await TryGetCurrentQuoteSnapshotAsync(index.ProviderSymbol!, cancellationToken);
+            if (quoteSnapshot is not null)
+            {
+                currentPrice = quoteSnapshot.CurrentPrice;
+                currentPriceAt = quoteSnapshot.PriceTimestampUtc;
+                currentPriceIsDelayed = quoteSnapshot.IsDelayed;
+                currentPriceDelayWarning = quoteSnapshot.DelayReason;
+            }
+        }
+
         return new MarketIndexHistoryResponse
         {
             MarketIndexId = index.Id,
             Range = normalizedRange,
             Interval = interval,
+            CurrentPrice = currentPrice,
+            CurrentPriceAt = currentPriceAt,
+            CurrentPriceIsDelayed = currentPriceIsDelayed,
+            CurrentPriceDelayWarning = currentPriceDelayWarning,
             IsStale = isStale,
             StaleReason = staleReason,
             Points = data.Select(MapPoint).ToList()
         };
+    }
+
+    private async Task<YahooQuoteData?> TryGetCurrentQuoteSnapshotAsync(string providerSymbol, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var quoteResult = await _yahooQuoteService.GetQuoteAsync(providerSymbol, cancellationToken);
+            if (!quoteResult.IsSuccess || quoteResult.Quote is null || quoteResult.Quote.CurrentPrice <= 0)
+            {
+                return null;
+            }
+
+            return quoteResult.Quote;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogDebug(ex, "Skipping market-index current quote snapshot for symbol {ProviderSymbol}", providerSymbol);
+            return null;
+        }
     }
 
     public async Task<MarketIndexRefreshResponse> RefreshHistoryAsync(

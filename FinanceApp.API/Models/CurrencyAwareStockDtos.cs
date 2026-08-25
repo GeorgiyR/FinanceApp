@@ -128,6 +128,57 @@ public sealed class StockHistoryRefreshResponse
     public DateTime? NextDueAtUtc { get; init; }
 }
 
+public sealed class StockHistoryProviderSymbolValidationRequest
+{
+    public string? CandidateProviderSymbol { get; init; }
+}
+
+public sealed class StockHistoryHardResetRequest
+{
+    public string? CandidateProviderSymbol { get; init; }
+    public string ConfirmationText { get; init; } = string.Empty;
+}
+
+public sealed record StockHistoryRepairIntervalDiagnosticsResponse
+{
+    public string Interval { get; init; } = string.Empty;
+    public int RequestedCount { get; init; }
+    public int FetchedCount { get; init; }
+    public int AcceptedCount { get; init; }
+    public int RejectedCount { get; init; }
+    public int InsertedCount { get; init; }
+    public int FinalCount { get; init; }
+    public DateTime? FirstTimestampUtc { get; init; }
+    public DateTime? LastTimestampUtc { get; init; }
+    public bool IsUnavailable { get; init; }
+    public string? Message { get; init; }
+}
+
+public sealed record StockHistoryRepairDiagnosticsResponse
+{
+    public int StockId { get; init; }
+    public string Ticker { get; init; } = string.Empty;
+    public string Exchange { get; init; } = string.Empty;
+    public string Name { get; init; } = string.Empty;
+    public string? ConfiguredProviderSymbol { get; init; }
+    public string EffectiveProviderSymbol { get; init; } = string.Empty;
+    public string? CandidateOverrideSymbol { get; init; }
+    public string Provider { get; init; } = "yahoo";
+    /// <summary>success | partial | empty | notFound | rateLimited | validationFailed | failed</summary>
+    public string ResultBucket { get; init; } = "failed";
+    public string? ProviderQuoteSymbol { get; init; }
+    public string? ProviderCurrency { get; init; }
+    public DateTime? ProviderPriceTimestampUtc { get; init; }
+    public int? RetryAfterSeconds { get; init; }
+    public int DeletedRows { get; init; }
+    public int InsertedRows { get; init; }
+    public int FinalRows { get; init; }
+    public bool ResetPerformed { get; init; }
+    public IReadOnlyList<StockHistoryRepairIntervalDiagnosticsResponse> Intervals { get; init; } = Array.Empty<StockHistoryRepairIntervalDiagnosticsResponse>();
+    public IReadOnlyList<string> Warnings { get; init; } = Array.Empty<string>();
+    public IReadOnlyList<string> Errors { get; init; } = Array.Empty<string>();
+}
+
 public sealed class StockHistoryPointResponse
 {
     public DateTime Timestamp { get; init; }

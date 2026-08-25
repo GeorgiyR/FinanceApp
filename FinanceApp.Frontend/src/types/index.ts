@@ -132,6 +132,10 @@ export interface MarketIndexHistoryResponse {
   marketIndexId: number;
   range: MarketIndexHistoryRange;
   interval: string;
+  currentPrice: number | null;
+  currentPriceAt: string | null;
+  currentPriceIsDelayed: boolean;
+  currentPriceDelayWarning: string | null;
   isStale: boolean;
   staleReason: string | null;
   points: MarketIndexHistoryPoint[];
@@ -247,6 +251,43 @@ export interface StockHistoryRefreshResponse {
   deletedPoints: number;
   importedPoints: number;
   rateLimited?: boolean;
+}
+
+export interface StockHistoryRepairIntervalDiagnostics {
+  interval: string;
+  requestedCount: number;
+  fetchedCount: number;
+  acceptedCount: number;
+  rejectedCount: number;
+  insertedCount: number;
+  finalCount: number;
+  firstTimestampUtc: string | null;
+  lastTimestampUtc: string | null;
+  isUnavailable: boolean;
+  message: string | null;
+}
+
+export interface StockHistoryRepairDiagnosticsResponse {
+  stockId: number;
+  ticker: string;
+  exchange: string;
+  name: string;
+  configuredProviderSymbol: string | null;
+  effectiveProviderSymbol: string;
+  candidateOverrideSymbol: string | null;
+  provider: string;
+  resultBucket: 'success' | 'partial' | 'empty' | 'notFound' | 'rateLimited' | 'validationFailed' | 'failed';
+  providerQuoteSymbol: string | null;
+  providerCurrency: string | null;
+  providerPriceTimestampUtc: string | null;
+  retryAfterSeconds: number | null;
+  deletedRows: number;
+  insertedRows: number;
+  finalRows: number;
+  resetPerformed: boolean;
+  intervals: StockHistoryRepairIntervalDiagnostics[];
+  warnings: string[];
+  errors: string[];
 }
 
 export type FundamentalsState = 'Fresh' | 'Stale' | 'Unavailable';

@@ -248,6 +248,66 @@ public class StocksController : ControllerBase
         }
     }
 
+    [HttpGet("{id}/history/routing-diagnostics")]
+    public async Task<ActionResult<StockHistoryRepairDiagnosticsResponse>> GetHistoryRoutingDiagnostics(
+        int id,
+        CancellationToken cancellationToken = default)
+    {
+        var stock = await _context.Stocks.FirstOrDefaultAsync(s => s.Id == id, cancellationToken);
+        if (stock == null)
+        {
+            return NotFound();
+        }
+
+        return Ok(await _stockHistoryService.GetRepairDiagnosticsAsync(stock, cancellationToken));
+    }
+
+    [HttpPost("{id}/history/provider-symbol/validate")]
+    public async Task<ActionResult<StockHistoryRepairDiagnosticsResponse>> ValidateHistoryProviderSymbol(
+        int id,
+        [FromBody] StockHistoryProviderSymbolValidationRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var stock = await _context.Stocks.FirstOrDefaultAsync(s => s.Id == id, cancellationToken);
+        if (stock == null)
+        {
+            return NotFound();
+        }
+
+        var result = await _stockHistoryService.ValidateProviderSymbolAsync(stock, request?.CandidateProviderSymbol, cancellationToken);
+        return Ok(result);
+    }
+
+    [HttpPost("{id}/history/hard-reset")]
+    public async Task<ActionResult<StockHistoryRepairDiagnosticsResponse>> HardResetHistory(
+        int id,
+        [FromBody] StockHistoryHardResetRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var stock = await _context.Stocks.FirstOrDefaultAsync(s => s.Id == id, cancellationToken);
+        if (stock == null)
+        {
+            return NotFound();
+        }
+
+        var confirmation = request?.ConfirmationText?.Trim();
+        var isConfirmed =
+            string.Equals(confirmation, "УДАЛИТЬ", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(confirmation, stock.Ticker, StringComparison.OrdinalIgnoreCase);
+        if (!isConfirmed)
+        {
+            return BadRequest("Подтверждение не пройдено. Введите тикер или слово «УДАЛИТЬ».");
+        }
+
+        var result = await _stockHistoryService.HardResetHistoryAsync(stock, request?.CandidateProviderSymbol, cancellationToken);
+        if (!result.ResetPerformed)
+        {
+            return Ok(result);
+        }
+
+        return Ok(result);
+    }
+
     [HttpPost]
     public async Task<ActionResult<Stock>> Create(Stock stock)
     {

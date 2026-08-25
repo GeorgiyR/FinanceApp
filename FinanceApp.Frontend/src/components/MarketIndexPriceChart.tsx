@@ -57,7 +57,17 @@ type ChartPoint = {
   chartIndex?: number;
 };
 
-function buildChartData(points: MarketIndexHistoryPoint[], range: MarketIndexHistoryRange): ChartPoint[] {
+type CurrentSnapshot = {
+  price: number | null;
+  timestampUtc: string | null;
+  isDelayed: boolean;
+};
+
+export function buildChartData(
+  points: MarketIndexHistoryPoint[],
+  range: MarketIndexHistoryRange,
+  currentSnapshot?: CurrentSnapshot | null,
+): ChartPoint[] {
   const sorted: ChartPoint[] = points
     .map((p) => ({
       timestampMs: dayjs.utc(p.timestamp).valueOf(),
@@ -69,6 +79,33 @@ function buildChartData(points: MarketIndexHistoryPoint[], range: MarketIndexHis
       volume: p.volume,
     }))
     .sort((a, b) => a.timestampMs - b.timestampMs);
+
+  if (range === '1y' && sorted.length > 0) {
+    const latest = sorted[sorted.length - 1];
+    const overlayPrice = currentSnapshot?.price ?? null;
+    const overlayTimestamp = currentSnapshot?.timestampUtc ?? null;
+    const overlayTimestampMs = overlayTimestamp ? dayjs.utc(overlayTimestamp).valueOf() : Number.NaN;
+
+    if (
+      currentSnapshot?.isDelayed !== true
+      && Number.isFinite(overlayTimestampMs)
+      && overlayTimestampMs <= Date.now()
+      && typeof overlayPrice === 'number'
+      && Number.isFinite(overlayPrice)
+      && overlayPrice > 0
+      && overlayTimestampMs > latest.timestampMs
+    ) {
+      sorted.push({
+        timestampMs: overlayTimestampMs,
+        timestamp: overlayTimestamp!,
+        closeChart: overlayPrice,
+        open: overlayPrice,
+        high: overlayPrice,
+        low: overlayPrice,
+        volume: null,
+      });
+    }
+  }
 
   if (range === '1w') {
     return sorted.map((pt, idx) => ({ ...pt, chartIndex: idx }));
@@ -129,6 +166,7 @@ const MarketIndexPriceChart: React.FC<MarketIndexPriceChartProps> = ({
   const [refreshing, setRefreshing] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [points, setPoints] = useState<MarketIndexHistoryPoint[]>([]);
+  const [currentSnapshot, setCurrentSnapshot] = useState<CurrentSnapshot | null>(null);
   const [isStale, setIsStale] = useState(false);
   const [staleReason, setStaleReason] = useState<string | null>(null);
   const [messageApi, contextHolder] = message.useMessage();
@@ -144,11 +182,17 @@ const MarketIndexPriceChart: React.FC<MarketIndexPriceChartProps> = ({
     try {
       const res = await getMarketIndexHistory(indexId, range);
       setPoints(res.data.points);
+      setCurrentSnapshot({
+        price: res.data.currentPrice ?? null,
+        timestampUtc: res.data.currentPriceAt ?? null,
+        isDelayed: res.data.currentPriceIsDelayed === true,
+      });
       setIsStale(res.data.isStale);
       setStaleReason(res.data.staleReason ?? null);
     } catch {
       setErrorMsg('Ошибка загрузки исторических данных');
       setPoints([]);
+      setCurrentSnapshot(null);
     } finally {
       setLoading(false);
     }
@@ -203,7 +247,10 @@ const MarketIndexPriceChart: React.FC<MarketIndexPriceChartProps> = ({
     }
   }, [fetchHistory, indexId, messageApi, refreshing]);
 
-  const chartData = useMemo(() => buildChartData(points, range), [points, range]);
+  const chartData = useMemo(
+    () => buildChartData(points, range, currentSnapshot),
+    [currentSnapshot, points, range],
+  );
   const displayChartData = useMemo(
     () => range === '24h'
       ? compressIntradaySessionGaps(chartData, chartLayoutWidth)

@@ -714,6 +714,109 @@ public class StocksControllerTests
     }
 
     [Fact]
+    public async Task GetHistoryRoutingDiagnostics_ReturnsEffectiveSymbolFromService()
+    {
+        await using var context = CreateContext();
+        context.Stocks.Add(new Stock
+        {
+            Id = 81,
+            Ticker = "SMEGF",
+            Name = "Siemens Energy AG",
+            CommonName = "Siemens Energy AG",
+            Exchange = StockExchanges.Frankfurt,
+            ProviderSymbol = "ENR.DE",
+            CurrentPrice = 10m,
+            UpdatedAt = DateTime.UtcNow
+        });
+        await context.SaveChangesAsync();
+
+        var service = new RecordingStockHistoryService
+        {
+            RoutingDiagnosticsFactory = (stock, _) => new StockHistoryRepairDiagnosticsResponse
+            {
+                StockId = stock.Id,
+                Ticker = stock.Ticker,
+                Exchange = stock.Exchange,
+                Name = stock.Name,
+                ConfiguredProviderSymbol = stock.ProviderSymbol,
+                EffectiveProviderSymbol = stock.ProviderSymbol!,
+                ResultBucket = "success",
+            }
+        };
+        var controller = CreateController(context, service);
+
+        var result = await controller.GetHistoryRoutingDiagnostics(81);
+
+        var ok = Assert.IsType<OkObjectResult>(result.Result);
+        var payload = Assert.IsType<StockHistoryRepairDiagnosticsResponse>(ok.Value);
+        Assert.Equal("ENR.DE", payload.EffectiveProviderSymbol);
+    }
+
+    [Fact]
+    public async Task ValidateHistoryProviderSymbol_ForwardsCandidateToService()
+    {
+        await using var context = CreateContext();
+        context.Stocks.Add(new Stock
+        {
+            Id = 82,
+            Ticker = "SMEGF",
+            Name = "Siemens Energy AG",
+            CommonName = "Siemens Energy AG",
+            Exchange = StockExchanges.Frankfurt,
+            CurrentPrice = 10m,
+            UpdatedAt = DateTime.UtcNow
+        });
+        await context.SaveChangesAsync();
+
+        var service = new RecordingStockHistoryService();
+        var controller = CreateController(context, service);
+
+        var result = await controller.ValidateHistoryProviderSymbol(82, new StockHistoryProviderSymbolValidationRequest
+        {
+            CandidateProviderSymbol = "ENR.DE"
+        });
+
+        Assert.IsType<OkObjectResult>(result.Result);
+        Assert.Equal((82, "ENR.DE"), Assert.Single(service.ValidateCalls));
+    }
+
+    [Fact]
+    public async Task HardResetHistory_RequiresTypedConfirmation()
+    {
+        await using var context = CreateContext();
+        context.Stocks.Add(new Stock
+        {
+            Id = 83,
+            Ticker = "SMEGF",
+            Name = "Siemens Energy AG",
+            CommonName = "Siemens Energy AG",
+            Exchange = StockExchanges.Frankfurt,
+            CurrentPrice = 10m,
+            UpdatedAt = DateTime.UtcNow
+        });
+        await context.SaveChangesAsync();
+
+        var service = new RecordingStockHistoryService();
+        var controller = CreateController(context, service);
+
+        var badResult = await controller.HardResetHistory(83, new StockHistoryHardResetRequest
+        {
+            CandidateProviderSymbol = "ENR.DE",
+            ConfirmationText = "NOPE",
+        });
+        Assert.IsType<BadRequestObjectResult>(badResult.Result);
+        Assert.Empty(service.HardResetCalls);
+
+        var okResult = await controller.HardResetHistory(83, new StockHistoryHardResetRequest
+        {
+            CandidateProviderSymbol = "ENR.DE",
+            ConfirmationText = "УДАЛИТЬ",
+        });
+        Assert.IsType<OkObjectResult>(okResult.Result);
+        Assert.Equal((83, "ENR.DE"), Assert.Single(service.HardResetCalls));
+    }
+
+    [Fact]
     public async Task Create_WithUnderscoreSlug_Accepted()
     {
         await using var context = CreateContext();
@@ -2680,12 +2783,19 @@ public class StocksControllerTests
     {
         private readonly List<(int StockId, string Range)> _getHistoryCalls = [];
         private readonly List<(int StockId, string Exchange)> _refreshHistoryCalls = [];
+        private readonly List<(int StockId, string? Candidate)> _validateCalls = [];
+        private readonly List<(int StockId, string? Candidate)> _hardResetCalls = [];
 
         public Func<Stock, string, StockHistoryResponse>? HistoryResponseFactory { get; init; }
         public Func<Stock, StockHistoryRefreshResponse>? RefreshResponseFactory { get; init; }
+        public Func<Stock, string?, StockHistoryRepairDiagnosticsResponse>? RoutingDiagnosticsFactory { get; init; }
+        public Func<Stock, string?, StockHistoryRepairDiagnosticsResponse>? ValidationDiagnosticsFactory { get; init; }
+        public Func<Stock, string?, StockHistoryRepairDiagnosticsResponse>? HardResetDiagnosticsFactory { get; init; }
 
         public IReadOnlyList<(int StockId, string Range)> GetHistoryCalls => _getHistoryCalls;
         public IReadOnlyList<(int StockId, string Exchange)> RefreshHistoryCalls => _refreshHistoryCalls;
+        public IReadOnlyList<(int StockId, string? Candidate)> ValidateCalls => _validateCalls;
+        public IReadOnlyList<(int StockId, string? Candidate)> HardResetCalls => _hardResetCalls;
 
         public Task<StockHistoryResponse> GetHistoryAsync(Stock stock, string range, CancellationToken cancellationToken = default)
         {
@@ -2711,6 +2821,51 @@ public class StocksControllerTests
 
         public Task SyncHistoricalDataForAllStocksAsync(CancellationToken cancellationToken = default)
             => Task.CompletedTask;
+
+        public Task<StockHistoryRepairDiagnosticsResponse> GetRepairDiagnosticsAsync(Stock stock, CancellationToken cancellationToken = default)
+            => Task.FromResult(RoutingDiagnosticsFactory?.Invoke(stock, null) ?? new StockHistoryRepairDiagnosticsResponse
+            {
+                StockId = stock.Id,
+                Ticker = stock.Ticker,
+                Exchange = stock.Exchange,
+                Name = stock.Name,
+                ConfiguredProviderSymbol = stock.ProviderSymbol,
+                EffectiveProviderSymbol = stock.ProviderSymbol ?? stock.Ticker,
+                ResultBucket = "success",
+            });
+
+        public Task<StockHistoryRepairDiagnosticsResponse> ValidateProviderSymbolAsync(Stock stock, string? candidateProviderSymbol, CancellationToken cancellationToken = default)
+        {
+            _validateCalls.Add((stock.Id, candidateProviderSymbol));
+            return Task.FromResult(ValidationDiagnosticsFactory?.Invoke(stock, candidateProviderSymbol) ?? new StockHistoryRepairDiagnosticsResponse
+            {
+                StockId = stock.Id,
+                Ticker = stock.Ticker,
+                Exchange = stock.Exchange,
+                Name = stock.Name,
+                ConfiguredProviderSymbol = stock.ProviderSymbol,
+                EffectiveProviderSymbol = stock.ProviderSymbol ?? stock.Ticker,
+                CandidateOverrideSymbol = candidateProviderSymbol,
+                ResultBucket = "success",
+            });
+        }
+
+        public Task<StockHistoryRepairDiagnosticsResponse> HardResetHistoryAsync(Stock stock, string? candidateProviderSymbol, CancellationToken cancellationToken = default)
+        {
+            _hardResetCalls.Add((stock.Id, candidateProviderSymbol));
+            return Task.FromResult(HardResetDiagnosticsFactory?.Invoke(stock, candidateProviderSymbol) ?? new StockHistoryRepairDiagnosticsResponse
+            {
+                StockId = stock.Id,
+                Ticker = stock.Ticker,
+                Exchange = stock.Exchange,
+                Name = stock.Name,
+                ConfiguredProviderSymbol = stock.ProviderSymbol,
+                EffectiveProviderSymbol = stock.ProviderSymbol ?? stock.Ticker,
+                CandidateOverrideSymbol = candidateProviderSymbol,
+                ResultBucket = "success",
+                ResetPerformed = true,
+            });
+        }
     }
 
     private readonly record struct CatalogPerformanceHistorySqlPoint(
