@@ -35,26 +35,36 @@ const AdvancedStockFiltersDrawer: React.FC<AdvancedStockFiltersDrawerProps> = ({
 }) => (
   <Drawer
     title={(
-      <Space size={8} align="center" style={{ display: 'inline-flex', width: '100%' }}>
-        <span>Расширенные фильтры</span>
-        <Tooltip title="Применить фильтры">
-          <Button
-            type="text"
-            icon={<CheckOutlined />}
-            aria-label="Применить фильтры"
-            onClick={onApply}
-          />
-        </Tooltip>
-        <Tooltip title="Очистить фильтры">
-          <Button
-            type="text"
-            danger
-            icon={<CloseOutlined />}
-            aria-label="Очистить фильтры"
-            onClick={onClearDraft}
-          />
-        </Tooltip>
-      </Space>
+      <div style={{ display: 'flex', alignItems: 'center', width: '100%', minWidth: 0, gap: 8 }}>
+        <span style={{ minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          Расширенные фильтры
+        </span>
+        <Space
+          size={8}
+          align="center"
+          data-testid="advanced-filters-header-actions"
+          style={{ marginLeft: 'auto', flexShrink: 0 }}
+        >
+          <Tooltip title="Применить фильтры">
+            <Button
+              type="primary"
+              size="small"
+              icon={<CheckOutlined />}
+              aria-label="Применить фильтры"
+              onClick={onApply}
+            />
+          </Tooltip>
+          <Tooltip title="Очистить фильтры">
+            <Button
+              danger
+              size="small"
+              icon={<CloseOutlined />}
+              aria-label="Очистить фильтры"
+              onClick={onClearDraft}
+            />
+          </Tooltip>
+        </Space>
+      </div>
     )}
     placement="right"
     width="min(420px, 100vw)"
