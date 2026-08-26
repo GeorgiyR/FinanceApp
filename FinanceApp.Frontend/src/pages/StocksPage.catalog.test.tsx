@@ -1302,6 +1302,46 @@ describe('StocksPage tracked mode regression', () => {
     expect(api.untrackStock).toHaveBeenCalledWith(trackedStock.id);
   });
 
+  it('renders tracked row actions with delete immediately before final purchase-candidate marker and keeps both actions functional', async () => {
+    const user = userEvent.setup();
+    const api = await import('../services/api');
+    vi.mocked(api.getPortfolios).mockResolvedValue({ data: [] });
+    vi.mocked(api.updateStockPurchaseCandidatePriority).mockResolvedValueOnce({
+      data: { stockId: trackedStock.id, priority: 1 },
+    });
+
+    renderPage('tracked');
+    await waitFor(() => expect(screen.getAllByText('AAPL').length).toBeGreaterThan(0));
+
+    const row = document.querySelector(`tr[data-row-key="${trackedStock.id}"]`);
+    expect(row).not.toBeNull();
+
+    const deleteButton = within(row as HTMLElement).getByRole('button', { name: 'Удалить из отслеживаемых' });
+    const candidateButton = within(row as HTMLElement).getByRole('button', { name: 'Отметить кандидатом на покупку' });
+
+    let actionsContainer = deleteButton.parentElement;
+    while (actionsContainer && !within(actionsContainer).queryByRole('button', { name: 'Изменить' })) {
+      actionsContainer = actionsContainer.parentElement;
+    }
+    expect(actionsContainer).not.toBeNull();
+
+    const actionButtons = within(actionsContainer as HTMLElement).getAllByRole('button');
+    expect(actionButtons.at(-2)).toBe(deleteButton);
+    expect(actionButtons.at(-1)).toBe(candidateButton);
+    expectRenderedBefore(deleteButton, candidateButton);
+
+    await user.click(candidateButton);
+    await waitFor(() => expect(api.updateStockPurchaseCandidatePriority).toHaveBeenCalledTimes(1));
+    expect(api.updateStockPurchaseCandidatePriority).toHaveBeenCalledWith(trackedStock.id, { priority: 1 });
+    await screen.findByRole('button', { name: 'Повысить приоритет кандидата' });
+
+    await user.click(deleteButton);
+    await screen.findByText('Удалить из отслеживаемых? Акция останется в «Список акций», индексах и портфелях.');
+    await user.click(await screen.findByRole('button', { name: 'Да' }));
+    await waitFor(() => expect(api.untrackStock).toHaveBeenCalledTimes(1));
+    expect(api.untrackStock).toHaveBeenCalledWith(trackedStock.id);
+  });
+
   it('shows purchase-candidate star for tracked non-portfolio stock with neutral accessible name', async () => {
     const api = await import('../services/api');
     vi.mocked(api.getPortfolios).mockResolvedValue({ data: [] });
