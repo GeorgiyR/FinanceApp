@@ -128,6 +128,22 @@ const formatDate = (value?: string | null): string => {
   return parsed.isValid() ? parsed.format('DD.MM.YYYY HH:mm:ss') : '—';
 };
 
+const formatDateOnly = (value?: string | null): string => {
+  if (!value) {
+    return '—';
+  }
+  const parsed = dayjs(value);
+  return parsed.isValid() ? parsed.format('DD.MM.YYYY') : '—';
+};
+
+const formatTimeOnly = (value?: string | null): string => {
+  if (!value) {
+    return '—';
+  }
+  const parsed = dayjs(value);
+  return parsed.isValid() ? parsed.format('HH:mm:ss') : '—';
+};
+
 const formatDuration = (seconds?: number | null): string => {
   if (seconds == null || Number.isNaN(seconds) || seconds < 0) {
     return '—';
@@ -282,12 +298,21 @@ const SystemProcessRunsPage: React.FC = () => {
 
   const columns: ColumnsType<ProcessRunRow> = [
     {
+      title: 'Дата',
+      key: 'runDate',
+      width: 112,
+      render: (_, row) => {
+        const timestamp = typeof row.startedAtUtc === 'string' ? row.startedAtUtc : row.queuedAtUtc;
+        return <Tooltip title={formatDate(timestamp)}><span>{formatDateOnly(timestamp)}</span></Tooltip>;
+      },
+    },
+    {
       title: 'Запуск',
       key: 'startedAtUtc',
-      width: 190,
+      width: 96,
       render: (_, row) => (
-        <Tooltip title={typeof row.startedAtUtc === 'string' ? row.startedAtUtc : row.queuedAtUtc ?? ''}>
-          <span>{formatDate(typeof row.startedAtUtc === 'string' ? row.startedAtUtc : row.queuedAtUtc)}</span>
+        <Tooltip title={formatDate(typeof row.startedAtUtc === 'string' ? row.startedAtUtc : row.queuedAtUtc)}>
+          <span>{formatTimeOnly(typeof row.startedAtUtc === 'string' ? row.startedAtUtc : row.queuedAtUtc)}</span>
         </Tooltip>
       ),
     },
@@ -295,13 +320,13 @@ const SystemProcessRunsPage: React.FC = () => {
       title: 'Завершение',
       dataIndex: 'completedAtUtc',
       key: 'completedAtUtc',
-      width: 190,
-      render: (value: unknown) => <Tooltip title={typeof value === 'string' ? value : ''}><span>{formatDate(typeof value === 'string' ? value : null)}</span></Tooltip>,
+      width: 96,
+      render: (value: unknown) => <Tooltip title={formatDate(typeof value === 'string' ? value : null)}><span>{formatTimeOnly(typeof value === 'string' ? value : null)}</span></Tooltip>,
     },
     {
-      title: 'Длительность',
+      title: 'Длит.',
       key: 'durationSeconds',
-      width: 160,
+      width: 80,
       render: (_, row) => {
         const isActive = row.completedAtUtc == null;
         const base = toFiniteNumber(row.durationSeconds);
@@ -321,7 +346,7 @@ const SystemProcessRunsPage: React.FC = () => {
       title: 'Процесс',
       dataIndex: 'displayName',
       key: 'displayName',
-      width: 260,
+      width: 220,
       ellipsis: true,
       render: (value: unknown, row) => (
         <Space direction="vertical" size={0}>
@@ -336,28 +361,33 @@ const SystemProcessRunsPage: React.FC = () => {
       title: 'Источник',
       dataIndex: 'trigger',
       key: 'trigger',
-      width: 170,
+      width: 120,
       render: (value: unknown) => getTriggerLabel(value),
     },
     {
       title: 'Прогресс',
       key: 'progress',
-      width: 210,
+      width: 140,
       render: (_, row) => {
         const total = toFiniteNumber(row.totalItems);
         const processed = toFiniteNumber(row.processedItems) ?? 0;
         const progress = toFiniteNumber(row.progressPercent) ?? 0;
-        if (total && total > 0) {
-          return `${processed} / ${total} (${Math.round(progress)}%)`;
-        }
-
-        return processed > 0 ? `${processed}` : '—';
+        const text = total && total > 0
+          ? `${processed} / ${total} (${Math.round(progress)}%)`
+          : processed > 0 ? `${processed}` : '—';
+        return (
+          <Tooltip title={text}>
+            <span style={{ display: 'inline-block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {text}
+            </span>
+          </Tooltip>
+        );
       },
     },
     {
       title: 'Результат',
       key: 'result',
-      width: 320,
+      width: 220,
       ellipsis: true,
       render: (_, row) => {
         if (typeof row.resultSummary === 'string' && row.resultSummary.trim().length > 0) {
@@ -373,7 +403,7 @@ const SystemProcessRunsPage: React.FC = () => {
       title: 'Статус',
       dataIndex: 'status',
       key: 'status',
-      width: 180,
+      width: 140,
       render: (value: unknown) => {
         const meta = getStatusTagMeta(value);
         return <Tag color={meta.color}>{meta.label}</Tag>;
@@ -382,7 +412,7 @@ const SystemProcessRunsPage: React.FC = () => {
     {
       title: 'Действия',
       key: 'actions',
-      width: 120,
+      width: 90,
       fixed: 'right',
       render: (_, row) => {
         const id = toFiniteNumber(row.id);
@@ -484,7 +514,7 @@ const SystemProcessRunsPage: React.FC = () => {
           loading={loading}
           columns={columns}
           dataSource={runs}
-          scroll={{ x: 1800 }}
+          scroll={{ x: 1320 }}
           pagination={{
             current: filters.page,
             pageSize: filters.pageSize,

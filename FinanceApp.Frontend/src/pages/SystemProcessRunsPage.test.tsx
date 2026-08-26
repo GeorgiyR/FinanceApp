@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import React from 'react';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import SystemProcessRunsPage from './SystemProcessRunsPage';
 
 const getPortfoliosMock = vi.fn();
@@ -71,6 +71,16 @@ const renderPage = () => render(
 );
 
 describe('SystemProcessRunsPage', () => {
+  const originalTz = process.env.TZ;
+
+  beforeAll(() => {
+    process.env.TZ = 'UTC';
+  });
+
+  afterAll(() => {
+    process.env.TZ = originalTz;
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     getPortfoliosMock.mockResolvedValue({ data: [] });
@@ -155,5 +165,87 @@ describe('SystemProcessRunsPage', () => {
     expect(refreshButton).not.toBeNull();
     refreshButton?.click();
     expect(await screen.findByText('Не удалось загрузить журнал процессов.')).toBeInTheDocument();
+  });
+
+  it('renders compact date/time columns and keeps status before actions', async () => {
+    const completedRun = {
+      ...defaultRun,
+      id: 2,
+      displayName: 'Ночное обновление каталога акций',
+      processType: 'catalog-stock-refresh',
+      trigger: 'Scheduled',
+      status: 'Interrupted',
+      startedAtUtc: '2026-08-25T09:00:05Z',
+      completedAtUtc: '2026-08-25T09:01:24Z',
+      durationSeconds: 79,
+      processedItems: 12345,
+      totalItems: 123456789,
+      progressPercent: 10,
+    };
+    const runningRun = {
+      ...defaultRun,
+      id: 3,
+      displayName: 'Выполняющийся процесс',
+      completedAtUtc: null,
+      status: 'Running',
+    };
+
+    getSystemProcessRunsMock.mockResolvedValue({
+      data: {
+        page: 1,
+        pageSize: 25,
+        totalCount: 2,
+        serverNowUtc: '2026-08-25T09:01:00Z',
+        items: [completedRun, runningRun],
+      },
+    });
+    getSystemProcessRunsSummaryMock.mockResolvedValue({ data: { activeCount: 1 } });
+    getSystemProcessRunMock.mockResolvedValue({
+      data: {
+        id: 2,
+        displayName: completedRun.displayName,
+        processType: completedRun.processType,
+        trigger: completedRun.trigger,
+      },
+    });
+
+    const { container } = renderPage();
+
+    expect(await screen.findByText('Ночное обновление каталога акций')).toBeInTheDocument();
+    const headerCells = Array.from(container.querySelectorAll('.ant-table-thead th.ant-table-cell'));
+    const columnHeaders = headerCells.map((th) => th.textContent?.trim() ?? '');
+    expect(columnHeaders[0]).toBe('Дата');
+    expect(columnHeaders).toContain('Запуск');
+    expect(columnHeaders).toContain('Завершение');
+    expect(columnHeaders).toContain('Длит.');
+    expect(columnHeaders).toContain('Статус');
+    expect(columnHeaders).toContain('Действия');
+    expect(columnHeaders.findIndex((x) => x === 'Статус')).toBeLessThan(columnHeaders.findIndex((x) => x === 'Действия'));
+
+    expect(screen.getAllByText('25.08.2026').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('09:00:05').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('09:01:24').length).toBeGreaterThan(0);
+    expect(screen.queryByText('25.08.2026 09:00:05')).not.toBeInTheDocument();
+    expect(screen.getAllByText('1м 19с').length).toBeGreaterThan(0);
+
+    const durationHeader = headerCells.find((th) => th.textContent?.trim() === 'Длит.');
+    expect(durationHeader).toBeDefined();
+    const progressHeader = headerCells.find((th) => th.textContent?.trim() === 'Прогресс');
+    expect(progressHeader).toBeDefined();
+    const widthCols = container.querySelectorAll('.ant-table-content table colgroup col');
+    expect(widthCols[3]?.getAttribute('style') ?? '').toContain('width: 80px');
+    expect(widthCols[6]?.getAttribute('style') ?? '').toContain('width: 140px');
+
+    const longProgress = screen.getAllByText('12345 / 123456789 (10%)')[0];
+    expect(longProgress).toHaveStyle({ textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+
+    const unfinishedRow = screen.getByText('Выполняющийся процесс').closest('tr');
+    expect(unfinishedRow).not.toBeNull();
+    expect(within(unfinishedRow as HTMLElement).getAllByText('—').length).toBeGreaterThan(0);
+
+    const detailsButton = screen.getAllByRole('button', { name: 'Детали' })[0];
+    detailsButton.click();
+    await waitFor(() => expect(getSystemProcessRunMock).toHaveBeenCalledWith(2));
+    expect(await screen.findByText('Детали процесса')).toBeInTheDocument();
   });
 });
