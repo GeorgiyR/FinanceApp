@@ -234,7 +234,7 @@ describe('IndexConstituentsPanel 24h performance integration', () => {
     await user.click(screen.getByRole('button', { name: 'Открыть расширенные фильтры' }));
     await user.click(screen.getByRole('combobox', { name: 'Фильтр по бирже' }));
     await user.click(await screen.findByText('США (NYSE + NASDAQ)'));
-    await user.click(screen.getByRole('button', { name: 'Применить' }));
+    await user.click(screen.getByRole('button', { name: 'Применить фильтры' }));
 
     await waitFor(() => expect(screen.queryByText('FRA1')).not.toBeInTheDocument());
     expect(screen.getAllByText('NYSE1').length).toBeGreaterThan(0);

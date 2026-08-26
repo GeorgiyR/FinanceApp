@@ -1,5 +1,6 @@
 import React from 'react';
-import { Button, Drawer, Select, Space, Typography } from 'antd';
+import { CheckOutlined, CloseOutlined } from '@ant-design/icons';
+import { Button, Drawer, Select, Space, Tooltip, Typography } from 'antd';
 import type { AdvancedStockFilters } from './stockFilterModel';
 
 const { Text } = Typography;
@@ -33,19 +34,33 @@ const AdvancedStockFiltersDrawer: React.FC<AdvancedStockFiltersDrawerProps> = ({
   onApply,
 }) => (
   <Drawer
-    title="Расширенные фильтры"
+    title={(
+      <Space size={8} align="center" style={{ display: 'inline-flex', width: '100%' }}>
+        <span>Расширенные фильтры</span>
+        <Tooltip title="Применить фильтры">
+          <Button
+            type="text"
+            icon={<CheckOutlined />}
+            aria-label="Применить фильтры"
+            onClick={onApply}
+          />
+        </Tooltip>
+        <Tooltip title="Очистить фильтры">
+          <Button
+            type="text"
+            danger
+            icon={<CloseOutlined />}
+            aria-label="Очистить фильтры"
+            onClick={onClearDraft}
+          />
+        </Tooltip>
+      </Space>
+    )}
     placement="right"
     width="min(420px, 100vw)"
-    styles={{ body: { paddingBottom: 96 } }}
     open={open}
     onClose={onClose}
     destroyOnClose={false}
-    footer={(
-      <Space style={{ display: 'flex', justifyContent: 'space-between' }}>
-        <Button onClick={onClearDraft}>Очистить</Button>
-        <Button type="primary" onClick={onApply}>Применить</Button>
-      </Space>
-    )}
   >
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       <label htmlFor="advanced-stock-filter-exchanges">

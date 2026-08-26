@@ -1208,7 +1208,7 @@ describe('StocksPage catalog period-performance sorting', () => {
     await user.click(screen.getByRole('button', { name: 'Открыть расширенные фильтры' }));
     await user.click(screen.getByRole('combobox', { name: 'Фильтр по бирже' }));
     await user.click(await screen.findByText('Frankfurt (FRA)'));
-    await user.click(screen.getByRole('button', { name: 'Применить' }));
+    await user.click(screen.getByRole('button', { name: 'Применить фильтры' }));
 
     await waitFor(() => expect(screen.queryByText('AAPL')).not.toBeInTheDocument());
     expect(screen.getAllByText('BAS').length).toBeGreaterThan(0);
@@ -1241,7 +1241,7 @@ describe('StocksPage catalog period-performance sorting', () => {
     await user.click(screen.getByRole('button', { name: 'Открыть расширенные фильтры' }));
     await user.click(screen.getByRole('combobox', { name: 'Фильтр по бирже' }));
     await user.click(await screen.findByText('Frankfurt (FRA)'));
-    await user.click(screen.getByRole('button', { name: 'Применить' }));
+    await user.click(screen.getByRole('button', { name: 'Применить фильтры' }));
 
     await waitFor(() => {
       expect(document.querySelector('li.ant-pagination-item-1.ant-pagination-item-active')).not.toBeNull();
@@ -1636,7 +1636,7 @@ describe('StocksPage tracked mode regression', () => {
     await user.click(screen.getByRole('button', { name: 'Открыть расширенные фильтры' }));
     await user.click(screen.getByRole('combobox', { name: 'Фильтр по бирже' }));
     await user.click(await screen.findByText('Frankfurt (FRA)'));
-    await user.click(screen.getByRole('button', { name: 'Применить' }));
+    await user.click(screen.getByRole('button', { name: 'Применить фильтры' }));
     await waitFor(() => expect(screen.queryByText('AAPL')).not.toBeInTheDocument());
     expect(screen.getAllByText('BAS').length).toBeGreaterThan(0);
     expect(screen.getByText('Фильтры (1)')).toBeInTheDocument();
