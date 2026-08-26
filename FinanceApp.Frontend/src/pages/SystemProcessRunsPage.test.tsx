@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import React from 'react';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { Table } from 'antd';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import SystemProcessRunsPage from './SystemProcessRunsPage';
 
@@ -44,7 +45,7 @@ vi.mock('../components/AuthenticatedShell', () => ({
 
 const defaultRun = {
   id: 1,
-  processType: 'CatalogStockRefresh',
+  processType: 'stock-quote-refresh-cycle',
   displayName: 'Обновление каталога акций',
   status: 'Running',
   trigger: 'Automatic',
@@ -95,7 +96,7 @@ describe('SystemProcessRunsPage', () => {
     getSystemProcessRunsMock.mockResolvedValue({
       data: {
         page: 1,
-        pageSize: 25,
+        pageSize: 50,
         totalCount: 1,
         serverNowUtc: '2026-08-25T09:01:00Z',
         items: [defaultRun],
@@ -106,7 +107,8 @@ describe('SystemProcessRunsPage', () => {
     renderPage();
 
     expect(await screen.findByText('Выполняется')).toBeInTheDocument();
-    expect(screen.getByText('Автоматически')).toBeInTheDocument();
+    expect(screen.getByText('Авто.')).toBeInTheDocument();
+    expect(screen.queryByText('Автоматически')).not.toBeInTheDocument();
     expect(screen.getByText('Активных процессов: 1. Автообновление включено.')).toBeInTheDocument();
   });
 
@@ -114,7 +116,7 @@ describe('SystemProcessRunsPage', () => {
     getSystemProcessRunsMock.mockResolvedValue({
       data: {
         page: 1,
-        pageSize: 25,
+        pageSize: 50,
         totalCount: 4,
         serverNowUtc: '2026-08-25T09:01:00Z',
         items: [
@@ -151,7 +153,7 @@ describe('SystemProcessRunsPage', () => {
     resolveList?.({
       data: {
         page: 1,
-        pageSize: 25,
+        pageSize: 50,
         totalCount: 0,
         serverNowUtc: '2026-08-25T09:01:00Z',
         items: [],
@@ -193,13 +195,13 @@ describe('SystemProcessRunsPage', () => {
     getSystemProcessRunsMock.mockResolvedValue({
       data: {
         page: 1,
-        pageSize: 25,
-        totalCount: 2,
+        pageSize: 50,
+        totalCount: 120,
         serverNowUtc: '2026-08-25T09:01:00Z',
         items: [completedRun, runningRun],
       },
     });
-    getSystemProcessRunsSummaryMock.mockResolvedValue({ data: { activeCount: 1 } });
+    getSystemProcessRunsSummaryMock.mockResolvedValue({ data: { activeCount: 0 } });
     getSystemProcessRunMock.mockResolvedValue({
       data: {
         id: 2,
@@ -212,19 +214,32 @@ describe('SystemProcessRunsPage', () => {
     const { container } = renderPage();
 
     expect(await screen.findByText('Ночное обновление каталога акций')).toBeInTheDocument();
+    expect(getSystemProcessRunsMock).toHaveBeenNthCalledWith(1, expect.objectContaining({ page: 1, pageSize: 50 }));
+
+    const systemTable = container.querySelector('.ant-table-wrapper.system-process-runs-table');
+    expect(systemTable).not.toBeNull();
+    expect(systemTable?.querySelector('.ant-table')).toHaveClass('ant-table-small');
+
     const headerCells = Array.from(container.querySelectorAll('.ant-table-thead th.ant-table-cell'));
     const columnHeaders = headerCells.map((th) => th.textContent?.trim() ?? '');
     expect(columnHeaders[0]).toBe('Дата');
     expect(columnHeaders).toContain('Запуск');
-    expect(columnHeaders).toContain('Завершение');
+    expect(columnHeaders).toContain('Заверш.');
+    expect(columnHeaders).not.toContain('Завершение');
     expect(columnHeaders).toContain('Длит.');
     expect(columnHeaders).toContain('Статус');
     expect(columnHeaders).toContain('Действия');
     expect(columnHeaders.findIndex((x) => x === 'Статус')).toBeLessThan(columnHeaders.findIndex((x) => x === 'Действия'));
 
+    const processRow = screen.getByText('Ночное обновление каталога акций').closest('tr');
+    expect(processRow).not.toBeNull();
+    expect(within(processRow as HTMLElement).queryByText('stock-quote-refresh-cycle')).not.toBeInTheDocument();
+
     expect(screen.getAllByText('25.08.2026').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('09:00:05').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('09:01:24').length).toBeGreaterThan(0);
+    const startTimeCell = screen.getAllByText('09:00:05')[0];
+    const completionTimeCell = screen.getAllByText('09:01:24')[0];
+    expect(startTimeCell).toHaveStyle({ whiteSpace: 'nowrap' });
+    expect(completionTimeCell).toHaveStyle({ whiteSpace: 'nowrap' });
     expect(screen.queryByText('25.08.2026 09:00:05')).not.toBeInTheDocument();
     expect(screen.getAllByText('1м 19с').length).toBeGreaterThan(0);
 
@@ -233,8 +248,11 @@ describe('SystemProcessRunsPage', () => {
     const progressHeader = headerCells.find((th) => th.textContent?.trim() === 'Прогресс');
     expect(progressHeader).toBeDefined();
     const widthCols = container.querySelectorAll('.ant-table-content table colgroup col');
+    expect(widthCols[1]?.getAttribute('style') ?? '').toContain('width: 84px');
+    expect(widthCols[2]?.getAttribute('style') ?? '').toContain('width: 84px');
     expect(widthCols[3]?.getAttribute('style') ?? '').toContain('width: 80px');
     expect(widthCols[6]?.getAttribute('style') ?? '').toContain('width: 140px');
+    expect(container.querySelector('.ant-table-content table')?.getAttribute('style') ?? '').toContain('width: 1290px');
 
     const longProgress = screen.getAllByText('12345 / 123456789 (10%)')[0];
     expect(longProgress).toHaveStyle({ textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
@@ -247,5 +265,48 @@ describe('SystemProcessRunsPage', () => {
     detailsButton.click();
     await waitFor(() => expect(getSystemProcessRunMock).toHaveBeenCalledWith(2));
     expect(await screen.findByText('Детали процесса')).toBeInTheDocument();
+    expect(screen.getByText('catalog-stock-refresh')).toBeInTheDocument();
+
+    const page2Button = container.querySelector('.ant-pagination-item-2 a');
+    expect(page2Button).not.toBeNull();
+    (page2Button as HTMLElement).click();
+    await waitFor(() => {
+      expect(getSystemProcessRunsMock).toHaveBeenLastCalledWith(expect.objectContaining({ page: 2, pageSize: 50 }));
+    });
+
+    const sizeSelector = container.querySelector('.ant-pagination-options .ant-select-selector');
+    expect(sizeSelector).not.toBeNull();
+    fireEvent.mouseDown(sizeSelector as HTMLElement);
+    const size25Option = await screen.findByText('25 / page');
+    size25Option.click();
+    await waitFor(() => {
+      expect(getSystemProcessRunsMock).toHaveBeenLastCalledWith(expect.objectContaining({ pageSize: 25 }));
+    });
+  });
+
+  it('keeps compact density table-specific (does not affect unrelated default tables)', async () => {
+    getSystemProcessRunsMock.mockResolvedValue({
+      data: {
+        page: 1,
+        pageSize: 50,
+        totalCount: 1,
+        serverNowUtc: '2026-08-25T09:01:00Z',
+        items: [defaultRun],
+      },
+    });
+    getSystemProcessRunsSummaryMock.mockResolvedValue({ data: { activeCount: 0 } });
+
+    const { container } = renderPage();
+    expect(await screen.findByText('Обновление каталога акций')).toBeInTheDocument();
+    expect(container.querySelector('.ant-table-wrapper.system-process-runs-table .ant-table')).toHaveClass('ant-table-small');
+
+    const { container: genericContainer } = render(
+      <Table
+        columns={[{ title: 'Test', dataIndex: 'value', key: 'value' }]}
+        dataSource={[{ key: 'r1', value: 'v1' }]}
+        pagination={false}
+      />,
+    );
+    expect(genericContainer.querySelector('.ant-table')).not.toHaveClass('ant-table-small');
   });
 });
