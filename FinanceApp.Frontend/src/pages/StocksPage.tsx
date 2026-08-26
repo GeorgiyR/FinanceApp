@@ -1797,70 +1797,75 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
           </Title>
         )}
         headerRight={(
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-            <Input
-              placeholder="Поиск: тикер, название, биржа, индекс"
-              value={selectedQuery}
-              onChange={(event) => (isCatalogMode
-                ? handleCatalogQueryChange(event.target.value)
-                : handleTrackedQueryChange(event.target.value))}
-              allowClear
-              size="small"
-              style={{ width: 320, maxWidth: '100%' }}
-            />
-            <AdvancedStockFilterToolbarControls
-              compact
-              activeGroupCount={activeAdvancedFilterGroups}
-              onOpen={isCatalogMode ? openCatalogAdvancedFilters : openTrackedAdvancedFilters}
-              onReset={isCatalogMode ? resetCatalogAdvancedFilters : resetTrackedAdvancedFilters}
-              resetDisabled={activeAdvancedFilterGroups === 0}
-            />
-            <Space size={4} align="center" wrap>
-              <span style={{ fontSize: 16, color: '#595959', whiteSpace: 'nowrap' }}>Сортировка:</span>
-              <Select<CatalogSortMode>
-                size="small"
-                value={selectedSortMode}
-                onChange={isCatalogMode ? handleCatalogSortModeChange : handleTrackedSortModeChange}
-                options={CATALOG_SORT_MODE_OPTIONS}
-                style={{ width: 130 }}
-                aria-label="Сортировка"
-              />
-              {isCatalogPeriodSortMode(selectedSortMode) && (
-                <Tooltip title={selectedSortDirection === 'desc' ? 'Убыванию' : 'Возрастанию'}>
-                  <Button
-                    size="small"
-                    icon={selectedSortDirection === 'desc' ? <SortDescendingOutlined /> : <SortAscendingOutlined />}
-                    onClick={isCatalogMode ? handleCatalogSortDirectionToggle : handleTrackedSortDirectionToggle}
-                    aria-label={selectedSortDirection === 'desc' ? 'Сортировать по возрастанию' : 'Сортировать по убыванию'}
-                  />
-                </Tooltip>
-              )}
-            </Space>
-            {!isCatalogMode && (
-              <>
-                <Text type="secondary" style={{ fontSize: 16 }}>
-                  Авто-обновление через {formatCountdown(countdown)}
-                </Text>
-                <Button
-                  icon={<ReloadOutlined />}
-                  loading={refreshing}
-                  onClick={() => { handleRefreshPrices(false); setCountdown(AUTO_REFRESH_INTERVAL); }}
-                >
-                  Обновить цены
-                </Button>
-              </>
-            )}
+          <div data-testid="stocks-page-header-actions" style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
             <Button
+              data-testid="stocks-page-add-stock-button"
               type="primary"
               icon={<PlusOutlined />}
               onClick={openCreateModal}
-              style={{ marginInlineStart: 'auto' }}
             >
               Добавить акцию
             </Button>
           </div>
         )}
       >
+        <div
+          data-testid="stocks-page-toolbar-row"
+          style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}
+        >
+          <Input
+            placeholder="Поиск: тикер, название, биржа, индекс"
+            value={selectedQuery}
+            onChange={(event) => (isCatalogMode
+              ? handleCatalogQueryChange(event.target.value)
+              : handleTrackedQueryChange(event.target.value))}
+            allowClear
+            size="small"
+            style={{ width: 320, maxWidth: '100%' }}
+          />
+          <AdvancedStockFilterToolbarControls
+            compact
+            activeGroupCount={activeAdvancedFilterGroups}
+            onOpen={isCatalogMode ? openCatalogAdvancedFilters : openTrackedAdvancedFilters}
+            onReset={isCatalogMode ? resetCatalogAdvancedFilters : resetTrackedAdvancedFilters}
+            resetDisabled={activeAdvancedFilterGroups === 0}
+          />
+          <Space size={4} align="center" wrap>
+            <span style={{ fontSize: 16, color: '#595959', whiteSpace: 'nowrap' }}>Сортировка:</span>
+            <Select<CatalogSortMode>
+              size="small"
+              value={selectedSortMode}
+              onChange={isCatalogMode ? handleCatalogSortModeChange : handleTrackedSortModeChange}
+              options={CATALOG_SORT_MODE_OPTIONS}
+              style={{ width: 130 }}
+              aria-label="Сортировка"
+            />
+            {isCatalogPeriodSortMode(selectedSortMode) && (
+              <Tooltip title={selectedSortDirection === 'desc' ? 'Убыванию' : 'Возрастанию'}>
+                <Button
+                  size="small"
+                  icon={selectedSortDirection === 'desc' ? <SortDescendingOutlined /> : <SortAscendingOutlined />}
+                  onClick={isCatalogMode ? handleCatalogSortDirectionToggle : handleTrackedSortDirectionToggle}
+                  aria-label={selectedSortDirection === 'desc' ? 'Сортировать по возрастанию' : 'Сортировать по убыванию'}
+                />
+              </Tooltip>
+            )}
+          </Space>
+          {!isCatalogMode && (
+            <>
+              <Text type="secondary" style={{ fontSize: 16 }}>
+                Авто-обновление через {formatCountdown(countdown)}
+              </Text>
+              <Button
+                icon={<ReloadOutlined />}
+                loading={refreshing}
+                onClick={() => { handleRefreshPrices(false); setCountdown(AUTO_REFRESH_INTERVAL); }}
+              >
+                Обновить цены
+              </Button>
+            </>
+          )}
+        </div>
         {loading ? (
           <div style={{ display: 'flex', justifyContent: 'center', padding: 48 }}>
             <Spin size="large" />
