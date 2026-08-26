@@ -6,6 +6,7 @@ using FinanceApp.Data.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Xunit;
@@ -733,6 +734,60 @@ public class CatalogStockRefreshHostedServiceTests
     }
 
     [Fact]
+    public async Task ShutdownCancellation_AfterPartialWork_PersistsInterruptedJournalWithProgress()
+    {
+        var clock = new FixedTimeProvider(new DateTimeOffset(2026, 8, 19, 20, 40, 0, TimeSpan.Zero));
+        var quote = new RecordingQuoteService();
+        var history = new RecordingHistoryService();
+        var hostLifetime = new TestHostApplicationLifetime();
+        await using var harness = await Harness.CreateAsync(clock, quote, history, options: new CatalogStockRefreshJobOptions
+        {
+            InterRequestDelay = TimeSpan.Zero,
+            RetryLimit = 0
+        }, withProcessJournal: true, hostApplicationLifetime: hostLifetime);
+
+        await harness.SeedStockAsync(1, "AAPL", StockExchanges.Nyse, StockTrackingStatus.Tracked);
+        await harness.SeedStockAsync(2, "MSFT", StockExchanges.Nyse, StockTrackingStatus.Tracked);
+
+        var cancellationSource = new CancellationTokenSource();
+        var fetchCount = 0;
+        quote.OnFetch = _ =>
+        {
+            fetchCount++;
+            if (fetchCount < 2)
+            {
+                return;
+            }
+
+            hostLifetime.StopApplication();
+            cancellationSource.Cancel();
+        };
+
+        await harness.Service.TriggerRunAsync(
+            DateOnly.FromDateTime(new DateTime(2026, 8, 19)),
+            clock.GetUtcNow().UtcDateTime,
+            "scheduled",
+            cancellationSource.Token);
+
+        await using var verify = harness.Services.CreateAsyncScope();
+        var verifyDb = verify.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var refreshedStock = await verifyDb.Stocks.FirstAsync(x => x.Id == 1);
+        Assert.Equal(10m, refreshedStock.CurrentPrice);
+
+        var run = await verifyDb.CatalogStockRefreshRuns.SingleAsync();
+        Assert.Equal(1, run.Processed);
+
+        var processRun = await verifyDb.SystemProcessRuns.SingleAsync();
+        Assert.Equal(SystemProcessRunStatus.Interrupted, processRun.Status);
+        Assert.Equal(1, processRun.ProcessedItems);
+        Assert.Equal(2, processRun.SucceededItems);
+        Assert.Equal("stockId=1", processRun.LastProcessedEntity);
+        Assert.Contains("Обработано 1 из 2", processRun.ResultSummary);
+        Assert.Contains("Остановка/перезапуск приложения", processRun.ErrorSummary);
+    }
+
+    [Fact]
     public void ScheduleCalculator_EuropeBerlin_Winter_IsUtcPlus1()
     {
         var tz = TimeZoneInfo.FindSystemTimeZoneById("Europe/Berlin");
@@ -798,7 +853,9 @@ public class CatalogStockRefreshHostedServiceTests
             FixedTimeProvider clock,
             RecordingQuoteService quoteService,
             RecordingHistoryService historyService,
-            CatalogStockRefreshJobOptions? options = null)
+            CatalogStockRefreshJobOptions? options = null,
+            bool withProcessJournal = false,
+            IHostApplicationLifetime? hostApplicationLifetime = null)
         {
             var opts = options ?? new CatalogStockRefreshJobOptions();
             var services = new ServiceCollection();
@@ -814,13 +871,25 @@ public class CatalogStockRefreshHostedServiceTests
             await using var setup = provider.CreateAsyncScope();
             await setup.ServiceProvider.GetRequiredService<AppDbContext>().Database.EnsureCreatedAsync();
 
+            ISystemProcessJournalService? journalService = null;
+            if (withProcessJournal)
+            {
+                journalService = new SystemProcessJournalService(
+                    provider.GetRequiredService<IServiceScopeFactory>(),
+                    clock,
+                    Options.Create(new SystemProcessJournalOptions()),
+                    NullLogger<SystemProcessJournalService>.Instance);
+            }
+
             var service = new CatalogStockRefreshHostedService(
                 provider.GetRequiredService<IServiceScopeFactory>(),
                 clock,
                 Options.Create(opts),
                 NullLogger<CatalogStockRefreshHostedService>.Instance,
                 new CatalogMaintenanceLeaseService(provider.GetRequiredService<IServiceScopeFactory>(), clock),
-                (_, _) => Task.CompletedTask);
+                (_, _) => Task.CompletedTask,
+                journalService,
+                hostApplicationLifetime);
 
             return new Harness(provider, service, clock, opts);
         }
@@ -883,6 +952,7 @@ public class CatalogStockRefreshHostedServiceTests
     {
         public List<int> ProcessedIds { get; } = [];
         public Func<string, StockQuoteResponse>? QuoteFactory { get; set; }
+        public Action<string>? OnFetch { get; set; }
 
         public Task<StockQuoteFetchResult> FetchAsync(
             string ticker,
@@ -890,6 +960,8 @@ public class CatalogStockRefreshHostedServiceTests
             string? finanzenNetSlug,
             CancellationToken cancellationToken = default)
         {
+            OnFetch?.Invoke(ticker);
+
             if (ticker.Length > 1 && ticker.StartsWith('T') && int.TryParse(ticker[1..], out var id))
             {
                 ProcessedIds.Add(id);
@@ -959,5 +1031,28 @@ public class CatalogStockRefreshHostedServiceTests
         private DateTimeOffset _now = now;
         public override DateTimeOffset GetUtcNow() => _now;
         public void Set(DateTimeOffset value) => _now = value;
+    }
+
+    private sealed class TestHostApplicationLifetime : IHostApplicationLifetime
+    {
+        private readonly CancellationTokenSource _stopping = new();
+        private readonly CancellationTokenSource _stopped = new();
+
+        public CancellationToken ApplicationStarted => CancellationToken.None;
+        public CancellationToken ApplicationStopping => _stopping.Token;
+        public CancellationToken ApplicationStopped => _stopped.Token;
+
+        public void StopApplication()
+        {
+            if (!_stopping.IsCancellationRequested)
+            {
+                _stopping.Cancel();
+            }
+
+            if (!_stopped.IsCancellationRequested)
+            {
+                _stopped.Cancel();
+            }
+        }
     }
 }
