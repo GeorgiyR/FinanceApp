@@ -219,6 +219,10 @@ const renderPage = (mode: 'tracked' | 'catalog') => render(
   </MemoryRouter>,
 );
 
+const expectRenderedBefore = (left: Element, right: Element) => {
+  expect(left.compareDocumentPosition(right) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+};
+
 const buildCatalogStock = (order: number): Stock => ({
   id: order + 100,
   ticker: `T${String(order).padStart(3, '0')}`,
@@ -271,38 +275,52 @@ describe('StocksPage catalog mode', () => {
     expect(document.querySelector(`li.ant-pagination-item-${page}.ant-pagination-item-active`)).not.toBeNull();
   };
 
-  const expectRenderedBefore = (left: Element, right: Element) => {
-    expect(left.compareDocumentPosition(right) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+  const getHeaderActionsRow = () => {
+    const row = screen.getByTestId('stocks-page-header-actions');
+    expect(row.closest('.app-workspace-header-right')).not.toBeNull();
+    return row;
   };
 
-  it('renders catalog toolbar controls in expected order with wrap contract and accessible names', async () => {
+  const getToolbarRow = () => {
+    const row = screen.getByTestId('stocks-page-toolbar-row');
+    expect(row.closest('.app-workspace-content')).not.toBeNull();
+    return row;
+  };
+
+  it('renders catalog layout as explicit header action row plus separate toolbar row with expected controls', async () => {
     const user = userEvent.setup();
     renderPage('catalog');
     await waitFor(() => expect(screen.getAllByText('AAPL').length).toBeGreaterThan(0));
+
+    const headerActions = getHeaderActionsRow();
+    const toolbar = getToolbarRow();
+    const addButton = screen.getByRole('button', { name: /Добавить акцию/i });
+    expect(headerActions).toContainElement(addButton);
+    expect(toolbar).not.toContainElement(addButton);
+    expectRenderedBefore(headerActions, toolbar);
+    expect(toolbar).toHaveStyle({ flexWrap: 'wrap' });
 
     const searchInput = screen.getByPlaceholderText('Поиск: тикер, название, биржа, индекс');
     const openFiltersButton = screen.getByRole('button', { name: 'Открыть расширенные фильтры' });
     const resetFiltersButton = screen.getByRole('button', { name: 'Сбросить расширенные фильтры' });
     const sortLabel = screen.getByText('Сортировка:');
     const sortSelect = screen.getByRole('combobox', { name: 'Сортировка' });
-    const addButton = screen.getByText('Добавить акцию').closest('button');
-    expect(addButton).not.toBeNull();
 
     expectRenderedBefore(searchInput, openFiltersButton);
     expectRenderedBefore(openFiltersButton, resetFiltersButton);
     expectRenderedBefore(resetFiltersButton, sortLabel);
     expectRenderedBefore(sortLabel, sortSelect);
-    expectRenderedBefore(sortSelect, addButton as Element);
 
     expect(screen.queryByRole('button', { name: 'Сортировать по возрастанию' })).not.toBeInTheDocument();
 
     await user.click(sortSelect);
     await user.click(await screen.findByText('24 ч.'));
     expect(screen.getByRole('button', { name: 'Сортировать по возрастанию' })).toBeInTheDocument();
+    expect(screen.queryByText(/Авто-обновление через/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Обновить цены/i })).not.toBeInTheDocument();
 
-    const toolbar = addButton?.parentElement;
-    expect(toolbar).not.toBeNull();
-    expect(toolbar as HTMLElement).toHaveStyle({ flexWrap: 'wrap' });
+    await user.click(addButton);
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
   });
 
   // Test 1: All exchange fixtures render in one table, not separate sections
@@ -1298,25 +1316,52 @@ describe('StocksPage tracked mode regression', () => {
     });
   });
 
-  it('renders tracked search/filter/sort controls together with countdown and refresh button', async () => {
+  it('renders tracked layout with header add action and separate toolbar row containing refresh controls', async () => {
     const user = userEvent.setup();
     const api = await import('../services/api');
     vi.mocked(api.getStockCatalogPerformance).mockResolvedValue({ data: { range: '24h', generatedAtUtc: '2026-08-19T00:00:00Z', items: [] } });
+    vi.mocked(api.getStockPrice).mockResolvedValue({
+      data: {
+        ticker: 'AAPL',
+        exchange: 'NYSE',
+        currentPrice: 101,
+        previousClose: 100,
+        change: 1,
+        changePercent: 1,
+        timestamp: '2026-08-19T00:00:00Z',
+        marketState: 'CLOSED',
+      },
+    } as never);
 
     renderPage('tracked');
     await waitFor(() => expect(screen.getAllByText('AAPL').length).toBeGreaterThan(0));
+
+    const headerActions = screen.getByTestId('stocks-page-header-actions');
+    const toolbar = screen.getByTestId('stocks-page-toolbar-row');
+    const addButton = screen.getByRole('button', { name: /Добавить акцию/i });
+    expect(headerActions).toContainElement(addButton);
+    expect(toolbar).not.toContainElement(addButton);
+    expectRenderedBefore(headerActions, toolbar);
+    expect(toolbar).toHaveStyle({ flexWrap: 'wrap' });
 
     expect(screen.getByPlaceholderText('Поиск: тикер, название, биржа, индекс')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Открыть расширенные фильтры' })).toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: 'Сортировка' })).toBeInTheDocument();
     expect(screen.getByText(/Авто-обновление через/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Обновить цены/i })).toBeInTheDocument();
+    const refreshButton = screen.getByRole('button', { name: /Обновить цены/i });
+    expect(refreshButton).toBeInTheDocument();
 
     const sortSelect = screen.getByRole('combobox', { name: 'Сортировка' });
     await user.click(sortSelect);
     await user.click(await screen.findByText('24 ч.'));
     expect(screen.getByRole('button', { name: 'Сортировать по возрастанию' })).toBeInTheDocument();
     expect(vi.mocked(api.getStockCatalogPerformance)).toHaveBeenCalledWith('24h', expect.any(AbortSignal));
+
+    await user.click(refreshButton);
+    await waitFor(() => expect(vi.mocked(api.getStockPrice)).toHaveBeenCalled());
+
+    await user.click(addButton);
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
   });
 
   it('tracked search filters by ticker, name/common name, exchange and index name', async () => {
