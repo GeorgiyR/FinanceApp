@@ -1798,6 +1798,7 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
             </Space>
           ) : isTracked && !isProtectedStock ? (
             <Space size={6}>
+              <StockDeleteAction isProtected={isProtectedStock} onDelete={() => handleDelete(stock.id)} />
               <Tooltip title={purchaseCandidateTooltip}>
                 <span>
                   <Button
@@ -1810,7 +1811,6 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
                   />
                 </span>
               </Tooltip>
-              <StockDeleteAction isProtected={isProtectedStock} onDelete={() => handleDelete(stock.id)} />
             </Space>
           ) : undefined,
         });
