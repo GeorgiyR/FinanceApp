@@ -34,7 +34,7 @@ describe('AdvancedStockFiltersDrawer interactions', () => {
     cleanup();
   });
 
-  it('renders header icon actions and no footer text actions', () => {
+  it('renders compact header action buttons and no footer text actions', () => {
     const { container } = renderDrawer();
 
     expect(screen.getByText('Расширенные фильтры')).toBeInTheDocument();
@@ -42,19 +42,27 @@ describe('AdvancedStockFiltersDrawer interactions', () => {
     const clearButton = screen.getByRole('button', { name: 'Очистить фильтры' });
     expect(applyButton).toBeInTheDocument();
     expect(clearButton).toBeInTheDocument();
+    expect(applyButton).toHaveClass('ant-btn');
+    expect(clearButton).toHaveClass('ant-btn');
+    expect(applyButton).not.toHaveClass('ant-btn-text');
+    expect(clearButton).not.toHaveClass('ant-btn-text');
+    expect(applyButton.className).toMatch(/ant-btn-(primary|color-primary)/);
+    expect(clearButton.className).toMatch(/ant-btn-(dangerous|color-dangerous)/);
+    expect(clearButton.className).toMatch(/ant-btn-(default|variant-outlined)/);
 
     expect(screen.queryByRole('button', { name: 'Применить' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Очистить' })).not.toBeInTheDocument();
     expect(container.querySelector('.ant-drawer-footer')).toBeNull();
   });
 
-  it('keeps actions in drawer header title area and after the title in DOM order', () => {
+  it('keeps separate right-aligned action group after title in DOM order', () => {
     renderDrawer();
 
     const header = document.querySelector('.ant-drawer-header');
     const title = screen.getByText('Расширенные фильтры');
     const applyButton = screen.getByRole('button', { name: 'Применить фильтры' });
     const clearButton = screen.getByRole('button', { name: 'Очистить фильтры' });
+    const actionsGroup = screen.getByTestId('advanced-filters-header-actions');
 
     expect(header).not.toBeNull();
     expect(header).toContainElement(title);
@@ -65,6 +73,10 @@ describe('AdvancedStockFiltersDrawer interactions', () => {
     expect(titleContainer).not.toBeNull();
     expect(titleContainer).toContainElement(applyButton);
     expect(titleContainer).toContainElement(clearButton);
+    expect(actionsGroup).toContainElement(applyButton);
+    expect(actionsGroup).toContainElement(clearButton);
+    expect(actionsGroup).not.toContainElement(title);
+    expect(actionsGroup).toHaveStyle({ marginLeft: 'auto', flexShrink: '0' });
 
     expect(title.compareDocumentPosition(applyButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(applyButton.compareDocumentPosition(clearButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
