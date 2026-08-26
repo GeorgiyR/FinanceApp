@@ -536,6 +536,11 @@ public class AppDbContext : DbContext
                 .ValueGeneratedNever();
             entity.HasIndex(x => x.TrackingStatus)
                 .HasDatabaseName("IX_Stocks_TrackingStatus");
+            entity.Property(x => x.PurchaseCandidatePriority)
+                .HasConversion<int>()
+                .ValueGeneratedNever();
+            entity.HasIndex(x => x.PurchaseCandidatePriority)
+                .HasDatabaseName("IX_Stocks_PurchaseCandidatePriority");
             entity.Property(x => x.HistoryRefreshCadence)
                 .HasConversion<int>()
                 .ValueGeneratedNever();

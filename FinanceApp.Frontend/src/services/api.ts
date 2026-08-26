@@ -19,6 +19,8 @@ import type {
   StockDependencyDiagnosticsResponse,
   UpdateStockQuoteRequest,
   UpdateStockQuoteResponse,
+  UpdateStockPurchaseCandidatePriorityRequest,
+  UpdateStockPurchaseCandidatePriorityResponse,
   StockHistoryResponse,
   StockHistoryRefreshResponse,
   StockHistoryRepairDiagnosticsResponse,
@@ -138,6 +140,8 @@ export const updateStockEdit = (id: number, data: UpdateStockEditRequest) =>
   api.put<void>(`/Stocks/${id}/edit`, data);
 export const updateStockQuote = (id: number, data: UpdateStockQuoteRequest) =>
   api.patch<UpdateStockQuoteResponse>(`/Stocks/${id}/quote`, data);
+export const updateStockPurchaseCandidatePriority = (id: number, data: UpdateStockPurchaseCandidatePriorityRequest) =>
+  api.put<UpdateStockPurchaseCandidatePriorityResponse>(`/Stocks/${id}/purchase-candidate-priority`, data);
 export const deleteStock = (id: number) => api.delete(`/Stocks/${id}`);
 export const getStockDependencyDiagnostics = (id: number) =>
   api.get<StockDependencyDiagnosticsResponse>(`/Stocks/${id}/dependency-diagnostics`);

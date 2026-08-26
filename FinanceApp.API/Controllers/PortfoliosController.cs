@@ -57,21 +57,45 @@ public class PortfoliosController : ControllerBase
     public async Task<ActionResult<PortfolioItem>> AddItem(int id, AddItemDto dto)
     {
         var userId = int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-        if (!await _context.Portfolios.AnyAsync(p => p.Id == id && p.UserId == userId))
-            return NotFound("Portfolio not found");
-        if (!await _context.Stocks.AnyAsync(s => s.Id == dto.StockId))
-            return BadRequest("Stock not found");
-        var item = new PortfolioItem
+        var mutationResult = await ExecuteMutationWithExecutionStrategyAsync(async ct =>
         {
-            PortfolioId = id,
-            StockId = dto.StockId,
-            Quantity = dto.Quantity,
-            BuyPrice = dto.BuyPrice,
-            BoughtAt = DateTime.UtcNow
-        };
-        _context.PortfolioItems.Add(item);
-        await _context.SaveChangesAsync();
-        return Ok(item);
+            if (!await _context.Portfolios.AnyAsync(p => p.Id == id && p.UserId == userId, ct))
+            {
+                return new AddItemMutationResult(ActionResult: NotFound("Portfolio not found"));
+            }
+
+            var stock = await _context.Stocks.FirstOrDefaultAsync(s => s.Id == dto.StockId, ct);
+            if (stock is null)
+            {
+                return new AddItemMutationResult(ActionResult: BadRequest("Stock not found"));
+            }
+
+            var item = new PortfolioItem
+            {
+                PortfolioId = id,
+                StockId = dto.StockId,
+                Quantity = dto.Quantity,
+                BuyPrice = dto.BuyPrice,
+                BoughtAt = DateTime.UtcNow
+            };
+            _context.PortfolioItems.Add(item);
+
+            if (stock.PurchaseCandidatePriority != StockPurchaseCandidatePriority.None)
+            {
+                stock.PurchaseCandidatePriority = StockPurchaseCandidatePriority.None;
+                stock.UpdatedAt = DateTime.UtcNow;
+            }
+
+            await _context.SaveChangesAsync(ct);
+            return new AddItemMutationResult(Item: item);
+        }, HttpContext.RequestAborted);
+
+        if (mutationResult.ActionResult is not null)
+        {
+            return mutationResult.ActionResult;
+        }
+
+        return Ok(mutationResult.Item);
     }
 
     [HttpPut("{id}/items/{itemId}")]
@@ -115,6 +139,43 @@ public class PortfoliosController : ControllerBase
         await _context.SaveChangesAsync();
         return NoContent();
     }
+
+    private async Task<TMutationResult> ExecuteMutationWithExecutionStrategyAsync<TMutationResult>(
+        Func<CancellationToken, Task<TMutationResult>> mutation,
+        CancellationToken cancellationToken)
+    {
+        var strategy = _context.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+            await using var transaction = _context.Database.IsRelational()
+                ? await _context.Database.BeginTransactionAsync(cancellationToken)
+                : null;
+
+            try
+            {
+                var result = await mutation(cancellationToken);
+                if (transaction is not null)
+                {
+                    await transaction.CommitAsync(cancellationToken);
+                }
+
+                return result;
+            }
+            catch
+            {
+                if (transaction is not null)
+                {
+                    await transaction.RollbackAsync(cancellationToken);
+                }
+
+                throw;
+            }
+        });
+    }
+
+    private sealed record AddItemMutationResult(
+        ActionResult<PortfolioItem>? ActionResult = null,
+        PortfolioItem? Item = null);
 }
 
 public class CreatePortfolioDto

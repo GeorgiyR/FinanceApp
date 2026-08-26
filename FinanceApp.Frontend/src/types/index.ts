@@ -106,6 +106,8 @@ export interface Stock {
   marketIndexIds?: number[];
   /** Tracking status. 0 = CatalogOnly, 1 = Tracked. Tracked stocks appear in the main table and participate in price updates. */
   trackingStatus?: StockTrackingStatus;
+  /** Three-state purchase-candidate marker for tracked non-portfolio stocks. */
+  purchaseCandidatePriority?: StockPurchaseCandidatePriority;
   /** Symbol as provided by the data provider used to import this stock. */
   providerSymbol?: string | null;
 }
@@ -113,6 +115,12 @@ export interface Stock {
 export enum StockTrackingStatus {
   CatalogOnly = 0,
   Tracked = 1,
+}
+
+export enum StockPurchaseCandidatePriority {
+  None = 0,
+  Candidate = 1,
+  HighPriority = 2,
 }
 
 export type StockHistoryRange = '5y' | '3y' | '1y' | '6m' | '3m' | '1m' | '1w' | '24h' | 'today';
@@ -532,6 +540,15 @@ export interface UpdateStockIdentityRequest {
   exchange: StockExchange;
   confirmationText: string;
   retainProviderSymbol?: boolean;
+}
+
+export interface UpdateStockPurchaseCandidatePriorityRequest {
+  priority: StockPurchaseCandidatePriority;
+}
+
+export interface UpdateStockPurchaseCandidatePriorityResponse {
+  stockId: number;
+  priority: StockPurchaseCandidatePriority;
 }
 
 export interface UpdateStockEditRequest {

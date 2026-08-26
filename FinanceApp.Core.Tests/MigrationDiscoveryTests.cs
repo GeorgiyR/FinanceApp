@@ -95,6 +95,14 @@ public class MigrationDiscoveryTests
         Assert.Equal(ValueGenerated.Never, trackingStatus.ValueGenerated);
         // No explicit HasDefaultValue configured; GetDefaultValue returns the CLR default (0 = CatalogOnly).
         Assert.Equal(StockTrackingStatus.CatalogOnly, (StockTrackingStatus?)trackingStatus.GetDefaultValue());
+        var purchaseCandidatePriority = stockEntity.FindProperty(nameof(Stock.PurchaseCandidatePriority));
+        Assert.NotNull(purchaseCandidatePriority);
+        Assert.Equal(ValueGenerated.Never, purchaseCandidatePriority!.ValueGenerated);
+        Assert.Equal(StockPurchaseCandidatePriority.None, (StockPurchaseCandidatePriority?)purchaseCandidatePriority.GetDefaultValue());
+        Assert.Contains(
+            stockEntity.GetIndexes(),
+            index => index.GetDatabaseName() == "IX_Stocks_PurchaseCandidatePriority"
+                && index.Properties.Select(property => property.Name).SequenceEqual(new[] { nameof(Stock.PurchaseCandidatePriority) }));
 
         var providerSymbol = stockEntity.FindProperty(nameof(Stock.ProviderSymbol));
         Assert.NotNull(providerSymbol);

@@ -419,6 +419,7 @@ public class StocksController : ControllerBase
         stock.UpdatedAt = DateTime.UtcNow;
         // Standard create always produces a Tracked stock; CatalogOnly is set only by import jobs.
         stock.TrackingStatus = StockTrackingStatus.Tracked;
+        stock.PurchaseCandidatePriority = StockPurchaseCandidatePriority.None;
         stock.Industry = null;
         stock.IndustryId = industryId;
         stock.SectorId = sectorId;
@@ -1256,6 +1257,67 @@ public class StocksController : ControllerBase
         });
     }
 
+    [HttpPut("{id}/purchase-candidate-priority")]
+    public async Task<ActionResult<UpdateStockPurchaseCandidatePriorityResponse>> UpdatePurchaseCandidatePriority(
+        int id,
+        UpdateStockPurchaseCandidatePriorityRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        if (!Enum.IsDefined(request.Priority))
+        {
+            return BadRequest("Недопустимое значение приоритета кандидата на покупку.");
+        }
+
+        var mutationResult = await ExecuteMutationWithExecutionStrategyAsync(async ct =>
+        {
+            var stock = await _context.Stocks.FirstOrDefaultAsync(s => s.Id == id, ct);
+            if (stock is null)
+            {
+                return new UpdatePurchaseCandidatePriorityMutationResult(ActionResult: NotFound());
+            }
+
+            if (stock.TrackingStatus != StockTrackingStatus.Tracked)
+            {
+                return new UpdatePurchaseCandidatePriorityMutationResult(
+                    ActionResult: Conflict("Отметка кандидата доступна только для отслеживаемых акций."));
+            }
+
+            var belongsToPortfolio = await _context.PortfolioItems
+                .AnyAsync(item => item.StockId == stock.Id, ct);
+
+            if (belongsToPortfolio && request.Priority != StockPurchaseCandidatePriority.None)
+            {
+                return new UpdatePurchaseCandidatePriorityMutationResult(
+                    ActionResult: Conflict("Нельзя установить отметку кандидата для акции, которая уже находится в портфеле."));
+            }
+
+            var authoritativePriority = belongsToPortfolio
+                ? StockPurchaseCandidatePriority.None
+                : request.Priority;
+
+            if (stock.PurchaseCandidatePriority != authoritativePriority)
+            {
+                stock.PurchaseCandidatePriority = authoritativePriority;
+                stock.UpdatedAt = DateTime.UtcNow;
+                await _context.SaveChangesAsync(ct);
+            }
+
+            return new UpdatePurchaseCandidatePriorityMutationResult(
+                Response: new UpdateStockPurchaseCandidatePriorityResponse
+                {
+                    StockId = stock.Id,
+                    Priority = stock.PurchaseCandidatePriority,
+                });
+        }, cancellationToken);
+
+        if (mutationResult.ActionResult is not null)
+        {
+            return mutationResult.ActionResult;
+        }
+
+        return Ok(mutationResult.Response);
+    }
+
     [HttpDelete("{id}")]
     public async Task<IActionResult> Delete(int id)
     {
@@ -1664,4 +1726,8 @@ public class StocksController : ControllerBase
         int ClearedHistoryRows = 0,
         int ClearedFundamentalsRows = 0,
         int ClearedEnrichmentRows = 0);
+
+    private sealed record UpdatePurchaseCandidatePriorityMutationResult(
+        ActionResult<UpdateStockPurchaseCandidatePriorityResponse>? ActionResult = null,
+        UpdateStockPurchaseCandidatePriorityResponse? Response = null);
 }
