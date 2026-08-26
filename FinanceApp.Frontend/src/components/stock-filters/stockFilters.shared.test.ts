@@ -149,4 +149,24 @@ describe('shared stock advanced filters', () => {
     expect(serialized.get('sectors')).toBe('2');
     expect(serialized.get('industries')).toBe('20');
   });
+
+  it('supports mode-specific advanced-filter URL parameter names', () => {
+    const params = new URLSearchParams('texchanges=us,fra&tsectors=2&tindustries=20');
+    const parsed = parseAdvancedStockFiltersFromSearchParams(params, {
+      exchangesParam: 'texchanges',
+      sectorsParam: 'tsectors',
+      industriesParam: 'tindustries',
+    });
+    expect(parsed).toEqual({ exchanges: ['fra', 'us'], sectorIds: [2], industryIds: [20] });
+
+    const serialized = serializeAdvancedStockFiltersToSearchParams(
+      new URLSearchParams('foo=bar'),
+      parsed,
+      { exchangesParam: 'texchanges', sectorsParam: 'tsectors', industriesParam: 'tindustries' },
+    );
+    expect(serialized.get('foo')).toBe('bar');
+    expect(serialized.get('texchanges')).toBe('fra,us');
+    expect(serialized.get('tsectors')).toBe('2');
+    expect(serialized.get('tindustries')).toBe('20');
+  });
 });

@@ -65,7 +65,6 @@ import type {
   StockDependencyBlockerResponse,
   UpdateStockQuoteRequest,
 } from '../types';
-import { groupStocks } from '../utils/stockGrouping';
 import { isQuoteDelayed } from '../utils/quote';
 import { applyPersistedQuoteSnapshot, buildQuotePatch } from '../utils/quotePersistence';
 import {
@@ -327,6 +326,101 @@ export const CATALOG_SORT_MODE_OPTIONS: Array<{ label: string; value: CatalogSor
 export const isCatalogPeriodSortMode = (mode: CatalogSortMode): mode is StockHistoryRange =>
   mode !== CATALOG_SORT_NAME_MODE;
 
+const TRACKED_STOCK_LIST_QUERY_PARAM = 'tq';
+const TRACKED_STOCK_LIST_SORT_PARAM = 'tsort';
+const TRACKED_STOCK_LIST_DIRECTION_PARAM = 'tdir';
+const TRACKED_ADVANCED_FILTER_PARAM_NAMES = {
+  exchangesParam: 'texchanges',
+  sectorsParam: 'tsectors',
+  industriesParam: 'tindustries',
+} as const;
+
+type StockListQueryState = {
+  query: string;
+  sortMode: CatalogSortMode;
+  sortDirection: 'asc' | 'desc';
+  page: number;
+  advancedFilters: AdvancedStockFilters;
+};
+
+type StockListUrlKeys = {
+  queryParam: string;
+  sortParam: string;
+  directionParam: string;
+  pageParam?: string;
+  advancedFilterParamNames?: {
+    exchangesParam: string;
+    sectorsParam: string;
+    industriesParam: string;
+  };
+};
+
+const TRACKED_URL_KEYS: StockListUrlKeys = {
+  queryParam: TRACKED_STOCK_LIST_QUERY_PARAM,
+  sortParam: TRACKED_STOCK_LIST_SORT_PARAM,
+  directionParam: TRACKED_STOCK_LIST_DIRECTION_PARAM,
+  advancedFilterParamNames: TRACKED_ADVANCED_FILTER_PARAM_NAMES,
+};
+
+const STOCK_SORT_MODE_VALUES = new Set<CatalogSortMode>(CATALOG_SORT_MODE_OPTIONS.map((option) => option.value));
+
+const parseSortModeFromUrl = (value: string | null): CatalogSortMode =>
+  (value != null && STOCK_SORT_MODE_VALUES.has(value as CatalogSortMode))
+    ? (value as CatalogSortMode)
+    : CATALOG_SORT_NAME_MODE;
+
+const parseSortDirectionFromUrl = (value: string | null): 'asc' | 'desc' => (value === 'asc' ? 'asc' : 'desc');
+
+const parsePageFromUrl = (value: string | null): number => {
+  const num = Number(value);
+  return Number.isInteger(num) && num > 0 ? num : 1;
+};
+
+const parseStockListQueryState = (
+  params: URLSearchParams,
+  keys: StockListUrlKeys,
+): StockListQueryState => ({
+  query: params.get(keys.queryParam)?.trim() ?? '',
+  sortMode: parseSortModeFromUrl(params.get(keys.sortParam)),
+  sortDirection: parseSortDirectionFromUrl(params.get(keys.directionParam)),
+  page: keys.pageParam ? parsePageFromUrl(params.get(keys.pageParam)) : 1,
+  advancedFilters: parseAdvancedStockFiltersFromSearchParams(params, keys.advancedFilterParamNames),
+});
+
+const serializeStockListQueryState = (
+  current: URLSearchParams,
+  state: StockListQueryState,
+  keys: StockListUrlKeys,
+): URLSearchParams => {
+  const next = serializeAdvancedStockFiltersToSearchParams(current, state.advancedFilters, keys.advancedFilterParamNames);
+  const queryValue = state.query.trim();
+
+  next.delete(keys.queryParam);
+  next.delete(keys.sortParam);
+  next.delete(keys.directionParam);
+  if (keys.pageParam) {
+    next.delete(keys.pageParam);
+  }
+
+  if (queryValue.length > 0) {
+    next.set(keys.queryParam, queryValue);
+  }
+
+  if (state.sortMode !== CATALOG_SORT_NAME_MODE) {
+    next.set(keys.sortParam, state.sortMode);
+  }
+
+  if (state.sortDirection !== 'desc') {
+    next.set(keys.directionParam, state.sortDirection);
+  }
+
+  if (keys.pageParam && state.page > 1) {
+    next.set(keys.pageParam, String(state.page));
+  }
+
+  return next;
+};
+
 const PERFORMANCE_COL_WIDTH = 110;
 
 /** Label shown on the delayed-quote badge. */
@@ -448,10 +542,17 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
   const [catalogQuery, setCatalogQuery] = useState('');
   const [catalogSortMode, setCatalogSortMode] = useState<CatalogSortMode>(CATALOG_SORT_NAME_MODE);
   const [catalogSortDirection, setCatalogSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [trackedQuery, setTrackedQuery] = useState('');
+  const [trackedSortMode, setTrackedSortMode] = useState<CatalogSortMode>(CATALOG_SORT_NAME_MODE);
+  const [trackedSortDirection, setTrackedSortDirection] = useState<'asc' | 'desc'>('desc');
   const [catalogAdvancedFilters, setCatalogAdvancedFilters] = useState<AdvancedStockFilters>(EMPTY_ADVANCED_STOCK_FILTERS);
   const [catalogAdvancedDraft, setCatalogAdvancedDraft] = useState<AdvancedStockFilters>(EMPTY_ADVANCED_STOCK_FILTERS);
   const [catalogFiltersOpen, setCatalogFiltersOpen] = useState(false);
+  const [trackedAdvancedFilters, setTrackedAdvancedFilters] = useState<AdvancedStockFilters>(EMPTY_ADVANCED_STOCK_FILTERS);
+  const [trackedAdvancedDraft, setTrackedAdvancedDraft] = useState<AdvancedStockFilters>(EMPTY_ADVANCED_STOCK_FILTERS);
+  const [trackedFiltersOpen, setTrackedFiltersOpen] = useState(false);
   const [catalogUrlSearch, setCatalogUrlSearch] = useState(() => window.location.search);
+  const [trackedUrlSearch, setTrackedUrlSearch] = useState(() => window.location.search);
   const [performanceMap, setPerformanceMap] = useState<PerformanceMap>(new Map());
   const [performanceLoading, setPerformanceLoading] = useState(false);
   const [performanceError, setPerformanceError] = useState<string | null>(null);
@@ -459,8 +560,6 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
   const stocksRef = useRef<Stock[]>([]);
   const performanceAbortRef = useRef<AbortController | null>(null);
   const performanceRequestIdRef = useRef(0);
-  const catalogSortModeRef = useRef<CatalogSortMode>(CATALOG_SORT_NAME_MODE);
-  catalogSortModeRef.current = catalogSortMode;
   const portfolioStockIds = useMemo(() => {
     const ids = new Set<number>();
     portfolios.forEach((portfolio) => {
@@ -475,20 +574,21 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
   const marketIndexNameById = useMemo(() => new Map<number, string>(marketIndices.map((idx) => [idx.id, idx.name])), [marketIndices]);
   const industryToSectorMap = useMemo(() => buildIndustryToSectorMap(sectors), [sectors]);
   const sectorFilterOptions = useMemo(() => getActiveSectorOptions(sectors), [sectors]);
+  const selectedAdvancedDraft = isCatalogMode ? catalogAdvancedDraft : trackedAdvancedDraft;
+  const selectedAdvancedFilters = isCatalogMode ? catalogAdvancedFilters : trackedAdvancedFilters;
+  const selectedQuery = isCatalogMode ? catalogQuery : trackedQuery;
+  const selectedSortMode = isCatalogMode ? catalogSortMode : trackedSortMode;
+  const selectedSortDirection = isCatalogMode ? catalogSortDirection : trackedSortDirection;
   const industryFilterOptions = useMemo(
-    () => getIndustryOptionsForSelectedSectors(sectors, catalogAdvancedDraft.sectorIds),
-    [catalogAdvancedDraft.sectorIds, sectors],
+    () => getIndustryOptionsForSelectedSectors(sectors, selectedAdvancedDraft.sectorIds),
+    [selectedAdvancedDraft.sectorIds, sectors],
   );
   const activeAdvancedFilterGroups = useMemo(
-    () => countActiveAdvancedFilterGroups(catalogAdvancedFilters),
-    [catalogAdvancedFilters],
+    () => countActiveAdvancedFilterGroups(selectedAdvancedFilters),
+    [selectedAdvancedFilters],
   );
   const filteredStocks = useMemo(() => {
-    if (!isCatalogMode) {
-      return stocks;
-    }
-
-    const query = catalogQuery.trim().toLowerCase();
+    const query = selectedQuery.trim().toLowerCase();
     const base = query.length === 0
       ? stocks
       : stocks.filter((stock) => {
@@ -504,10 +604,10 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
         });
 
     const filteredByAdvanced = base.filter((stock) =>
-      matchesStockAdvancedFilters(stock, catalogAdvancedFilters, industryToSectorMap));
+      matchesStockAdvancedFilters(stock, selectedAdvancedFilters, industryToSectorMap));
 
-    if (isCatalogPeriodSortMode(catalogSortMode)) {
-      const dir = catalogSortDirection === 'asc' ? 1 : -1;
+    if (isCatalogPeriodSortMode(selectedSortMode)) {
+      const dir = selectedSortDirection === 'asc' ? 1 : -1;
       return [...filteredByAdvanced].sort((a, b) => {
         const pa = performanceMap.get(a.id) ?? null;
         const pb = performanceMap.get(b.id) ?? null;
@@ -533,20 +633,35 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
       return cmp !== 0 ? cmp : a.ticker.localeCompare(b.ticker, undefined, { sensitivity: 'base' });
     });
   }, [
-    catalogAdvancedFilters,
-    catalogQuery,
-    catalogSortMode,
-    catalogSortDirection,
     industryToSectorMap,
-    performanceMap,
     isCatalogMode,
+    performanceMap,
     marketIndexNameById,
+    selectedAdvancedFilters,
+    selectedQuery,
+    selectedSortDirection,
+    selectedSortMode,
     stocks,
   ]);
-  const { portfolioGroup, fraGroup, nyseGroup } = useMemo(
-    () => groupStocks(filteredStocks, portfolioStockIds),
-    [filteredStocks, portfolioStockIds],
-  );
+  const { portfolioGroup, fraGroup, nyseGroup } = useMemo(() => {
+    const next = {
+      portfolioGroup: [] as Stock[],
+      fraGroup: [] as Stock[],
+      nyseGroup: [] as Stock[],
+    };
+
+    for (const stock of filteredStocks) {
+      if (portfolioStockIds.has(stock.id)) {
+        next.portfolioGroup.push(stock);
+      } else if (stock.exchange === 'Frankfurt') {
+        next.fraGroup.push(stock);
+      } else {
+        next.nyseGroup.push(stock);
+      }
+    }
+
+    return next;
+  }, [filteredStocks, portfolioStockIds]);
   const selectedSnapshotByStockId = useMemo(() => {
     const map = new Map<number, ReturnType<typeof resolveNewestCurrentPriceSnapshot>>();
     for (const stock of stocks) {
@@ -605,22 +720,20 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
     }
   }, []);
 
-  const handleCatalogSortModeChange = useCallback((mode: CatalogSortMode) => {
-    setCatalogSortMode(mode);
-    setCatalogPage(1);
-    if (!isCatalogPeriodSortMode(mode)) {
+  useEffect(() => {
+    if (!isCatalogPeriodSortMode(selectedSortMode)) {
       clearPerformanceStateAndAbort();
-    } else {
-      void loadPerformance(mode);
+      return;
     }
-  }, [clearPerformanceStateAndAbort, loadPerformance]);
-
-  const handleCatalogSortDirectionToggle = useCallback(() => {
-    setCatalogSortDirection((prev) => (prev === 'desc' ? 'asc' : 'desc'));
-  }, []);
+    void loadPerformance(selectedSortMode);
+  }, [clearPerformanceStateAndAbort, loadPerformance, selectedSortMode]);
 
   useEffect(() => {
-    const onPopState = () => setCatalogUrlSearch(window.location.search);
+    const onPopState = () => {
+      const nextSearch = window.location.search;
+      setCatalogUrlSearch(nextSearch);
+      setTrackedUrlSearch(nextSearch);
+    };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
@@ -651,28 +764,52 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
   }, [catalogAdvancedFilters, catalogUrlSearch, isCatalogMode, sectors]);
 
   useEffect(() => {
-    if (!isCatalogMode) {
+    if (isCatalogMode) {
       return;
     }
 
-    setCatalogPage(1);
-  }, [catalogAdvancedFilters, isCatalogMode]);
+    const parsed = parseStockListQueryState(new URLSearchParams(trackedUrlSearch), TRACKED_URL_KEYS);
+    const normalizedFilters = normalizeAdvancedStockFiltersWithDirectory(parsed.advancedFilters, sectors);
+    const normalizedState: StockListQueryState = {
+      ...parsed,
+      advancedFilters: normalizedFilters,
+      page: 1,
+    };
 
-  useEffect(() => {
-    if (!catalogFiltersOpen) {
-      return;
+    if (trackedQuery !== normalizedState.query) {
+      setTrackedQuery(normalizedState.query);
+    }
+    if (trackedSortMode !== normalizedState.sortMode) {
+      setTrackedSortMode(normalizedState.sortMode);
+    }
+    if (trackedSortDirection !== normalizedState.sortDirection) {
+      setTrackedSortDirection(normalizedState.sortDirection);
+    }
+    if (!areAdvancedStockFiltersEqual(trackedAdvancedFilters, normalizedFilters)) {
+      setTrackedAdvancedFilters(normalizedFilters);
     }
 
-    setCatalogAdvancedDraft((prev) => {
-      const normalized = normalizeAdvancedStockFilters(prev);
-      const nextIndustries = pruneInvalidIndustrySelections(normalized.industryIds, normalized.sectorIds, sectors);
-      if (nextIndustries.length === normalized.industryIds.length && nextIndustries.every((id, idx) => id === normalized.industryIds[idx])) {
-        return normalized;
-      }
-
-      return { ...normalized, industryIds: nextIndustries };
-    });
-  }, [catalogFiltersOpen, sectors]);
+    const canonicalParams = serializeStockListQueryState(
+      new URLSearchParams(trackedUrlSearch),
+      normalizedState,
+      TRACKED_URL_KEYS,
+    );
+    const canonicalSearch = canonicalParams.toString();
+    const currentSearch = new URLSearchParams(trackedUrlSearch).toString();
+    if (canonicalSearch !== currentSearch) {
+      const nextUrl = `${window.location.pathname}${canonicalSearch ? `?${canonicalSearch}` : ''}${window.location.hash}`;
+      window.history.replaceState(window.history.state, '', nextUrl);
+      setTrackedUrlSearch(window.location.search);
+    }
+  }, [
+    isCatalogMode,
+    sectors,
+    trackedAdvancedFilters,
+    trackedQuery,
+    trackedSortDirection,
+    trackedSortMode,
+    trackedUrlSearch,
+  ]);
 
   const commitCatalogFiltersToUrl = useCallback((nextFilters: AdvancedStockFilters, mode: 'push' | 'replace') => {
     const base = new URLSearchParams(window.location.search);
@@ -692,10 +829,101 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
     setCatalogUrlSearch(window.location.search);
   }, []);
 
+  const commitTrackedQueryStateToUrl = useCallback((nextState: StockListQueryState, mode: 'push' | 'replace') => {
+    const base = new URLSearchParams(window.location.search);
+    const nextParams = serializeStockListQueryState(base, nextState, TRACKED_URL_KEYS);
+    const nextSearch = nextParams.toString();
+    const currentSearch = base.toString();
+    const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ''}${window.location.hash}`;
+
+    if (mode === 'push') {
+      if (currentSearch !== nextSearch) {
+        window.history.pushState(window.history.state, '', nextUrl);
+      }
+    } else if (currentSearch !== nextSearch) {
+      window.history.replaceState(window.history.state, '', nextUrl);
+    }
+
+    setTrackedUrlSearch(window.location.search);
+  }, []);
+
+  const handleCatalogQueryChange = useCallback((value: string) => {
+    setCatalogQuery(value);
+  }, []);
+
+  const handleTrackedQueryChange = useCallback((value: string) => {
+    setTrackedQuery(value);
+    commitTrackedQueryStateToUrl({
+      query: value,
+      sortMode: trackedSortMode,
+      sortDirection: trackedSortDirection,
+      page: 1,
+      advancedFilters: trackedAdvancedFilters,
+    }, 'replace');
+  }, [commitTrackedQueryStateToUrl, trackedAdvancedFilters, trackedSortDirection, trackedSortMode]);
+
+  const handleCatalogSortModeChange = useCallback((mode: CatalogSortMode) => {
+    setCatalogSortMode(mode);
+    setCatalogPage(1);
+  }, []);
+
+  const handleTrackedSortModeChange = useCallback((mode: CatalogSortMode) => {
+    setTrackedSortMode(mode);
+    commitTrackedQueryStateToUrl({
+      query: trackedQuery,
+      sortMode: mode,
+      sortDirection: trackedSortDirection,
+      page: 1,
+      advancedFilters: trackedAdvancedFilters,
+    }, 'push');
+  }, [commitTrackedQueryStateToUrl, trackedAdvancedFilters, trackedQuery, trackedSortDirection]);
+
+  const handleCatalogSortDirectionToggle = useCallback(() => {
+    setCatalogSortDirection((prev) => (prev === 'desc' ? 'asc' : 'desc'));
+  }, []);
+
+  const handleTrackedSortDirectionToggle = useCallback(() => {
+    const nextDirection = trackedSortDirection === 'desc' ? 'asc' : 'desc';
+    setTrackedSortDirection(nextDirection);
+    commitTrackedQueryStateToUrl({
+      query: trackedQuery,
+      sortMode: trackedSortMode,
+      sortDirection: nextDirection,
+      page: 1,
+      advancedFilters: trackedAdvancedFilters,
+    }, 'push');
+  }, [commitTrackedQueryStateToUrl, trackedAdvancedFilters, trackedQuery, trackedSortDirection, trackedSortMode]);
+
+  const handleCatalogPageChange = useCallback((page: number) => {
+    setCatalogPage(page);
+  }, []);
+
+  useEffect(() => {
+    if (!catalogFiltersOpen) {
+      return;
+    }
+
+    setCatalogAdvancedDraft((prev) => {
+      const normalized = normalizeAdvancedStockFilters(prev);
+      const nextIndustries = pruneInvalidIndustrySelections(normalized.industryIds, normalized.sectorIds, sectors);
+      if (nextIndustries.length === normalized.industryIds.length && nextIndustries.every((id, idx) => id === normalized.industryIds[idx])) {
+        return normalized;
+      }
+
+      return { ...normalized, industryIds: nextIndustries };
+    });
+  }, [catalogFiltersOpen, sectors]);
+
   const handleCatalogAdvancedDraftChange = useCallback((next: AdvancedStockFilters) => {
     const normalized = normalizeAdvancedStockFilters(next);
     const nextIndustryIds = pruneInvalidIndustrySelections(normalized.industryIds, normalized.sectorIds, sectors);
     setCatalogAdvancedDraft({ ...normalized, industryIds: nextIndustryIds });
+  }, [sectors]);
+
+  const handleTrackedAdvancedDraftChange = useCallback((next: AdvancedStockFilters) => {
+    const normalized = normalizeAdvancedStockFilters(next);
+    const nextIndustryIds = pruneInvalidIndustrySelections(normalized.industryIds, normalized.sectorIds, sectors);
+    setTrackedAdvancedDraft({ ...normalized, industryIds: nextIndustryIds });
   }, [sectors]);
 
   const openCatalogAdvancedFilters = useCallback(() => {
@@ -707,32 +935,101 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
     setCatalogFiltersOpen(false);
   }, []);
 
+  const openTrackedAdvancedFilters = useCallback(() => {
+    setTrackedAdvancedDraft(trackedAdvancedFilters);
+    setTrackedFiltersOpen(true);
+  }, [trackedAdvancedFilters]);
+
+  const closeTrackedAdvancedFilters = useCallback(() => {
+    setTrackedFiltersOpen(false);
+  }, []);
+
   const applyCatalogAdvancedFilters = useCallback(() => {
     const normalized = normalizeAdvancedStockFiltersWithDirectory(catalogAdvancedDraft, sectors);
     setCatalogAdvancedFilters(normalized);
-    commitCatalogFiltersToUrl(normalized, 'push');
     setCatalogPage(1);
+    commitCatalogFiltersToUrl(normalized, 'push');
     setCatalogFiltersOpen(false);
   }, [catalogAdvancedDraft, commitCatalogFiltersToUrl, sectors]);
+
+  const applyTrackedAdvancedFilters = useCallback(() => {
+    const normalized = normalizeAdvancedStockFiltersWithDirectory(trackedAdvancedDraft, sectors);
+    setTrackedAdvancedFilters(normalized);
+    commitTrackedQueryStateToUrl({
+      query: trackedQuery,
+      sortMode: trackedSortMode,
+      sortDirection: trackedSortDirection,
+      page: 1,
+      advancedFilters: normalized,
+    }, 'push');
+    setTrackedFiltersOpen(false);
+  }, [
+    commitTrackedQueryStateToUrl,
+    sectors,
+    trackedAdvancedDraft,
+    trackedQuery,
+    trackedSortDirection,
+    trackedSortMode,
+  ]);
 
   const clearCatalogAdvancedDraft = useCallback(() => {
     setCatalogAdvancedDraft(EMPTY_ADVANCED_STOCK_FILTERS);
   }, []);
 
+  const clearTrackedAdvancedDraft = useCallback(() => {
+    setTrackedAdvancedDraft(EMPTY_ADVANCED_STOCK_FILTERS);
+  }, []);
+
   const resetCatalogAdvancedFilters = useCallback(() => {
-    if (activeAdvancedFilterGroups === 0) {
+    if (countActiveAdvancedFilterGroups(catalogAdvancedFilters) === 0) {
       return;
     }
 
     setCatalogAdvancedFilters(EMPTY_ADVANCED_STOCK_FILTERS);
-    commitCatalogFiltersToUrl(EMPTY_ADVANCED_STOCK_FILTERS, 'push');
     setCatalogPage(1);
-  }, [activeAdvancedFilterGroups, commitCatalogFiltersToUrl]);
+    commitCatalogFiltersToUrl(EMPTY_ADVANCED_STOCK_FILTERS, 'push');
+  }, [catalogAdvancedFilters, commitCatalogFiltersToUrl]);
 
   useEffect(() => {
-    if (!isCatalogMode) return;
+    if (!trackedFiltersOpen) {
+      return;
+    }
+
+    setTrackedAdvancedDraft((prev) => {
+      const normalized = normalizeAdvancedStockFilters(prev);
+      const nextIndustries = pruneInvalidIndustrySelections(normalized.industryIds, normalized.sectorIds, sectors);
+      if (nextIndustries.length === normalized.industryIds.length && nextIndustries.every((id, idx) => id === normalized.industryIds[idx])) {
+        return normalized;
+      }
+
+      return { ...normalized, industryIds: nextIndustries };
+    });
+  }, [sectors, trackedFiltersOpen]);
+
+  const resetTrackedAdvancedFilters = useCallback(() => {
+    if (countActiveAdvancedFilterGroups(trackedAdvancedFilters) === 0) {
+      return;
+    }
+
+    setTrackedAdvancedFilters(EMPTY_ADVANCED_STOCK_FILTERS);
+    commitTrackedQueryStateToUrl({
+      query: trackedQuery,
+      sortMode: trackedSortMode,
+      sortDirection: trackedSortDirection,
+      page: 1,
+      advancedFilters: EMPTY_ADVANCED_STOCK_FILTERS,
+    }, 'push');
+  }, [
+    commitTrackedQueryStateToUrl,
+    trackedAdvancedFilters,
+    trackedQuery,
+    trackedSortDirection,
+    trackedSortMode,
+  ]);
+
+  useEffect(() => {
     return () => { performanceAbortRef.current?.abort(); };
-  }, [isCatalogMode]);
+  }, []);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -1110,8 +1407,8 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
   };
 
   const TOTAL_COLS = isCatalogMode
-    ? (isCatalogPeriodSortMode(catalogSortMode) ? CATALOG_WITH_PERF_TOTAL_COLS : CATALOG_TOTAL_COLS)
-    : STOCKS_TABLE_TOTAL_COLS;
+    ? (isCatalogPeriodSortMode(selectedSortMode) ? CATALOG_WITH_PERF_TOTAL_COLS : CATALOG_TOTAL_COLS)
+    : (isCatalogPeriodSortMode(selectedSortMode) ? STOCKS_TABLE_TOTAL_COLS + 1 : STOCKS_TABLE_TOTAL_COLS);
 
   const formatEur = (v: number | null | undefined) => fmtCur(v, '€');
   const formatPct = (v: number | null | undefined) => formatPercent(v);
@@ -1237,30 +1534,30 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
           );
         },
       },
-      ...(isCatalogPeriodSortMode(catalogSortMode) ? [
-        {
-          title: 'Рост за период',
-          key: 'performance',
-          align: 'right' as const,
-          width: PERFORMANCE_COL_WIDTH,
-          render: (_: unknown, record: TableRow) => {
-            if (isChartRow(record)) return { children: null, props: { colSpan: 0 } };
-            const stock = record as Stock;
-            if (performanceLoading) {
-              return <span style={{ color: '#8c8c8c' }}>…</span>;
-            }
-            const perf = formatPerformance(performanceMap.get(stock.id));
-            if (perf.kind === 'unavailable') {
-              return (
-                <Tooltip title="Недостаточно исторических данных">
-                  <span style={{ color: '#8c8c8c' }}>—</span>
-                </Tooltip>
-              );
-            }
-            return <span style={{ color: perf.color, whiteSpace: 'nowrap' }}>{perf.formatted}</span>;
-          },
+    ] : []),
+    ...(isCatalogPeriodSortMode(selectedSortMode) ? [
+      {
+        title: 'Рост за период',
+        key: 'performance',
+        align: 'right' as const,
+        width: PERFORMANCE_COL_WIDTH,
+        render: (_: unknown, record: TableRow) => {
+          if (isChartRow(record)) return { children: null, props: { colSpan: 0 } };
+          const stock = record as Stock;
+          if (performanceLoading) {
+            return <span style={{ color: '#8c8c8c' }}>…</span>;
+          }
+          const perf = formatPerformance(performanceMap.get(stock.id));
+          if (perf.kind === 'unavailable') {
+            return (
+              <Tooltip title="Недостаточно исторических данных">
+                <span style={{ color: '#8c8c8c' }}>—</span>
+              </Tooltip>
+            );
+          }
+          return <span style={{ color: perf.color, whiteSpace: 'nowrap' }}>{perf.formatted}</span>;
         },
-      ] : []),
+      },
     ] : []),
     {
       title: 'Текущая цена',
@@ -1475,7 +1772,7 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
           columns={columns}
           rowKey={getTableRowKey}
           tableLayout="fixed"
-          scroll={{ x: STOCKS_TABLE_SCROLL_X }}
+          scroll={{ x: STOCKS_TABLE_SCROLL_X + (isCatalogPeriodSortMode(selectedSortMode) ? PERFORMANCE_COL_WIDTH : 0) }}
           pagination={false}
           rowClassName={(record: TableRow) => {
             if (isChartRow(record)) return 'chart-panel-row';
@@ -1500,7 +1797,45 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
           </Title>
         )}
         headerRight={(
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: isCatalogMode ? 'wrap' : undefined }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <Input
+              placeholder="Поиск: тикер, название, биржа, индекс"
+              value={selectedQuery}
+              onChange={(event) => (isCatalogMode
+                ? handleCatalogQueryChange(event.target.value)
+                : handleTrackedQueryChange(event.target.value))}
+              allowClear
+              size="small"
+              style={{ width: 320, maxWidth: '100%' }}
+            />
+            <AdvancedStockFilterToolbarControls
+              compact
+              activeGroupCount={activeAdvancedFilterGroups}
+              onOpen={isCatalogMode ? openCatalogAdvancedFilters : openTrackedAdvancedFilters}
+              onReset={isCatalogMode ? resetCatalogAdvancedFilters : resetTrackedAdvancedFilters}
+              resetDisabled={activeAdvancedFilterGroups === 0}
+            />
+            <Space size={4} align="center" wrap>
+              <span style={{ fontSize: 16, color: '#595959', whiteSpace: 'nowrap' }}>Сортировка:</span>
+              <Select<CatalogSortMode>
+                size="small"
+                value={selectedSortMode}
+                onChange={isCatalogMode ? handleCatalogSortModeChange : handleTrackedSortModeChange}
+                options={CATALOG_SORT_MODE_OPTIONS}
+                style={{ width: 130 }}
+                aria-label="Сортировка"
+              />
+              {isCatalogPeriodSortMode(selectedSortMode) && (
+                <Tooltip title={selectedSortDirection === 'desc' ? 'Убыванию' : 'Возрастанию'}>
+                  <Button
+                    size="small"
+                    icon={selectedSortDirection === 'desc' ? <SortDescendingOutlined /> : <SortAscendingOutlined />}
+                    onClick={isCatalogMode ? handleCatalogSortDirectionToggle : handleTrackedSortDirectionToggle}
+                    aria-label={selectedSortDirection === 'desc' ? 'Сортировать по возрастанию' : 'Сортировать по убыванию'}
+                  />
+                </Tooltip>
+              )}
+            </Space>
             {!isCatalogMode && (
               <>
                 <Text type="secondary" style={{ fontSize: 16 }}>
@@ -1515,51 +1850,11 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
                 </Button>
               </>
             )}
-            {isCatalogMode && (
-              <>
-                <Input
-                  placeholder="Поиск: тикер, название, биржа, индекс"
-                  value={catalogQuery}
-                  onChange={(event) => setCatalogQuery(event.target.value)}
-                  allowClear
-                  size="small"
-                  style={{ width: 320, maxWidth: '100%' }}
-                />
-                <AdvancedStockFilterToolbarControls
-                  compact
-                  activeGroupCount={activeAdvancedFilterGroups}
-                  onOpen={openCatalogAdvancedFilters}
-                  onReset={resetCatalogAdvancedFilters}
-                  resetDisabled={activeAdvancedFilterGroups === 0}
-                />
-                <Space size={4} align="center" wrap>
-                  <span style={{ fontSize: 16, color: '#595959', whiteSpace: 'nowrap' }}>Сортировка:</span>
-                  <Select<CatalogSortMode>
-                    size="small"
-                    value={catalogSortMode}
-                    onChange={handleCatalogSortModeChange}
-                    options={CATALOG_SORT_MODE_OPTIONS}
-                    style={{ width: 130 }}
-                    aria-label="Сортировка"
-                  />
-                  {isCatalogPeriodSortMode(catalogSortMode) && (
-                    <Tooltip title={catalogSortDirection === 'desc' ? 'Убыванию' : 'Возрастанию'}>
-                      <Button
-                        size="small"
-                        icon={catalogSortDirection === 'desc' ? <SortDescendingOutlined /> : <SortAscendingOutlined />}
-                        onClick={handleCatalogSortDirectionToggle}
-                        aria-label={catalogSortDirection === 'desc' ? 'Сортировать по возрастанию' : 'Сортировать по убыванию'}
-                      />
-                    </Tooltip>
-                  )}
-                </Space>
-              </>
-            )}
             <Button
               type="primary"
               icon={<PlusOutlined />}
               onClick={openCreateModal}
-              style={isCatalogMode ? { marginInlineStart: 'auto' } : undefined}
+              style={{ marginInlineStart: 'auto' }}
             >
               Добавить акцию
             </Button>
@@ -1575,7 +1870,7 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
             <Text type="secondary">Нет акций по выбранным фильтрам</Text>
           ) : (
             <>
-              {performanceError && (
+              {performanceError && isCatalogPeriodSortMode(selectedSortMode) && (
                 <div style={{ marginBottom: 8, color: '#cf1322' }}>{performanceError}</div>
               )}
               <Table
@@ -1584,7 +1879,7 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
                 columns={columns}
                 rowKey={getTableRowKey}
                 tableLayout="fixed"
-                scroll={{ x: STOCKS_TABLE_SCROLL_X + INDEX_MEMBERSHIP_COL_WIDTH + (isCatalogPeriodSortMode(catalogSortMode) ? PERFORMANCE_COL_WIDTH : 0) }}
+                scroll={{ x: STOCKS_TABLE_SCROLL_X + INDEX_MEMBERSHIP_COL_WIDTH + (isCatalogPeriodSortMode(selectedSortMode) ? PERFORMANCE_COL_WIDTH : 0) }}
                 expandable={{
                   expandedRowKeys: expandedStockId != null ? [String(expandedStockId)] : [],
                   expandedRowRender: (stock) => renderExpandedChart(stock as Stock),
@@ -1595,7 +1890,7 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
                   pageSize: CATALOG_PAGE_SIZE,
                   showSizeChanger: false,
                   showTotal: (total) => `Всего: ${total}`,
-                  onChange: (page) => setCatalogPage(page),
+                  onChange: handleCatalogPageChange,
                 }}
                 rowClassName={(record: TableRow) => {
                   if (isChartRow(record)) return 'chart-panel-row';
@@ -1606,6 +1901,9 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
           )
         ) : (
           <>
+            {performanceError && isCatalogPeriodSortMode(selectedSortMode) && (
+              <div style={{ marginBottom: 8, color: '#cf1322' }}>{performanceError}</div>
+            )}
             {portfolioGroup.length === 0 && fraGroup.length === 0 && nyseGroup.length === 0 ? (
               <Text type="secondary">Нет акций по выбранным фильтрам</Text>
             ) : (
@@ -1623,18 +1921,16 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
         open={fundamentalsStock !== null}
         onClose={() => setFundamentalsStock(null)}
       />
-      {isCatalogMode && (
-        <AdvancedStockFiltersDrawer
-          open={catalogFiltersOpen}
-          draftFilters={catalogAdvancedDraft}
-          sectorOptions={sectorFilterOptions}
-          industryOptions={industryFilterOptions}
-          onClose={closeCatalogAdvancedFilters}
-          onDraftChange={handleCatalogAdvancedDraftChange}
-          onClearDraft={clearCatalogAdvancedDraft}
-          onApply={applyCatalogAdvancedFilters}
-        />
-      )}
+      <AdvancedStockFiltersDrawer
+        open={isCatalogMode ? catalogFiltersOpen : trackedFiltersOpen}
+        draftFilters={isCatalogMode ? catalogAdvancedDraft : trackedAdvancedDraft}
+        sectorOptions={sectorFilterOptions}
+        industryOptions={industryFilterOptions}
+        onClose={isCatalogMode ? closeCatalogAdvancedFilters : closeTrackedAdvancedFilters}
+        onDraftChange={isCatalogMode ? handleCatalogAdvancedDraftChange : handleTrackedAdvancedDraftChange}
+        onClearDraft={isCatalogMode ? clearCatalogAdvancedDraft : clearTrackedAdvancedDraft}
+        onApply={isCatalogMode ? applyCatalogAdvancedFilters : applyTrackedAdvancedFilters}
+      />
       <StockEditModal
         open={modalOpen}
         mode={editingStock ? 'edit' : 'create'}
