@@ -69,7 +69,7 @@ const STATUS_META: Record<SystemProcessRunStatus, { label: string; color: string
 const TRIGGER_LABELS: Record<SystemProcessTrigger, string> = {
   Scheduled: 'По расписанию',
   StartupCatchUp: 'Startup catch-up',
-  Automatic: 'Автоматически',
+  Automatic: 'Авто.',
   Manual: 'Вручную',
   ApiRepair: 'API/восстановление',
   SystemRecovery: 'Системное восстановление',
@@ -78,6 +78,8 @@ const TRIGGER_LABELS: Record<SystemProcessTrigger, string> = {
 const STATUS_OPTIONS = Object.keys(STATUS_META) as SystemProcessRunStatus[];
 const TRIGGER_OPTIONS = Object.keys(TRIGGER_LABELS) as SystemProcessTrigger[];
 const PAGE_SIZE_OPTIONS = ['10', '25', '50', '100'];
+const DEFAULT_PAGE_SIZE = 50;
+const TIME_COLUMN_WIDTH = 84;
 
 const isRecord = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object';
 
@@ -172,7 +174,7 @@ const SystemProcessRunsPage: React.FC = () => {
   const [totalCount, setTotalCount] = useState(0);
   const [serverNowUtc, setServerNowUtc] = useState<string | null>(null);
   const [summaryActiveCount, setSummaryActiveCount] = useState(0);
-  const [filters, setFilters] = useState<Filters>({ page: 1, pageSize: 25, statuses: [], activeOnly: false });
+  const [filters, setFilters] = useState<Filters>({ page: 1, pageSize: DEFAULT_PAGE_SIZE, statuses: [], activeOnly: false });
   const [dateRange, setDateRange] = useState<[Dayjs | null, Dayjs | null]>([null, null]);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [selectedDetails, setSelectedDetails] = useState<SystemProcessRunDetails | null>(null);
@@ -309,19 +311,19 @@ const SystemProcessRunsPage: React.FC = () => {
     {
       title: 'Запуск',
       key: 'startedAtUtc',
-      width: 96,
+      width: TIME_COLUMN_WIDTH,
       render: (_, row) => (
         <Tooltip title={formatDate(typeof row.startedAtUtc === 'string' ? row.startedAtUtc : row.queuedAtUtc)}>
-          <span>{formatTimeOnly(typeof row.startedAtUtc === 'string' ? row.startedAtUtc : row.queuedAtUtc)}</span>
+          <span style={{ whiteSpace: 'nowrap' }}>{formatTimeOnly(typeof row.startedAtUtc === 'string' ? row.startedAtUtc : row.queuedAtUtc)}</span>
         </Tooltip>
       ),
     },
     {
-      title: 'Завершение',
+      title: 'Заверш.',
       dataIndex: 'completedAtUtc',
       key: 'completedAtUtc',
-      width: 96,
-      render: (value: unknown) => <Tooltip title={formatDate(typeof value === 'string' ? value : null)}><span>{formatTimeOnly(typeof value === 'string' ? value : null)}</span></Tooltip>,
+      width: TIME_COLUMN_WIDTH,
+      render: (value: unknown) => <Tooltip title={formatDate(typeof value === 'string' ? value : null)}><span style={{ whiteSpace: 'nowrap' }}>{formatTimeOnly(typeof value === 'string' ? value : null)}</span></Tooltip>,
     },
     {
       title: 'Длит.',
@@ -348,14 +350,16 @@ const SystemProcessRunsPage: React.FC = () => {
       key: 'displayName',
       width: 220,
       ellipsis: true,
-      render: (value: unknown, row) => (
-        <Space direction="vertical" size={0}>
-          <Text strong>{typeof value === 'string' && value.trim().length > 0 ? value : '—'}</Text>
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            {typeof row.processType === 'string' && row.processType.trim().length > 0 ? row.processType : '—'}
-          </Text>
-        </Space>
-      ),
+      render: (value: unknown, row) => {
+        const displayName = typeof value === 'string' && value.trim().length > 0 ? value : '—';
+        const processType = typeof row.processType === 'string' && row.processType.trim().length > 0 ? row.processType : '';
+        const tooltip = processType ? `${displayName} (${processType})` : displayName;
+        return (
+          <Tooltip title={tooltip}>
+            <Text strong>{displayName}</Text>
+          </Tooltip>
+        );
+      },
     },
     {
       title: 'Источник',
@@ -510,11 +514,13 @@ const SystemProcessRunsPage: React.FC = () => {
         {error && <Alert type="error" showIcon message={error} />}
 
         <Table<ProcessRunRow>
+          className="system-process-runs-table"
           rowKey="__rowKey"
+          size="small"
           loading={loading}
           columns={columns}
           dataSource={runs}
-          scroll={{ x: 1320 }}
+          scroll={{ x: 1290 }}
           pagination={{
             current: filters.page,
             pageSize: filters.pageSize,
