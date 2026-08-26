@@ -23,6 +23,7 @@ import {
   CaretRightFilled,
   FundOutlined,
   StarOutlined,
+  StarFilled,
   SortAscendingOutlined,
   SortDescendingOutlined,
   InfoCircleOutlined,
@@ -41,6 +42,7 @@ import {
   trackStock,
   untrackStock,
   deleteStockPermanent,
+  updateStockPurchaseCandidatePriority,
 } from '../services/api';
 import AuthenticatedShell from '../components/AuthenticatedShell';
 import StockEditModal, {
@@ -66,6 +68,7 @@ import type {
   UpdateStockQuoteRequest,
 } from '../types';
 import { isQuoteDelayed } from '../utils/quote';
+import { StockPurchaseCandidatePriority } from '../types';
 import { applyPersistedQuoteSnapshot, buildQuotePatch } from '../utils/quotePersistence';
 import {
   resolveNewestCurrentPriceSnapshot,
@@ -219,6 +222,49 @@ const getStockPermanentDeleteErrorMessage = (err: unknown): string => {
   return STOCK_PERMANENT_DELETE_GENERIC_ERROR;
 };
 
+const normalizePurchaseCandidatePriority = (
+  value: StockPurchaseCandidatePriority | null | undefined,
+): StockPurchaseCandidatePriority => {
+  if (value === PURCHASE_CANDIDATE_PRIORITY_CANDIDATE || value === PURCHASE_CANDIDATE_PRIORITY_HIGH) {
+    return value;
+  }
+
+  return PURCHASE_CANDIDATE_PRIORITY_NONE;
+};
+
+const getNextPurchaseCandidatePriority = (priority: StockPurchaseCandidatePriority): StockPurchaseCandidatePriority => {
+  switch (priority) {
+    case PURCHASE_CANDIDATE_PRIORITY_NONE:
+      return PURCHASE_CANDIDATE_PRIORITY_CANDIDATE;
+    case PURCHASE_CANDIDATE_PRIORITY_CANDIDATE:
+      return PURCHASE_CANDIDATE_PRIORITY_HIGH;
+    default:
+      return PURCHASE_CANDIDATE_PRIORITY_NONE;
+  }
+};
+
+const getPurchaseCandidatePriorityTooltip = (priority: StockPurchaseCandidatePriority): string => {
+  switch (priority) {
+    case PURCHASE_CANDIDATE_PRIORITY_NONE:
+      return 'Отметить кандидатом на покупку';
+    case PURCHASE_CANDIDATE_PRIORITY_CANDIDATE:
+      return 'Повысить приоритет кандидата';
+    default:
+      return 'Снять отметку кандидата';
+  }
+};
+
+const getPurchaseCandidatePriorityColor = (priority: StockPurchaseCandidatePriority): string | undefined => {
+  switch (priority) {
+    case PURCHASE_CANDIDATE_PRIORITY_CANDIDATE:
+      return '#faad14';
+    case PURCHASE_CANDIDATE_PRIORITY_HIGH:
+      return '#ff4d4f';
+    default:
+      return undefined;
+  }
+};
+
 const renderBlockersList = (blockers: StockDependencyBlockerResponse[]) => (
   <ul style={{ margin: 0, paddingInlineStart: 18 }}>
     {blockers.map((blocker) => (
@@ -290,6 +336,9 @@ const CELL_BASE_STYLE: React.CSSProperties = { display: 'flex', alignItems: 'cen
 const CELL_NOWRAP_STYLE: React.CSSProperties = { ...CELL_BASE_STYLE, whiteSpace: 'nowrap' };
 const FLEX_MIN_WIDTH_STYLE: React.CSSProperties = { minWidth: 0, flex: 1 };
 const TRACKING_STATUS_CATALOG_ONLY: StockTrackingStatus = 0;
+const PURCHASE_CANDIDATE_PRIORITY_NONE: StockPurchaseCandidatePriority = StockPurchaseCandidatePriority.None;
+const PURCHASE_CANDIDATE_PRIORITY_CANDIDATE: StockPurchaseCandidatePriority = StockPurchaseCandidatePriority.Candidate;
+const PURCHASE_CANDIDATE_PRIORITY_HIGH: StockPurchaseCandidatePriority = StockPurchaseCandidatePriority.HighPriority;
 
 type LivePriceEntry = {
   quote: StockQuoteResponse | null;
@@ -539,6 +588,7 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
   const [fundamentalsStock, setFundamentalsStock] = useState<Stock | null>(null);
   const [countdown, setCountdown] = useState(AUTO_REFRESH_INTERVAL);
   const [trackingLoadingByStock, setTrackingLoadingByStock] = useState<Record<number, boolean>>({});
+  const [purchaseCandidatePriorityLoadingByStock, setPurchaseCandidatePriorityLoadingByStock] = useState<Record<number, boolean>>({});
   const [catalogQuery, setCatalogQuery] = useState('');
   const [catalogSortMode, setCatalogSortMode] = useState<CatalogSortMode>(CATALOG_SORT_NAME_MODE);
   const [catalogSortDirection, setCatalogSortDirection] = useState<'asc' | 'desc'>('desc');
@@ -1370,6 +1420,39 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
     }
   };
 
+  const handleCyclePurchaseCandidatePriority = async (stock: Stock) => {
+    if (purchaseCandidatePriorityLoadingByStock[stock.id]) {
+      return;
+    }
+
+    const currentPriority = normalizePurchaseCandidatePriority(stock.purchaseCandidatePriority);
+    const nextPriority = getNextPurchaseCandidatePriority(currentPriority);
+
+    setPurchaseCandidatePriorityLoadingByStock((prev) => ({ ...prev, [stock.id]: true }));
+    try {
+      const response = await updateStockPurchaseCandidatePriority(stock.id, { priority: nextPriority });
+      const authoritativePriority = normalizePurchaseCandidatePriority(response.data.priority);
+      const updateStockPriority = (candidate: Stock) => (
+        candidate.id === stock.id
+          ? { ...candidate, purchaseCandidatePriority: authoritativePriority }
+          : candidate
+      );
+      setStocks((prev) => prev.map(updateStockPriority));
+      stocksRef.current = stocksRef.current.map(updateStockPriority);
+    } catch (err: unknown) {
+      const errorMessage = axios.isAxiosError(err) && typeof err.response?.data === 'string' && err.response.data.trim().length > 0
+        ? err.response.data
+        : 'Не удалось обновить отметку кандидата на покупку';
+      message.error(errorMessage);
+
+      if (axios.isAxiosError(err) && (err.response?.status === 400 || err.response?.status === 409)) {
+        await fetchData();
+      }
+    } finally {
+      setPurchaseCandidatePriorityLoadingByStock((prev) => ({ ...prev, [stock.id]: false }));
+    }
+  };
+
   const handleFetchLivePrice = async (stock: Stock) => {
     if (!stock.ticker?.trim()) return;
     setLivePrices((prev) => ({ ...prev, [stock.id]: preserveEntry(prev[stock.id], true) }));
@@ -1683,6 +1766,13 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
         const isProtectedStock = portfolioStockIds.has(stock.id);
         const isTracked = stock.trackingStatus !== TRACKING_STATUS_CATALOG_ONLY;
         const trackingLoading = trackingLoadingByStock[stock.id] === true;
+        const purchaseCandidatePriority = normalizePurchaseCandidatePriority(stock.purchaseCandidatePriority);
+        const purchaseCandidatePriorityLoading = purchaseCandidatePriorityLoadingByStock[stock.id] === true;
+        const purchaseCandidateTooltip = getPurchaseCandidatePriorityTooltip(purchaseCandidatePriority);
+        const purchaseCandidateColor = getPurchaseCandidatePriorityColor(purchaseCandidatePriority);
+        const purchaseCandidateIcon = purchaseCandidatePriority === PURCHASE_CANDIDATE_PRIORITY_NONE
+          ? <StarOutlined />
+          : <StarFilled style={{ color: purchaseCandidateColor }} />;
         return renderStockRowActions({
           stock,
           live,
@@ -1705,6 +1795,22 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
                   />
                 </span>
               </Tooltip>
+            </Space>
+          ) : isTracked && !isProtectedStock ? (
+            <Space size={6}>
+              <Tooltip title={purchaseCandidateTooltip}>
+                <span>
+                  <Button
+                    icon={purchaseCandidateIcon}
+                    size="small"
+                    aria-label={purchaseCandidateTooltip}
+                    loading={purchaseCandidatePriorityLoading}
+                    disabled={purchaseCandidatePriorityLoading}
+                    onClick={() => handleCyclePurchaseCandidatePriority(stock)}
+                  />
+                </span>
+              </Tooltip>
+              <StockDeleteAction isProtected={isProtectedStock} onDelete={() => handleDelete(stock.id)} />
             </Space>
           ) : undefined,
         });

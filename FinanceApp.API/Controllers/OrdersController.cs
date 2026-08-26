@@ -102,6 +102,12 @@ public class OrdersController : ControllerBase
                     BuyPrice = order.Price,
                     BoughtAt = DateTime.UtcNow
                 });
+
+                if (order.Stock is not null && order.Stock.PurchaseCandidatePriority != StockPurchaseCandidatePriority.None)
+                {
+                    order.Stock.PurchaseCandidatePriority = StockPurchaseCandidatePriority.None;
+                    order.Stock.UpdatedAt = DateTime.UtcNow;
+                }
             }
 
             // Create linked transaction (idempotent: OrderId has unique constraint)

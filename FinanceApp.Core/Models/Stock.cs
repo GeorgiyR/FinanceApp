@@ -75,6 +75,12 @@ public class Stock
     /// </summary>
     public StockHistoryRefreshCadence HistoryRefreshCadence { get; set; } = StockHistoryRefreshCadence.Daily;
 
+    /// <summary>
+    /// Optional three-state marker indicating purchase-candidate priority for tracked stocks
+    /// that are not currently present in any portfolio.
+    /// </summary>
+    public StockPurchaseCandidatePriority PurchaseCandidatePriority { get; set; } = StockPurchaseCandidatePriority.None;
+
     public DateTime? LastIncrementalHistoryRefreshSucceededAtUtc { get; set; }
     public DateTime? NextIncrementalHistoryRefreshAtUtc { get; set; }
     public DateTime? LastHistoryReconciliationSucceededAtUtc { get; set; }

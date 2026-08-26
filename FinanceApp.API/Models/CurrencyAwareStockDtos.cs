@@ -1,3 +1,5 @@
+using FinanceApp.Core.Models;
+
 namespace FinanceApp.API.Models;
 
 public sealed class StockQuoteResponse
@@ -240,6 +242,17 @@ public sealed class UpdateStockQuoteResponse
     public bool SnapshotApplied { get; init; }
     public bool HistoryApplied { get; init; }
     public bool Applied { get; init; }
+}
+
+public sealed class UpdateStockPurchaseCandidatePriorityRequest
+{
+    public StockPurchaseCandidatePriority Priority { get; init; }
+}
+
+public sealed class UpdateStockPurchaseCandidatePriorityResponse
+{
+    public int StockId { get; init; }
+    public StockPurchaseCandidatePriority Priority { get; init; }
 }
 
 /// <summary>

@@ -124,6 +124,53 @@ public class OrdersControllerTests
         Assert.Equal(210.10m, transaction.UnitPrice);
     }
 
+    [Fact]
+    public async Task Update_ExecutedBuyOrder_CreatesPositionAndResetsPurchaseCandidatePriority()
+    {
+        await using var context = CreateContext();
+        context.Portfolios.Add(new Portfolio { Id = 3, Name = "Main", UserId = 1, CreatedAt = DateTime.UtcNow });
+        context.Stocks.Add(new Stock
+        {
+            Id = 12,
+            Ticker = "MSFT",
+            Name = "Microsoft",
+            CommonName = "Microsoft",
+            Exchange = StockExchanges.Nyse,
+            CurrentPrice = 100m,
+            TrackingStatus = StockTrackingStatus.Tracked,
+            PurchaseCandidatePriority = StockPurchaseCandidatePriority.Candidate,
+            UpdatedAt = DateTime.UtcNow,
+        });
+        context.Orders.Add(new Order
+        {
+            Id = 102,
+            PortfolioId = 3,
+            StockId = 12,
+            Type = OrderType.Buy,
+            Status = OrderStatus.Pending,
+            Quantity = 1.1m,
+            Price = 222.22m,
+            CreatedAt = DateTime.UtcNow,
+        });
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context, 1);
+        var result = await controller.Update(3, 102, new UpdateOrderDto
+        {
+            Type = OrderType.Buy,
+            Status = OrderStatus.Executed,
+            Quantity = 1.1m,
+            Price = 222.22m,
+        });
+
+        var ok = Assert.IsType<OkObjectResult>(result.Result);
+        Assert.IsType<Order>(ok.Value);
+
+        Assert.Equal(1, await context.PortfolioItems.CountAsync(x => x.PortfolioId == 3 && x.StockId == 12));
+        var stock = await context.Stocks.AsNoTracking().SingleAsync(x => x.Id == 12);
+        Assert.Equal(StockPurchaseCandidatePriority.None, stock.PurchaseCandidatePriority);
+    }
+
     private static AppDbContext CreateContext()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()

@@ -198,6 +198,7 @@ vi.mock('../services/api', async () => {
     getStockCatalogPerformance: vi.fn(),
     trackStock: vi.fn().mockResolvedValue({ data: {} }),
     untrackStock: vi.fn().mockResolvedValue({ data: {} }),
+    updateStockPurchaseCandidatePriority: vi.fn(),
   };
 });
 
@@ -249,6 +250,7 @@ describe('StocksPage catalog mode', () => {
     vi.mocked(api.refreshStockHistory).mockResolvedValue({ data: { stockId: mcdCatalogStock.id, deletedPoints: 2, importedPoints: 2 } });
     vi.mocked(api.getIndexConstituentHistory).mockResolvedValue({ data: buildHistoryResponse('1y') });
     vi.mocked(api.getStockCatalogPerformance).mockResolvedValue({ data: { range: '1y', generatedAtUtc: '2026-08-19T00:00:00Z', items: [] } });
+    vi.mocked(api.updateStockPurchaseCandidatePriority).mockResolvedValue({ data: { stockId: trackedStock.id, priority: 1 } });
   });
 
   afterEach(() => {
@@ -1245,6 +1247,16 @@ describe('StocksPage catalog period-performance sorting', () => {
       expect(document.querySelector('li.ant-pagination-item-1.ant-pagination-item-active')).not.toBeNull();
     });
   });
+
+  it('catalog mode keeps existing add-to-tracked star and never shows purchase-candidate marker labels', async () => {
+    renderPage('catalog');
+    await waitFor(() => expect(screen.getAllByText('BAS').length).toBeGreaterThan(0));
+
+    expect(screen.getAllByRole('button', { name: /Добавить в отслеживаемые|Акция уже отслеживается/i }).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: 'Отметить кандидатом на покупку' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Повысить приоритет кандидата' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Снять отметку кандидата' })).not.toBeInTheDocument();
+  });
 });
 
 describe('StocksPage tracked mode regression', () => {
@@ -1288,6 +1300,124 @@ describe('StocksPage tracked mode regression', () => {
     await user.click(await screen.findByRole('button', { name: 'Да' }));
     await waitFor(() => expect(api.untrackStock).toHaveBeenCalledTimes(1));
     expect(api.untrackStock).toHaveBeenCalledWith(trackedStock.id);
+  });
+
+  it('shows purchase-candidate star for tracked non-portfolio stock with neutral accessible name', async () => {
+    const api = await import('../services/api');
+    vi.mocked(api.getPortfolios).mockResolvedValue({ data: [] });
+
+    renderPage('tracked');
+    await waitFor(() => expect(screen.getAllByText('AAPL').length).toBeGreaterThan(0));
+
+    expect(screen.getByRole('button', { name: 'Отметить кандидатом на покупку' })).toBeInTheDocument();
+  });
+
+  it('cycles purchase-candidate priority None → Candidate → HighPriority → None and calls API with authoritative values', async () => {
+    const user = userEvent.setup();
+    const api = await import('../services/api');
+    vi.mocked(api.getPortfolios).mockResolvedValue({ data: [] });
+    vi.mocked(api.updateStockPurchaseCandidatePriority)
+      .mockResolvedValueOnce({ data: { stockId: trackedStock.id, priority: 1 } })
+      .mockResolvedValueOnce({ data: { stockId: trackedStock.id, priority: 2 } })
+      .mockResolvedValueOnce({ data: { stockId: trackedStock.id, priority: 0 } });
+
+    renderPage('tracked');
+    await waitFor(() => expect(screen.getAllByText('AAPL').length).toBeGreaterThan(0));
+
+    const neutralButton = screen.getByRole('button', { name: 'Отметить кандидатом на покупку' });
+    await user.click(neutralButton);
+    await screen.findByRole('button', { name: 'Повысить приоритет кандидата' });
+
+    const candidateButton = screen.getByRole('button', { name: 'Повысить приоритет кандидата' });
+    await user.click(candidateButton);
+    await screen.findByRole('button', { name: 'Снять отметку кандидата' });
+
+    const highPriorityButton = screen.getByRole('button', { name: 'Снять отметку кандидата' });
+    await user.click(highPriorityButton);
+    await screen.findByRole('button', { name: 'Отметить кандидатом на покупку' });
+
+    expect(api.updateStockPurchaseCandidatePriority).toHaveBeenNthCalledWith(1, trackedStock.id, { priority: 1 });
+    expect(api.updateStockPurchaseCandidatePriority).toHaveBeenNthCalledWith(2, trackedStock.id, { priority: 2 });
+    expect(api.updateStockPurchaseCandidatePriority).toHaveBeenNthCalledWith(3, trackedStock.id, { priority: 0 });
+  });
+
+  it('prevents duplicate purchase-candidate clicks while update is pending', async () => {
+    const user = userEvent.setup();
+    const api = await import('../services/api');
+    vi.mocked(api.getPortfolios).mockResolvedValue({ data: [] });
+
+    let resolveUpdate: ((value: { data: { stockId: number; priority: number } }) => void) | null = null;
+    vi.mocked(api.updateStockPurchaseCandidatePriority).mockImplementation(() => new Promise((resolve) => {
+      resolveUpdate = resolve;
+    }));
+
+    renderPage('tracked');
+    await waitFor(() => expect(screen.getAllByText('AAPL').length).toBeGreaterThan(0));
+
+    const button = screen.getByRole('button', { name: 'Отметить кандидатом на покупку' });
+    await user.click(button);
+    await user.click(button);
+
+    await waitFor(() => expect(api.updateStockPurchaseCandidatePriority).toHaveBeenCalledTimes(1));
+    expect(button).toBeDisabled();
+    resolveUpdate?.({ data: { stockId: trackedStock.id, priority: 1 } });
+  });
+
+  it('restores previous purchase-candidate state on API failure and shows Russian error', async () => {
+    const user = userEvent.setup();
+    const api = await import('../services/api');
+    vi.mocked(api.getPortfolios).mockResolvedValue({ data: [] });
+    vi.mocked(api.updateStockPurchaseCandidatePriority).mockRejectedValueOnce({
+      isAxiosError: true,
+      response: { status: 409, data: 'Нельзя установить отметку кандидата для акции в портфеле.' },
+    } as never);
+
+    renderPage('tracked');
+    await waitFor(() => expect(screen.getAllByText('AAPL').length).toBeGreaterThan(0));
+
+    const button = screen.getByRole('button', { name: 'Отметить кандидатом на покупку' });
+    await user.click(button);
+
+    expect(await screen.findByText('Нельзя установить отметку кандидата для акции в портфеле.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Отметить кандидатом на покупку' })).toBeInTheDocument();
+  });
+
+  it('does not render purchase-candidate star for portfolio stocks', async () => {
+    const api = await import('../services/api');
+    vi.mocked(api.getPortfolios).mockResolvedValue({
+      data: [{
+        id: 700,
+        name: 'Main',
+        userId: 1,
+        createdAt: '2026-08-20T00:00:00Z',
+        brokerCredit: 0,
+        items: [{ id: 1, portfolioId: 700, stockId: trackedStock.id, stock: trackedStock, quantity: 1, buyPrice: 100, boughtAt: '2026-08-20T00:00:00Z' }],
+        orders: [],
+      }],
+    });
+
+    renderPage('tracked');
+    await waitFor(() => expect(screen.getAllByText('AAPL').length).toBeGreaterThan(0));
+
+    expect(screen.queryByRole('button', { name: 'Отметить кандидатом на покупку' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Повысить приоритет кандидата' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Снять отметку кандидата' })).not.toBeInTheDocument();
+  });
+
+  it('keeps authoritative purchase-candidate state after remount/refetch', async () => {
+    const api = await import('../services/api');
+    vi.mocked(api.getPortfolios).mockResolvedValue({ data: [] });
+    vi.mocked(api.getTrackedStocks).mockResolvedValue({
+      data: [{ ...trackedStock, purchaseCandidatePriority: 2 }],
+    });
+
+    const firstRender = renderPage('tracked');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Снять отметку кандидата' })).toBeInTheDocument());
+
+    firstRender.unmount();
+
+    renderPage('tracked');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Снять отметку кандидата' })).toBeInTheDocument());
   });
 
   // Tracked page shows countdown and auto-refresh

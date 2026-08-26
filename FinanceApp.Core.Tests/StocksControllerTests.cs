@@ -391,6 +391,204 @@ public class StocksControllerTests
     }
 
     [Fact]
+    public async Task ExistingStock_DefaultsPurchaseCandidatePriorityToNone()
+    {
+        await using var context = CreateContext();
+        context.Stocks.Add(new Stock
+        {
+            Id = 111,
+            Ticker = "CAND",
+            Name = "Candidate Corp",
+            CommonName = "Candidate",
+            Exchange = StockExchanges.Nyse,
+            CurrentPrice = 10m,
+            TrackingStatus = StockTrackingStatus.Tracked,
+            UpdatedAt = DateTime.UtcNow,
+        });
+        await context.SaveChangesAsync();
+
+        var persisted = await context.Stocks.AsNoTracking().SingleAsync(x => x.Id == 111);
+        Assert.Equal(StockPurchaseCandidatePriority.None, persisted.PurchaseCandidatePriority);
+    }
+
+    [Fact]
+    public async Task UpdatePurchaseCandidatePriority_ValidTrackedUpdate_PersistsAndIsVisibleAfterFreshRequest()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseSqlite(connection)
+            .Options;
+
+        await using (var setupContext = new AppDbContext(options))
+        {
+            await setupContext.Database.EnsureCreatedAsync();
+            setupContext.Stocks.Add(new Stock
+            {
+                Id = 112,
+                Ticker = "PERS",
+                Name = "Persist Inc.",
+                CommonName = "Persist",
+                Exchange = StockExchanges.Nyse,
+                CurrentPrice = 42m,
+                TrackingStatus = StockTrackingStatus.Tracked,
+                UpdatedAt = DateTime.UtcNow,
+            });
+            await setupContext.SaveChangesAsync();
+        }
+
+        await using (var mutationContext = new AppDbContext(options))
+        {
+            var controller = CreateController(mutationContext);
+            var result = await controller.UpdatePurchaseCandidatePriority(112, new UpdateStockPurchaseCandidatePriorityRequest
+            {
+                Priority = StockPurchaseCandidatePriority.Candidate
+            });
+
+            var ok = Assert.IsType<OkObjectResult>(result.Result);
+            var payload = Assert.IsType<UpdateStockPurchaseCandidatePriorityResponse>(ok.Value);
+            Assert.Equal(112, payload.StockId);
+            Assert.Equal(StockPurchaseCandidatePriority.Candidate, payload.Priority);
+        }
+
+        await using (var verificationContext = new AppDbContext(options))
+        {
+            var controller = CreateController(verificationContext);
+            var tracked = await controller.GetTracked();
+            var trackedStocks = Assert.IsAssignableFrom<IEnumerable<Stock>>(tracked.Value);
+            var stock = Assert.Single(trackedStocks);
+            Assert.Equal(StockPurchaseCandidatePriority.Candidate, stock.PurchaseCandidatePriority);
+        }
+    }
+
+    [Fact]
+    public async Task UpdatePurchaseCandidatePriority_UnknownStock_ReturnsNotFound()
+    {
+        await using var context = CreateContext();
+        var controller = CreateController(context);
+
+        var result = await controller.UpdatePurchaseCandidatePriority(999999, new UpdateStockPurchaseCandidatePriorityRequest
+        {
+            Priority = StockPurchaseCandidatePriority.Candidate
+        });
+
+        Assert.IsType<NotFoundResult>(result.Result);
+    }
+
+    [Fact]
+    public async Task UpdatePurchaseCandidatePriority_CatalogOnlyStock_ReturnsConflict()
+    {
+        await using var context = CreateContext();
+        context.Stocks.Add(new Stock
+        {
+            Id = 113,
+            Ticker = "CATONLY",
+            Name = "Catalog Only",
+            CommonName = "Catalog",
+            Exchange = StockExchanges.Nyse,
+            CurrentPrice = 11m,
+            TrackingStatus = StockTrackingStatus.CatalogOnly,
+            UpdatedAt = DateTime.UtcNow,
+        });
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context);
+        var result = await controller.UpdatePurchaseCandidatePriority(113, new UpdateStockPurchaseCandidatePriorityRequest
+        {
+            Priority = StockPurchaseCandidatePriority.Candidate
+        });
+
+        var conflict = Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Equal(StatusCodes.Status409Conflict, conflict.StatusCode);
+    }
+
+    [Fact]
+    public async Task UpdatePurchaseCandidatePriority_PortfolioStock_RejectsNonNeutralPriority()
+    {
+        await using var context = CreateContext();
+        var user = new User
+        {
+            Id = 31,
+            Username = "user31",
+            Email = "user31@example.com",
+            PasswordHash = "hash",
+            CreatedAt = DateTime.UtcNow,
+        };
+        var portfolio = new Portfolio
+        {
+            Id = 32,
+            Name = "Main",
+            UserId = user.Id,
+            User = user,
+            CreatedAt = DateTime.UtcNow,
+        };
+        var stock = new Stock
+        {
+            Id = 114,
+            Ticker = "PORT",
+            Name = "Portfolio Stock",
+            CommonName = "Portfolio Stock",
+            Exchange = StockExchanges.Nyse,
+            CurrentPrice = 12m,
+            TrackingStatus = StockTrackingStatus.Tracked,
+            PurchaseCandidatePriority = StockPurchaseCandidatePriority.None,
+            UpdatedAt = DateTime.UtcNow,
+        };
+
+        context.Users.Add(user);
+        context.Portfolios.Add(portfolio);
+        context.Stocks.Add(stock);
+        context.PortfolioItems.Add(new PortfolioItem
+        {
+            PortfolioId = portfolio.Id,
+            StockId = stock.Id,
+            Quantity = 1m,
+            BuyPrice = 12m,
+            BoughtAt = DateTime.UtcNow,
+        });
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context);
+        var result = await controller.UpdatePurchaseCandidatePriority(114, new UpdateStockPurchaseCandidatePriorityRequest
+        {
+            Priority = StockPurchaseCandidatePriority.HighPriority
+        });
+
+        var conflict = Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Equal(StatusCodes.Status409Conflict, conflict.StatusCode);
+        var persisted = await context.Stocks.AsNoTracking().SingleAsync(x => x.Id == 114);
+        Assert.Equal(StockPurchaseCandidatePriority.None, persisted.PurchaseCandidatePriority);
+    }
+
+    [Fact]
+    public async Task UpdatePurchaseCandidatePriority_InvalidEnumPayload_ReturnsBadRequest()
+    {
+        await using var context = CreateContext();
+        context.Stocks.Add(new Stock
+        {
+            Id = 115,
+            Ticker = "INVAL",
+            Name = "Invalid Enum",
+            CommonName = "Invalid Enum",
+            Exchange = StockExchanges.Nyse,
+            CurrentPrice = 13m,
+            TrackingStatus = StockTrackingStatus.Tracked,
+            UpdatedAt = DateTime.UtcNow,
+        });
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context);
+        var result = await controller.UpdatePurchaseCandidatePriority(115, new UpdateStockPurchaseCandidatePriorityRequest
+        {
+            Priority = (StockPurchaseCandidatePriority)99
+        });
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result.Result);
+        Assert.Equal(StatusCodes.Status400BadRequest, badRequest.StatusCode);
+    }
+
+    [Fact]
     public async Task Delete_ReferencedStock_ReturnsConflictAndDoesNotDelete()
     {
         await using var context = CreateContext();
