@@ -10,6 +10,18 @@ export const ADVANCED_FILTER_EXCHANGES_PARAM = 'exchanges';
 export const ADVANCED_FILTER_SECTORS_PARAM = 'sectors';
 export const ADVANCED_FILTER_INDUSTRIES_PARAM = 'industries';
 
+type AdvancedStockFilterParamNames = {
+  exchangesParam?: string;
+  sectorsParam?: string;
+  industriesParam?: string;
+};
+
+const resolveAdvancedStockFilterParamNames = (names?: AdvancedStockFilterParamNames) => ({
+  exchangesParam: names?.exchangesParam ?? ADVANCED_FILTER_EXCHANGES_PARAM,
+  sectorsParam: names?.sectorsParam ?? ADVANCED_FILTER_SECTORS_PARAM,
+  industriesParam: names?.industriesParam ?? ADVANCED_FILTER_INDUSTRIES_PARAM,
+});
+
 const parseCsvParams = (params: URLSearchParams, name: string): string[] =>
   params
     .getAll(name)
@@ -17,8 +29,8 @@ const parseCsvParams = (params: URLSearchParams, name: string): string[] =>
     .map((value) => value.trim())
     .filter((value) => value.length > 0);
 
-const parseExchangeParams = (params: URLSearchParams): AdvancedExchangeFilter[] => {
-  const values = parseCsvParams(params, ADVANCED_FILTER_EXCHANGES_PARAM)
+const parseExchangeParams = (params: URLSearchParams, paramName: string): AdvancedExchangeFilter[] => {
+  const values = parseCsvParams(params, paramName)
     .map((value) => value.toLowerCase())
     .filter((value): value is AdvancedExchangeFilter => value === 'fra' || value === 'us');
 
@@ -105,12 +117,17 @@ export const normalizeAdvancedStockFiltersWithDirectory = (
   };
 };
 
-export const parseAdvancedStockFiltersFromSearchParams = (searchParams: URLSearchParams): AdvancedStockFilters =>
-  normalizeAdvancedStockFilters({
-    exchanges: parseExchangeParams(searchParams),
-    sectorIds: parseNumberParams(searchParams, ADVANCED_FILTER_SECTORS_PARAM),
-    industryIds: parseNumberParams(searchParams, ADVANCED_FILTER_INDUSTRIES_PARAM),
+export const parseAdvancedStockFiltersFromSearchParams = (
+  searchParams: URLSearchParams,
+  paramNames?: AdvancedStockFilterParamNames,
+): AdvancedStockFilters => {
+  const { exchangesParam, sectorsParam, industriesParam } = resolveAdvancedStockFilterParamNames(paramNames);
+  return normalizeAdvancedStockFilters({
+    exchanges: parseExchangeParams(searchParams, exchangesParam),
+    sectorIds: parseNumberParams(searchParams, sectorsParam),
+    industryIds: parseNumberParams(searchParams, industriesParam),
   });
+};
 
 const encodeNumberValues = (values: readonly number[]): string => values.join(',');
 
@@ -119,23 +136,25 @@ const encodeExchangeValues = (values: readonly AdvancedExchangeFilter[]): string
 export const serializeAdvancedStockFiltersToSearchParams = (
   current: URLSearchParams,
   filters: AdvancedStockFilters,
+  paramNames?: AdvancedStockFilterParamNames,
 ): URLSearchParams => {
+  const { exchangesParam, sectorsParam, industriesParam } = resolveAdvancedStockFilterParamNames(paramNames);
   const next = new URLSearchParams(current);
 
-  next.delete(ADVANCED_FILTER_EXCHANGES_PARAM);
-  next.delete(ADVANCED_FILTER_SECTORS_PARAM);
-  next.delete(ADVANCED_FILTER_INDUSTRIES_PARAM);
+  next.delete(exchangesParam);
+  next.delete(sectorsParam);
+  next.delete(industriesParam);
 
   if (filters.exchanges.length > 0) {
-    next.set(ADVANCED_FILTER_EXCHANGES_PARAM, encodeExchangeValues(filters.exchanges));
+    next.set(exchangesParam, encodeExchangeValues(filters.exchanges));
   }
 
   if (filters.sectorIds.length > 0) {
-    next.set(ADVANCED_FILTER_SECTORS_PARAM, encodeNumberValues(filters.sectorIds));
+    next.set(sectorsParam, encodeNumberValues(filters.sectorIds));
   }
 
   if (filters.industryIds.length > 0) {
-    next.set(ADVANCED_FILTER_INDUSTRIES_PARAM, encodeNumberValues(filters.industryIds));
+    next.set(industriesParam, encodeNumberValues(filters.industryIds));
   }
 
   return next;

@@ -231,8 +231,12 @@ const buildCatalogStock = (order: number): Stock => ({
   marketIndexIds: [],
 });
 
+const getRenderedRowIds = () =>
+  Array.from(document.querySelectorAll('tr[data-row-key]')).map((row) => row.getAttribute('data-row-key'));
+
 describe('StocksPage catalog mode', () => {
   beforeEach(async () => {
+    window.history.replaceState({}, '', '/stocks/catalog');
     vi.clearAllMocks();
     const api = await import('../services/api');
     vi.mocked(api.getTrackedStocks).mockResolvedValue({ data: [trackedStock] });
@@ -668,6 +672,7 @@ describe('StocksPage catalog period-performance sorting', () => {
   });
 
   beforeEach(async () => {
+    window.history.replaceState({}, '', '/stocks/catalog');
     vi.clearAllMocks();
     const api = await import('../services/api');
     vi.mocked(api.getTrackedStocks).mockResolvedValue({ data: [] });
@@ -1226,10 +1231,16 @@ describe('StocksPage catalog period-performance sorting', () => {
 
 describe('StocksPage tracked mode regression', () => {
   beforeEach(async () => {
+    window.history.replaceState({}, '', '/stocks');
     vi.clearAllMocks();
     const api = await import('../services/api');
     vi.mocked(api.getTrackedStocks).mockResolvedValue({ data: [trackedStock] });
     vi.mocked(api.getStockCatalog).mockResolvedValue({ data: [trackedStock, untrackedStock] });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
   });
 
   // Test 14: Tracked page retains non-destructive untrack action (guarded by Popconfirm confirmation)
@@ -1285,5 +1296,243 @@ describe('StocksPage tracked mode regression', () => {
     await waitFor(() => {
       expect(screen.getAllByText('FRA').length).toBeGreaterThan(0);
     });
+  });
+
+  it('renders tracked search/filter/sort controls together with countdown and refresh button', async () => {
+    const user = userEvent.setup();
+    const api = await import('../services/api');
+    vi.mocked(api.getStockCatalogPerformance).mockResolvedValue({ data: { range: '24h', generatedAtUtc: '2026-08-19T00:00:00Z', items: [] } });
+
+    renderPage('tracked');
+    await waitFor(() => expect(screen.getAllByText('AAPL').length).toBeGreaterThan(0));
+
+    expect(screen.getByPlaceholderText('Поиск: тикер, название, биржа, индекс')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Открыть расширенные фильтры' })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Сортировка' })).toBeInTheDocument();
+    expect(screen.getByText(/Авто-обновление через/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Обновить цены/i })).toBeInTheDocument();
+
+    const sortSelect = screen.getByRole('combobox', { name: 'Сортировка' });
+    await user.click(sortSelect);
+    await user.click(await screen.findByText('24 ч.'));
+    expect(screen.getByRole('button', { name: 'Сортировать по возрастанию' })).toBeInTheDocument();
+    expect(vi.mocked(api.getStockCatalogPerformance)).toHaveBeenCalledWith('24h', expect.any(AbortSignal));
+  });
+
+  it('tracked search filters by ticker, name/common name, exchange and index name', async () => {
+    const user = userEvent.setup();
+    const api = await import('../services/api');
+    vi.mocked(api.getMarketIndices).mockResolvedValue([
+      {
+        id: 1,
+        name: 'S&P 500',
+        code: 'SPX',
+        providerSymbol: null,
+        description: '',
+        countryOrRegion: '',
+        sortOrder: 1,
+        isArchived: false,
+        showInNavigation: true,
+      },
+      {
+        id: 2,
+        name: 'DAX',
+        code: 'DAX',
+        providerSymbol: null,
+        description: '',
+        countryOrRegion: '',
+        sortOrder: 2,
+        isArchived: false,
+        showInNavigation: true,
+      },
+    ]);
+    vi.mocked(api.getTrackedStocks).mockResolvedValue({
+      data: [
+        { ...trackedStock, ticker: 'AAPL', name: 'Apple Inc.', commonName: 'Apple', exchange: 'NYSE', marketIndexIds: [1] },
+        { ...untrackedStock, id: 5, ticker: 'BASF', name: 'BASF SE', commonName: 'Chemicals', exchange: 'Frankfurt', trackingStatus: 1, marketIndexIds: [2] },
+      ],
+    });
+
+    renderPage('tracked');
+    await waitFor(() => expect(screen.getAllByText('AAPL').length).toBeGreaterThan(0));
+    const searchInput = screen.getByPlaceholderText('Поиск: тикер, название, биржа, индекс');
+
+    await user.type(searchInput, 'BASF');
+    await waitFor(() => expect(screen.queryByText('AAPL')).not.toBeInTheDocument());
+    expect(screen.getAllByText('BASF').length).toBeGreaterThan(0);
+
+    await user.clear(searchInput);
+    await user.type(searchInput, 'apple');
+    await waitFor(() => expect(screen.getAllByText('AAPL').length).toBeGreaterThan(0));
+    expect(screen.queryByText('BASF')).not.toBeInTheDocument();
+
+    await user.clear(searchInput);
+    await user.type(searchInput, 'frankfurt');
+    await waitFor(() => expect(screen.getAllByText('BASF').length).toBeGreaterThan(0));
+    expect(screen.queryByText('AAPL')).not.toBeInTheDocument();
+
+    await user.clear(searchInput);
+    await user.type(searchInput, 's&p');
+    await waitFor(() => expect(screen.getAllByText('AAPL').length).toBeGreaterThan(0));
+    expect(screen.queryByText('BASF')).not.toBeInTheDocument();
+  });
+
+  it('tracked advanced filters and reset work and never reveal catalog-only stocks', async () => {
+    const user = userEvent.setup();
+    const api = await import('../services/api');
+    vi.mocked(api.getSectors).mockResolvedValue([
+      {
+        id: 15,
+        name: 'Information Technology',
+        normalizedName: 'INFORMATION TECHNOLOGY',
+        isArchived: false,
+        sortOrder: 1,
+        createdAtUtc: '',
+        updatedAtUtc: '',
+        industryCount: 1,
+        stockCount: 1,
+        industries: [{ id: 1501, sectorId: 15, name: 'Software', normalizedName: 'SOFTWARE', isArchived: false, sortOrder: 1, createdAtUtc: '', updatedAtUtc: '', stockCount: 1 }],
+      },
+      {
+        id: 20,
+        name: 'Materials',
+        normalizedName: 'MATERIALS',
+        isArchived: false,
+        sortOrder: 2,
+        createdAtUtc: '',
+        updatedAtUtc: '',
+        industryCount: 1,
+        stockCount: 1,
+        industries: [{ id: 2001, sectorId: 20, name: 'Chemicals', normalizedName: 'CHEMICALS', isArchived: false, sortOrder: 1, createdAtUtc: '', updatedAtUtc: '', stockCount: 1 }],
+      },
+    ]);
+    vi.mocked(api.getTrackedStocks).mockResolvedValue({
+      data: [
+        { ...trackedStock, ticker: 'AAPL', exchange: 'NYSE', trackingStatus: 1 },
+        { ...untrackedStock, id: 6, ticker: 'BAS', exchange: 'Frankfurt', trackingStatus: 1 },
+      ],
+    });
+    vi.mocked(api.getStockCatalog).mockResolvedValue({ data: [{ ...untrackedStock, id: 88, ticker: 'CATONLY', trackingStatus: 0 }] });
+
+    renderPage('tracked');
+    await waitFor(() => expect(screen.getAllByText('AAPL').length).toBeGreaterThan(0));
+    expect(screen.queryByText('CATONLY')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Открыть расширенные фильтры' }));
+    await user.click(screen.getByRole('combobox', { name: 'Фильтр по бирже' }));
+    await user.click(await screen.findByText('Frankfurt (FRA)'));
+    await user.click(screen.getByRole('button', { name: 'Применить' }));
+    await waitFor(() => expect(screen.queryByText('AAPL')).not.toBeInTheDocument());
+    expect(screen.getAllByText('BAS').length).toBeGreaterThan(0);
+    expect(screen.getByText('Фильтры (1)')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Сбросить расширенные фильтры' }));
+    await waitFor(() => expect(screen.getAllByText('AAPL').length).toBeGreaterThan(0));
+    expect(screen.queryByText('CATONLY')).not.toBeInTheDocument();
+  });
+
+  it('tracked period sorting keeps nulls last, supports direction toggle, and rejects stale responses', async () => {
+    const user = userEvent.setup();
+    const api = await import('../services/api');
+    vi.mocked(api.getTrackedStocks).mockResolvedValue({
+      data: [
+        { ...trackedStock, id: 1, ticker: 'AAPL', exchange: 'Frankfurt', trackingStatus: 1 },
+        { ...trackedStock, id: 2, ticker: 'BAS', name: 'BASF SE', commonName: 'BASF', exchange: 'Frankfurt', trackingStatus: 1 },
+        { ...trackedStock, id: 3, ticker: 'BMW', name: 'BMW AG', commonName: 'BMW', exchange: 'Frankfurt', trackingStatus: 1 },
+      ],
+    });
+
+    let resolve1y: ((value: unknown) => void) | null = null;
+    vi.mocked(api.getStockCatalogPerformance).mockImplementation((range) => {
+      if (range === '1y') {
+        return new Promise((resolve) => { resolve1y = resolve; });
+      }
+      return Promise.resolve({
+        data: {
+          range,
+          generatedAtUtc: '2026-08-19T00:00:00Z',
+          items: [
+            { stockId: 1, startPrice: 100, endPrice: 120, changePercent: 20, startAtUtc: '', endAtUtc: '', dataStatus: 'Available' as const },
+            { stockId: 2, startPrice: 100, endPrice: 105, changePercent: 5, startAtUtc: '', endAtUtc: '', dataStatus: 'Available' as const },
+            { stockId: 3, startPrice: 100, endPrice: null, changePercent: null, startAtUtc: '', endAtUtc: '', dataStatus: 'InsufficientData' as const },
+          ],
+        },
+      });
+    });
+
+    renderPage('tracked');
+    await waitFor(() => expect(screen.getAllByText('AAPL').length).toBeGreaterThan(0));
+
+    const sortSelect = screen.getByRole('combobox', { name: 'Сортировка' });
+    await user.click(sortSelect);
+    await user.click(await screen.findByText('1 год'));
+    await user.click(sortSelect);
+    await user.click(await screen.findByText('6 мес.'));
+
+    await waitFor(() => expect(screen.getByText('+20,00 %')).toBeInTheDocument());
+    act(() => {
+      resolve1y?.({
+        data: {
+          range: '1y',
+          generatedAtUtc: '2026-08-19T00:00:00Z',
+          items: [
+            { stockId: 1, startPrice: 100, endPrice: 101, changePercent: 1, startAtUtc: '', endAtUtc: '', dataStatus: 'Available' as const },
+            { stockId: 2, startPrice: 100, endPrice: 102, changePercent: 2, startAtUtc: '', endAtUtc: '', dataStatus: 'Available' as const },
+            { stockId: 3, startPrice: 100, endPrice: 103, changePercent: 3, startAtUtc: '', endAtUtc: '', dataStatus: 'Available' as const },
+          ],
+        },
+      });
+    });
+
+    await waitFor(() => expect(screen.getByText('+20,00 %')).toBeInTheDocument());
+    expect(screen.queryByText('+3,00 %')).not.toBeInTheDocument();
+
+    const rowsDesc = getRenderedRowIds();
+    expect(rowsDesc.indexOf('1')).toBeLessThan(rowsDesc.indexOf('2'));
+    expect(rowsDesc.indexOf('2')).toBeLessThan(rowsDesc.indexOf('3'));
+
+    await user.click(screen.getByRole('button', { name: 'Сортировать по возрастанию' }));
+    await waitFor(() => {
+      const rowsAsc = getRenderedRowIds();
+      expect(rowsAsc.indexOf('2')).toBeLessThan(rowsAsc.indexOf('1'));
+      expect(rowsAsc.indexOf('3')).toBeGreaterThan(rowsAsc.indexOf('1'));
+    });
+  }, 15000);
+
+  it('tracked URL state restores controls via popstate and keeps catalog defaults independent', async () => {
+    const user = userEvent.setup();
+    const api = await import('../services/api');
+    window.history.replaceState({}, '', '/stocks');
+    vi.mocked(api.getSectors).mockResolvedValue([]);
+    vi.mocked(api.getStockCatalogPerformance).mockResolvedValue({ data: { range: '1y', generatedAtUtc: '2026-08-19T00:00:00Z', items: [] } });
+
+    renderPage('tracked');
+    await waitFor(() => expect(screen.getAllByText('AAPL').length).toBeGreaterThan(0));
+    const searchInput = screen.getByPlaceholderText('Поиск: тикер, название, биржа, индекс');
+    await user.type(searchInput, 'AAPL');
+    await user.click(screen.getByRole('combobox', { name: 'Сортировка' }));
+    await user.click(await screen.findByText('1 год'));
+    await user.click(screen.getByRole('button', { name: 'Сортировать по возрастанию' }));
+
+    const withTrackedState = window.location.search;
+    expect(withTrackedState).toContain('tq=AAPL');
+    expect(withTrackedState).toContain('tsort=1y');
+    expect(withTrackedState).toContain('tdir=asc');
+
+    window.history.pushState({}, '', '/stocks');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    await waitFor(() => expect((screen.getByPlaceholderText('Поиск: тикер, название, биржа, индекс') as HTMLInputElement).value).toBe(''));
+
+    window.history.pushState({}, '', `/stocks${withTrackedState}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    await waitFor(() => expect((screen.getByPlaceholderText('Поиск: тикер, название, биржа, индекс') as HTMLInputElement).value).toBe('AAPL'));
+    expect(screen.getByRole('button', { name: 'Сортировать по убыванию' })).toBeInTheDocument();
+
+    cleanup();
+    window.history.replaceState({}, '', `/stocks/catalog${withTrackedState}`);
+    renderPage('catalog');
+    await waitFor(() => expect(screen.getAllByText('AAPL').length).toBeGreaterThan(0));
+    expect((screen.getByPlaceholderText('Поиск: тикер, название, биржа, индекс') as HTMLInputElement).value).toBe('');
+    expect(screen.queryByText('Рост за период')).not.toBeInTheDocument();
   });
 });
