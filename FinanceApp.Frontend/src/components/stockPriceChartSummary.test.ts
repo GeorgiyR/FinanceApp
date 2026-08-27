@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  PREVIOUS_CLOSE_BASELINE_LABEL,
-  SELECTED_PERIOD_BASELINE_LABEL,
+  PREVIOUS_CLOSE_CHANGE_HEADING,
+  SELECTED_PERIOD_CHANGE_HEADING,
   getStockPriceChartSummary,
 } from './stockPriceChartSummary';
 
@@ -24,7 +24,8 @@ describe('getStockPriceChartSummary', () => {
     expect(summary.baselineValue).toBeCloseTo(204, 10);
     expect(summary.changeValue).toBeCloseTo(32.3, 10);
     expect(summary.changePercent).toBeCloseTo(15.8333333333, 10);
-    expect(summary.baselineLabel).toBe(PREVIOUS_CLOSE_BASELINE_LABEL);
+    expect(summary.baselineSource).toBe('previous-close');
+    expect(summary.changeHeading).toBe(PREVIOUS_CLOSE_CHANGE_HEADING);
   });
 
   it('reproduces the AMZ.F regression fixture', () => {
@@ -59,7 +60,8 @@ describe('getStockPriceChartSummary', () => {
 
     expect(summary.baselineValue).toBeCloseTo(204, 10);
     expect(summary.changeValue).toBeCloseTo(32.3, 10);
-    expect(summary.baselineLabel).toBe(PREVIOUS_CLOSE_BASELINE_LABEL);
+    expect(summary.baselineSource).toBe('previous-close');
+    expect(summary.changeHeading).toBe(PREVIOUS_CLOSE_CHANGE_HEADING);
   });
 
   it('falls back to the first history close for 24h when no session snapshot baseline exists', () => {
@@ -73,7 +75,8 @@ describe('getStockPriceChartSummary', () => {
     expect(summary.baselineValue).toBeCloseTo(230.6, 10);
     expect(summary.changeValue).toBeCloseTo(5.7, 10);
     expect(summary.changePercent).toBeCloseTo((5.7 / 230.6) * 100, 10);
-    expect(summary.baselineLabel).toBe(SELECTED_PERIOD_BASELINE_LABEL);
+    expect(summary.baselineSource).toBe('selected-period');
+    expect(summary.changeHeading).toBe(SELECTED_PERIOD_CHANGE_HEADING);
   });
 
   it('prefers the live previous-close baseline for today over the first candle', () => {
@@ -94,7 +97,8 @@ describe('getStockPriceChartSummary', () => {
     expect(summary.baselineValue).toBeCloseTo(472.33, 10);
     expect(summary.changeValue).toBeCloseTo(-18.54, 10);
     expect(summary.changePercent).toBeCloseTo((-18.54 / 472.33) * 100, 10);
-    expect(summary.baselineLabel).toBe(PREVIOUS_CLOSE_BASELINE_LABEL);
+    expect(summary.baselineSource).toBe('previous-close');
+    expect(summary.changeHeading).toBe(PREVIOUS_CLOSE_CHANGE_HEADING);
   });
 
   it('uses the stored previous-close baseline for today when the live quote baseline is unavailable', () => {
@@ -111,7 +115,8 @@ describe('getStockPriceChartSummary', () => {
     expect(summary.baselineValue).toBeCloseTo(472.33, 10);
     expect(summary.changeValue).toBeCloseTo(-18.54, 10);
     expect(summary.changePercent).toBeCloseTo((-18.54 / 472.33) * 100, 10);
-    expect(summary.baselineLabel).toBe(PREVIOUS_CLOSE_BASELINE_LABEL);
+    expect(summary.baselineSource).toBe('previous-close');
+    expect(summary.changeHeading).toBe(PREVIOUS_CLOSE_CHANGE_HEADING);
   });
 
   it('falls back to the first history close for today when no previous-close baseline exists', () => {
@@ -125,7 +130,8 @@ describe('getStockPriceChartSummary', () => {
     expect(summary.baselineValue).toBeCloseTo(446.91, 10);
     expect(summary.changeValue).toBeCloseTo(6.88, 10);
     expect(summary.changePercent).toBeCloseTo((6.88 / 446.91) * 100, 10);
-    expect(summary.baselineLabel).toBe(SELECTED_PERIOD_BASELINE_LABEL);
+    expect(summary.baselineSource).toBe('selected-period');
+    expect(summary.changeHeading).toBe(SELECTED_PERIOD_CHANGE_HEADING);
   });
 
   it('keeps other ranges anchored to the first history point even when a live previous close exists', () => {
@@ -145,7 +151,8 @@ describe('getStockPriceChartSummary', () => {
 
     expect(summary.baselineValue).toBeCloseTo(230.6, 10);
     expect(summary.changeValue).toBeCloseTo(5.7, 10);
-    expect(summary.baselineLabel).toBe(SELECTED_PERIOD_BASELINE_LABEL);
+    expect(summary.baselineSource).toBe('selected-period');
+    expect(summary.changeHeading).toBe(SELECTED_PERIOD_CHANGE_HEADING);
   });
 
   it('avoids NaN and infinity when the baseline is zero or missing', () => {
@@ -187,6 +194,7 @@ describe('getStockPriceChartSummary', () => {
 
     expect(summary.baselineValue).toBeCloseTo(408, 10);
     expect(summary.changeValue).toBeCloseTo(64.6, 10);
-    expect(summary.baselineLabel).toBe(PREVIOUS_CLOSE_BASELINE_LABEL);
+    expect(summary.baselineSource).toBe('previous-close');
+    expect(summary.changeHeading).toBe(PREVIOUS_CLOSE_CHANGE_HEADING);
   });
 });

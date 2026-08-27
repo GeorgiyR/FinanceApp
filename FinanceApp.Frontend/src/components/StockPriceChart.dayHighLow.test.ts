@@ -247,7 +247,8 @@ describe('selected-period summary layout contract', () => {
   });
 
   it('keeps change value inside the right-aligned block under the renamed heading', () => {
-    expect(stockPriceChartSource).toContain('{PERIOD_CHANGE_HEADING}');
+    expect(stockPriceChartSource).toContain('const periodChangeHeading = periodSummary.changeHeading ?? PERIOD_CHANGE_HEADING;');
+    expect(stockPriceChartSource).toContain('{periodChangeHeading}');
     expect(stockPriceChartSource).toContain("<div style={{ color: performanceColor ?? 'inherit', fontWeight: 600 }}>");
     expect(stockPriceChartSource).toContain('formatCurrencyValue(periodChangeValue, displayCurrencyCode)');
   });

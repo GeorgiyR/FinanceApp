@@ -7,6 +7,8 @@ dayjs.extend(utc);
 const SHORT_INTRADAY_GAP_THRESHOLD_MS = 2 * 60 * 60 * 1000;
 const MIN_GAP_MARKER_OFFSET_MS = 1;
 export const TARGET_INTERSESSION_GAP_CSS_PX = 75.6;
+export const PREVIOUS_CLOSE_MISMATCH_ABSOLUTE_TOLERANCE = 0.02;
+export const PREVIOUS_CLOSE_MISMATCH_RELATIVE_TOLERANCE = 0.001;
 
 const historyGapThresholdMsByRange: Partial<Record<StockHistoryRange, number>> = {
   '24h': SHORT_INTRADAY_GAP_THRESHOLD_MS,
@@ -35,12 +37,50 @@ export type CurrentQuoteOverlayPoint = {
   isForRequestedInstrument?: boolean | null;
 };
 
+export interface PreviousCloseMatchDiagnostics {
+  comparable: boolean;
+  matchesWithinTolerance: boolean;
+  absoluteDifference: number | null;
+  tolerance: number | null;
+}
+
 const DATE_ONLY_HISTORY_RANGE_SET = new Set<StockHistoryRange>(['5y', '3y', '1y', '6m', '3m', '1m']);
 const SHORT_DAILY_HISTORY_RANGE_SET = new Set<StockHistoryRange>(['6m', '3m', '1m']);
 const APPEND_CURRENT_POINT_HISTORY_RANGE_SET = new Set<StockHistoryRange>(['1y', '6m', '3m', '1m']);
 
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
+
+const isPositiveFiniteNumber = (value: unknown): value is number =>
+  isFiniteNumber(value) && value > 0;
+
+export const comparePreviousCloseToHistoryEndpoint = (
+  previousCloseValue: number | null | undefined,
+  historyEndpointValue: number | null | undefined,
+): PreviousCloseMatchDiagnostics => {
+  if (!isPositiveFiniteNumber(previousCloseValue) || !isPositiveFiniteNumber(historyEndpointValue)) {
+    return {
+      comparable: false,
+      matchesWithinTolerance: false,
+      absoluteDifference: null,
+      tolerance: null,
+    };
+  }
+
+  const absoluteDifference = Math.abs(previousCloseValue - historyEndpointValue);
+  const tolerance = Math.max(
+    PREVIOUS_CLOSE_MISMATCH_ABSOLUTE_TOLERANCE,
+    previousCloseValue * PREVIOUS_CLOSE_MISMATCH_RELATIVE_TOLERANCE,
+    historyEndpointValue * PREVIOUS_CLOSE_MISMATCH_RELATIVE_TOLERANCE,
+  );
+
+  return {
+    comparable: true,
+    matchesWithinTolerance: absoluteDifference <= tolerance,
+    absoluteDifference,
+    tolerance,
+  };
+};
 
 export const usesUtcDateLabels = (historyRange: StockHistoryRange): boolean =>
   DATE_ONLY_HISTORY_RANGE_SET.has(historyRange);

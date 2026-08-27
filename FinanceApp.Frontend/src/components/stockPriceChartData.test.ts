@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildHistoryChartData,
+  comparePreviousCloseToHistoryEndpoint,
   compressIntradaySessionGaps,
   formatHistoryTimestamp,
+  PREVIOUS_CLOSE_MISMATCH_ABSOLUTE_TOLERANCE,
+  PREVIOUS_CLOSE_MISMATCH_RELATIVE_TOLERANCE,
   TARGET_INTERSESSION_GAP_CSS_PX,
   usesUtcDateLabels,
 } from './stockPriceChartData';
@@ -37,6 +40,31 @@ describe('buildHistoryChartData', () => {
     expect(data[0]).toMatchObject({ closeChart: 10, volumeChart: 1000 });
     expect(data[1]).toMatchObject({ closeChart: null, volumeChart: null, isGapMarker: true });
     expect(data[2]).toMatchObject({ closeChart: 12, volumeChart: 2500 });
+  });
+
+  describe('comparePreviousCloseToHistoryEndpoint', () => {
+    it('treats close-enough values as matching using absolute/relative tolerance', () => {
+      const diagnostics = comparePreviousCloseToHistoryEndpoint(282, 282.01);
+
+      expect(diagnostics.comparable).toBe(true);
+      expect(diagnostics.matchesWithinTolerance).toBe(true);
+      expect(diagnostics.tolerance).toBeGreaterThanOrEqual(PREVIOUS_CLOSE_MISMATCH_ABSOLUTE_TOLERANCE);
+      expect(diagnostics.tolerance).toBeGreaterThanOrEqual(282 * PREVIOUS_CLOSE_MISMATCH_RELATIVE_TOLERANCE);
+    });
+
+    it('flags material mismatches', () => {
+      const diagnostics = comparePreviousCloseToHistoryEndpoint(282, 273.4);
+
+      expect(diagnostics.comparable).toBe(true);
+      expect(diagnostics.matchesWithinTolerance).toBe(false);
+      expect(diagnostics.absoluteDifference).toBeCloseTo(8.6, 10);
+    });
+
+    it('skips comparison when any value is invalid or non-positive', () => {
+      expect(comparePreviousCloseToHistoryEndpoint(null, 100).comparable).toBe(false);
+      expect(comparePreviousCloseToHistoryEndpoint(100, 0).comparable).toBe(false);
+      expect(comparePreviousCloseToHistoryEndpoint(Number.NaN, 100).comparable).toBe(false);
+    });
   });
 
   it('preserves today range gap-marker behavior (no display-coordinate rewrite in data builder)', () => {
