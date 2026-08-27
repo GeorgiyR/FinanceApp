@@ -6,7 +6,9 @@ dayjs.extend(utc);
 
 const SHORT_INTRADAY_GAP_THRESHOLD_MS = 2 * 60 * 60 * 1000;
 const MIN_GAP_MARKER_OFFSET_MS = 1;
-export const TARGET_INTERSESSION_GAP_CSS_PX = 75.6;
+export const PREVIOUS_SESSION_DISPLAY_RATIO = 0.10;
+export const SESSION_GAP_DISPLAY_RATIO = 0.02;
+export const PRIMARY_SESSION_DISPLAY_RATIO = 0.88;
 export const PREVIOUS_CLOSE_MISMATCH_ABSOLUTE_TOLERANCE = 0.02;
 export const PREVIOUS_CLOSE_MISMATCH_RELATIVE_TOLERANCE = 0.001;
 export const PREVIOUS_SESSION_TAIL_MAX_POINTS = 6;
@@ -28,6 +30,7 @@ export type HistoryChartPoint = {
   volumeCapped?: boolean;
   isQuoteDerived?: boolean;
   isGapMarker?: boolean;
+  sessionRole?: 'previous-tail' | 'primary';
   chartIndex?: number;
 };
 
@@ -103,47 +106,62 @@ const getEffectiveHistoryDateKey = (
   historyRange: StockHistoryRange,
 ): string => formatHistoryTimestamp(timestamp, historyRange, 'YYYY-MM-DD');
 
-const trimToLatestSessionWithPreviousTail = (
+const splitByGapThreshold = (
   sortedPoints: HistoryChartPoint[],
   historyRange: StockHistoryRange,
-): HistoryChartPoint[] => {
+): HistoryChartPoint[][] => {
   const gapThresholdMs = historyGapThresholdMsByRange[historyRange];
   if (
     !INTRADAY_SESSION_TAIL_RANGE_SET.has(historyRange)
     || !gapThresholdMs
-    || sortedPoints.length < 2
+    || sortedPoints.length === 0
   ) {
-    return sortedPoints;
+    return sortedPoints.length > 0 ? [sortedPoints] : [];
   }
 
-  const sessionStartIndices: number[] = [0];
+  const sessions: HistoryChartPoint[][] = [];
+  let currentSession: HistoryChartPoint[] = [sortedPoints[0]];
   for (let i = 1; i < sortedPoints.length; i += 1) {
     if (sortedPoints[i].timestampMs - sortedPoints[i - 1].timestampMs > gapThresholdMs) {
-      sessionStartIndices.push(i);
+      sessions.push(currentSession);
+      currentSession = [];
     }
+    currentSession.push(sortedPoints[i]);
+  }
+  sessions.push(currentSession);
+  return sessions;
+};
+
+const selectIntradaySessionsForLayout = (
+  sessions: HistoryChartPoint[][],
+  currentSessionHasCandles?: boolean | null,
+): { previousTail: HistoryChartPoint[]; primarySession: HistoryChartPoint[] } => {
+  if (sessions.length === 0) {
+    return { previousTail: [], primarySession: [] };
   }
 
-  if (sessionStartIndices.length < 2) {
-    return sortedPoints;
+  const primarySessionIndex = currentSessionHasCandles === false
+    ? sessions.length - 1
+    : sessions.length - 1;
+  const primarySession = sessions[primarySessionIndex];
+  if (primarySession == null || primarySession.length === 0) {
+    return { previousTail: [], primarySession: [] };
   }
 
-  const latestSessionStart = sessionStartIndices[sessionStartIndices.length - 1];
-  const previousSessionStart = sessionStartIndices[sessionStartIndices.length - 2];
-  const previousSessionPoints = sortedPoints.slice(previousSessionStart, latestSessionStart);
-  const latestSessionPoints = sortedPoints.slice(latestSessionStart);
-  if (previousSessionPoints.length < 2 || latestSessionPoints.length < 2) {
-    return sortedPoints;
-  }
-
-  const previousSessionTail = previousSessionPoints.slice(-PREVIOUS_SESSION_TAIL_MAX_POINTS);
-
-  return [...previousSessionTail, ...latestSessionPoints];
+  const previousSession = sessions[primarySessionIndex - 1] ?? [];
+  const previousSessionTail = previousSession.length >= 2
+    ? previousSession.slice(-PREVIOUS_SESSION_TAIL_MAX_POINTS)
+    : [];
+  return { previousTail: previousSessionTail, primarySession };
 };
 
 export const buildHistoryChartData = (
   historyData: StockHistoryPoint[],
   historyRange: StockHistoryRange,
   currentQuoteOverlay?: CurrentQuoteOverlayPoint | null,
+  options?: {
+    currentSessionHasCandles?: boolean | null;
+  },
 ): HistoryChartPoint[] => {
   const sortedPoints: HistoryChartPoint[] = historyData
     .map((point) => ({
@@ -196,7 +214,34 @@ export const buildHistoryChartData = (
     return sortedPoints.map((pt, idx) => ({ ...pt, chartIndex: idx }));
   }
 
-  const sessionScopedPoints = trimToLatestSessionWithPreviousTail(sortedPoints, historyRange);
+  const currentSessionHasCandles = options?.currentSessionHasCandles ?? null;
+  const realProviderPoints = (historyRange === '24h' || historyRange === 'today')
+    ? sortedPoints.filter((point) => point.isQuoteDerived !== true)
+    : sortedPoints;
+  const sessionScopedPoints = (() => {
+    if (!(historyRange === '24h' || historyRange === 'today')) {
+      return realProviderPoints;
+    }
+
+    const sessions = splitByGapThreshold(realProviderPoints, historyRange);
+    const { previousTail, primarySession } = selectIntradaySessionsForLayout(
+      sessions,
+      currentSessionHasCandles,
+    );
+    const fallbackPrimarySeries = realProviderPoints.map((point) => ({ ...point, sessionRole: 'primary' as const }));
+    if (primarySession.length < 2 && sessions.length > 2) {
+      return fallbackPrimarySeries;
+    }
+
+    const previousTailWithRole = previousTail.map((point) => ({ ...point, sessionRole: 'previous-tail' as const }));
+    const primarySessionWithRole = primarySession.map((point) => ({ ...point, sessionRole: 'primary' as const }));
+
+    if (previousTailWithRole.length < 2 || primarySessionWithRole.length === 0) {
+      return primarySessionWithRole.length > 0 ? primarySessionWithRole : fallbackPrimarySeries;
+    }
+
+    return [...previousTailWithRole, ...primarySessionWithRole];
+  })();
   const gapThresholdMs = historyGapThresholdMsByRange[historyRange];
   if (!gapThresholdMs || sessionScopedPoints.length < 2) {
     return sessionScopedPoints;
@@ -230,64 +275,61 @@ export const buildHistoryChartData = (
 export const compressIntradaySessionGaps = <T extends {
   timestampMs: number;
   isGapMarker?: boolean;
+  sessionRole?: 'previous-tail' | 'primary';
 }>(
   points: T[],
-  plotWidthPx: number,
-  targetGapPx = TARGET_INTERSESSION_GAP_CSS_PX,
+  _plotWidthPx: number,
 ): Array<T & { displayX: number }> => {
   if (points.length === 0) {
     return [];
   }
 
-  if (!Number.isFinite(plotWidthPx) || plotWidthPx <= 0 || points.length === 1) {
-    return points.map((point, index) => ({ ...point, displayX: index }));
+  if (points.length === 1) {
+    return points.map((point) => ({ ...point, displayX: 0 }));
   }
 
-  let breakCount = 0;
-  let totalInSessionMs = 0;
-  for (let i = 1; i < points.length; i += 1) {
-    const previousPoint = points[i - 1];
-    const currentPoint = points[i];
-    if (previousPoint.isGapMarker) {
-      breakCount += 1;
-      continue;
+  const mapSegment = (segment: T[], start: number, end: number): Array<T & { displayX: number }> => {
+    if (segment.length === 0) {
+      return [];
     }
-    if (currentPoint.isGapMarker) {
-      continue;
+    if (segment.length === 1) {
+      return [{ ...segment[0], displayX: start }];
     }
-
-    totalInSessionMs += Math.max(0, currentPoint.timestampMs - previousPoint.timestampMs);
-  }
-
-  if (breakCount === 0) {
-    return points.map((point) => ({ ...point, displayX: point.timestampMs }));
-  }
-
-  const maxGapSharePx = plotWidthPx * 0.7;
-  const gapPx = Math.min(targetGapPx, maxGapSharePx / breakCount);
-  const availableInSessionPx = Math.max(plotWidthPx - gapPx * breakCount, plotWidthPx * 0.15);
-  const pxPerMs = totalInSessionMs > 0 ? availableInSessionPx / totalInSessionMs : 0;
-
-  const pointsWithDisplay: Array<T & { displayX: number }> = [{ ...points[0], displayX: 0 }];
-  for (let i = 1; i < points.length; i += 1) {
-    const previousPoint = points[i - 1];
-    const currentPoint = points[i];
-    const previousDisplayX = pointsWithDisplay[i - 1].displayX;
-
-    let displayDelta = 0;
-    if (previousPoint.isGapMarker) {
-      displayDelta = gapPx;
-    } else if (!currentPoint.isGapMarker) {
-      displayDelta = Math.max(0, currentPoint.timestampMs - previousPoint.timestampMs) * pxPerMs;
-    }
-
-    pointsWithDisplay.push({
-      ...currentPoint,
-      displayX: previousDisplayX + displayDelta,
+    const firstTs = segment[0].timestampMs;
+    const lastTs = segment[segment.length - 1].timestampMs;
+    const span = Math.max(0, lastTs - firstTs);
+    return segment.map((point, index) => {
+      const normalized = span > 0
+        ? (point.timestampMs - firstTs) / span
+        : index / (segment.length - 1);
+      return {
+        ...point,
+        displayX: start + normalized * (end - start),
+      };
     });
+  };
+
+  const gapMarkerIndex = points.findIndex((point) => point.isGapMarker === true);
+  if (gapMarkerIndex <= 0 || gapMarkerIndex >= points.length - 1) {
+    return mapSegment(points, 0, 1);
   }
 
-  return pointsWithDisplay;
+  const previousTail = points.slice(0, gapMarkerIndex).filter((point) => point.isGapMarker !== true);
+  const primarySession = points.slice(gapMarkerIndex + 1).filter((point) => point.isGapMarker !== true);
+  if (previousTail.length < 2 || primarySession.length === 0) {
+    return mapSegment(primarySession.length > 0 ? primarySession : previousTail, 0, 1);
+  }
+
+  const previousMapped = mapSegment(previousTail, 0, PREVIOUS_SESSION_DISPLAY_RATIO);
+  const primaryStart = PREVIOUS_SESSION_DISPLAY_RATIO + SESSION_GAP_DISPLAY_RATIO;
+  const primaryEnd = primaryStart + PRIMARY_SESSION_DISPLAY_RATIO;
+  const primaryMapped = mapSegment(primarySession, primaryStart, primaryEnd);
+  const gapMarker = {
+    ...points[gapMarkerIndex],
+    displayX: PREVIOUS_SESSION_DISPLAY_RATIO + SESSION_GAP_DISPLAY_RATIO / 2,
+  };
+
+  return [...previousMapped, gapMarker, ...primaryMapped];
 };
 
 export const resolveTimestampMsForDisplayX = <T extends {
