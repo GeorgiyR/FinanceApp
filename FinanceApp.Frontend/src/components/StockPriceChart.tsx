@@ -12,6 +12,7 @@ import {
   CartesianGrid,
   XAxis,
   YAxis,
+  ReferenceDot,
   Tooltip as RechartsTooltip,
   ResponsiveContainer,
 } from 'recharts';
@@ -28,6 +29,7 @@ import {
 } from './stockPriceChartSummary';
 import {
   buildHistoryChartData,
+  comparePreviousCloseToHistoryEndpoint,
   compressIntradaySessionGaps,
   formatHistoryTimestamp,
   resolveTimestampMsForDisplayX,
@@ -77,6 +79,8 @@ export const RANGE_BOUND_COLOR = COLOR_SECONDARY_TEXT;
 export const DAY_RANGE_ARROW_TEXT = ' → ';
 export const BASELINE_BLOCK_STYLE = { marginLeft: 'auto', textAlign: 'right' } as const;
 export const PERIOD_CHANGE_HEADING = 'Изменение от начала периода';
+const PREVIOUS_CLOSE_MARKER_COLOR = '#d48806';
+const CURRENT_QUOTE_MARKER_COLOR = '#1677ff';
 
 const xAxisFormatByRange: Record<StockHistoryRange, string> = {
   '5y': 'MM.YYYY',
@@ -147,6 +151,9 @@ const formatNumber = (value: number, maximumFractionDigits = 2): string =>
 
 const formatCompactNumber = (value: number): string =>
   new Intl.NumberFormat('ru-RU', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
+
+const formatSignedAbs = (value: number): string =>
+  `${value >= 0 ? '+' : '−'}${Math.abs(value).toFixed(2)}`;
 
 const resolveExpectedProviderSymbol = (
   ticker: string,
@@ -627,12 +634,88 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
   );
   const periodChangeValue = periodSummary.changeValue;
   const periodChangePercent = periodSummary.changePercent;
+  const periodChangeHeading = periodSummary.changeHeading ?? PERIOD_CHANGE_HEADING;
+  const sessionPreviousCloseMode = (historyRange === '24h' || historyRange === 'today')
+    && periodSummary.baselineSource === 'previous-close';
   const performanceColor =
     periodChangeValue == null
       ? undefined
       : periodChangeValue >= 0
         ? COLOR_POSITIVE
         : COLOR_NEGATIVE;
+
+  const latestHistoricalChartPoint = useMemo(() => {
+    for (let i = displayHistoryChartData.length - 1; i >= 0; i -= 1) {
+      const point = displayHistoryChartData[i];
+      if (point.isGapMarker === true || point.closeChart == null) {
+        continue;
+      }
+      return point;
+    }
+    return null;
+  }, [displayHistoryChartData]);
+  const previousCloseDiagnostics = useMemo(() => comparePreviousCloseToHistoryEndpoint(
+    sessionPreviousCloseMode ? periodSummary.baselineValue : null,
+    latestHistoricalChartPoint?.closeChart ?? null,
+  ), [
+    latestHistoricalChartPoint?.closeChart,
+    periodSummary.baselineValue,
+    sessionPreviousCloseMode,
+  ]);
+  const hasPreviousCloseMismatch = sessionPreviousCloseMode
+    && previousCloseDiagnostics.comparable
+    && !previousCloseDiagnostics.matchesWithinTolerance;
+
+  const sessionReferenceMarkers = useMemo(() => {
+    if (!sessionPreviousCloseMode || periodSummary.baselineValue == null || currentPriceDisplayValue == null || latestHistoricalChartPoint == null) {
+      return null;
+    }
+
+    const getPointX = (point: HistoryChartPoint): number =>
+      historyRange === '24h'
+        ? (point.displayX ?? point.timestampMs)
+        : point.timestampMs;
+    const sortedPoints = displayHistoryChartData
+      .filter((point) => point.isGapMarker !== true && point.closeChart != null)
+      .slice()
+      .sort((left, right) => getPointX(left) - getPointX(right));
+    const latestPoint = sortedPoints[sortedPoints.length - 1];
+    if (!latestPoint) {
+      return null;
+    }
+
+    const previousPoint = sortedPoints[sortedPoints.length - 2] ?? null;
+    const latestX = getPointX(latestPoint);
+    const previousX = previousPoint ? getPointX(previousPoint) : null;
+    const defaultGap = historyRange === '24h' ? 60 : 30 * 60 * 1000;
+    const computedGap = previousX != null ? Math.max(defaultGap, Math.abs(latestX - previousX) * 1.6) : defaultGap;
+    const currentQuoteX = latestX + computedGap;
+    const previousCloseX = hasPreviousCloseMismatch
+      ? latestX + computedGap * 0.5
+      : latestX;
+
+    return {
+      previousCloseX,
+      currentQuoteX,
+      previousCloseY: periodSummary.baselineValue,
+      currentQuoteY: currentPriceDisplayValue,
+      alignsWithHistory: !hasPreviousCloseMismatch,
+    };
+  }, [
+    currentPriceDisplayValue,
+    displayHistoryChartData,
+    hasPreviousCloseMismatch,
+    historyRange,
+    latestHistoricalChartPoint,
+    periodSummary.baselineValue,
+    sessionPreviousCloseMode,
+  ]);
+  const previousCloseMarkerText = sessionPreviousCloseMode && periodSummary.baselineValue != null
+    ? `Пред. закрытие: ${formatCurrencyValue(periodSummary.baselineValue, displayCurrencyCode)}`
+    : null;
+  const currentQuoteMarkerText = sessionPreviousCloseMode && currentPriceDisplayValue != null
+    ? `Текущая цена: ${formatCurrencyValue(currentPriceDisplayValue, displayCurrencyCode)}`
+    : null;
 
   const warningText = listingLiveQuote?.conversionWarning ?? historyResponse?.conversionWarning ?? null;
   const normalizedQuoteText =
@@ -846,6 +929,15 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
           style={{ marginBottom: 12 }}
         />
       )}
+      {hasPreviousCloseMismatch && periodSummary.baselineValue != null && latestHistoricalChartPoint?.closeChart != null && (
+        <Alert
+          type="warning"
+          showIcon
+          message={`Предыдущее закрытие из котировки (${formatCurrencyValue(periodSummary.baselineValue, displayCurrencyCode)}) отличается от последней исторической свечи (${formatCurrencyValue(latestHistoricalChartPoint.closeChart, displayCurrencyCode)}).`}
+          description={`Разница: ${formatSignedAbs(periodSummary.baselineValue - latestHistoricalChartPoint.closeChart)} ${displayCurrencyCode ?? ''}`.trim()}
+          style={{ marginBottom: 12 }}
+        />
+      )}
       {hasQuoteDerivedPoints && (
         <Alert
           type="info"
@@ -1001,9 +1093,29 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
                     ? '—'
                     : formatCurrencyValue(periodSummary.baselineValue, displayCurrencyCode)}
                 </div>
+                {sessionPreviousCloseMode && (
+                  <div style={{ display: 'grid', gap: 2, minWidth: 220 }}>
+                    {previousCloseMarkerText && (
+                      <div
+                        style={{ color: PREVIOUS_CLOSE_MARKER_COLOR, fontSize: 14, fontWeight: 600 }}
+                        aria-label={`Маркер предыдущего закрытия: ${previousCloseMarkerText}`}
+                      >
+                        {previousCloseMarkerText}
+                      </div>
+                    )}
+                    {currentQuoteMarkerText && (
+                      <div
+                        style={{ color: CURRENT_QUOTE_MARKER_COLOR, fontSize: 14, fontWeight: 600 }}
+                        aria-label={`Маркер текущей цены: ${currentQuoteMarkerText}`}
+                      >
+                        {currentQuoteMarkerText}
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div style={BASELINE_BLOCK_STYLE}>
                   <div style={{ fontSize: 16, color: COLOR_SECONDARY_TEXT, marginBottom: 2 }}>
-                    {PERIOD_CHANGE_HEADING}
+                    {periodChangeHeading}
                   </div>
                   <div style={{ color: performanceColor ?? 'inherit', fontWeight: 600 }}>
                     {periodChangeValue == null
@@ -1086,17 +1198,17 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
                   formatter={(value: unknown, _name: string, item) => {
                     const payload = item.payload as HistoryChartPoint | undefined;
                     if (value == null || payload == null) {
-                      return ['Нет данных', 'Цена'];
+                      return ['Нет данных', 'Историческая цена'];
                     }
 
                     const formattedChartValue = formatCurrencyValue(Number(value), displayCurrencyCode);
                     if (historyHasEurConversion) {
-                      return [formattedChartValue, 'Цена'];
+                      return [formattedChartValue, 'Историческая цена'];
                     }
 
                     return [
                       `${formattedChartValue} (raw: ${payload.rawClose.toFixed(2)} ${historyResponse?.currency ?? displayCurrencyCode ?? '—'})`,
-                      'Цена',
+                      'Историческая цена',
                     ];
                   }}
                 />
@@ -1109,6 +1221,42 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
                   strokeWidth={2}
                   connectNulls={false}
                 />
+                {sessionReferenceMarkers && previousCloseMarkerText && (
+                  <ReferenceDot
+                    x={sessionReferenceMarkers.previousCloseX}
+                    y={sessionReferenceMarkers.previousCloseY}
+                    r={sessionReferenceMarkers.alignsWithHistory ? 5 : 6}
+                    fill={PREVIOUS_CLOSE_MARKER_COLOR}
+                    stroke="#fff"
+                    strokeWidth={1.5}
+                    ifOverflow="extendDomain"
+                    isFront
+                    label={{
+                      value: previousCloseMarkerText,
+                      position: 'top',
+                      fill: PREVIOUS_CLOSE_MARKER_COLOR,
+                      fontSize: 12,
+                    }}
+                  />
+                )}
+                {sessionReferenceMarkers && currentQuoteMarkerText && (
+                  <ReferenceDot
+                    x={sessionReferenceMarkers.currentQuoteX}
+                    y={sessionReferenceMarkers.currentQuoteY}
+                    r={6}
+                    fill={CURRENT_QUOTE_MARKER_COLOR}
+                    stroke="#fff"
+                    strokeWidth={1.5}
+                    ifOverflow="extendDomain"
+                    isFront
+                    label={{
+                      value: currentQuoteMarkerText,
+                      position: 'top',
+                      fill: CURRENT_QUOTE_MARKER_COLOR,
+                      fontSize: 12,
+                    }}
+                  />
+                )}
               </LineChart>
             </ResponsiveContainer>
           </div>

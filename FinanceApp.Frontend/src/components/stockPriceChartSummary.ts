@@ -1,7 +1,7 @@
 import type { StockHistoryRange, StockQuoteResponse } from '../types';
 
-export const PREVIOUS_CLOSE_BASELINE_LABEL = 'От предыдущего закрытия';
-export const SELECTED_PERIOD_BASELINE_LABEL = 'От начала выбранного периода';
+export const PREVIOUS_CLOSE_CHANGE_HEADING = 'Изменение к предыдущему закрытию';
+export const SELECTED_PERIOD_CHANGE_HEADING = 'Изменение от начала периода';
 
 type SummaryLiveQuote = Pick<
   StockQuoteResponse,
@@ -19,13 +19,14 @@ export interface StockPriceChartSummaryInput {
 }
 
 export interface StockPriceChartSummary {
-  baselineLabel: string;
+  baselineSource: BaselineSource;
+  changeHeading: string;
   baselineValue: number | null;
   changeValue: number | null;
   changePercent: number | null;
 }
 
-type BaselineSource = 'previous-close' | 'selected-period';
+export type BaselineSource = 'previous-close' | 'selected-period';
 
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
@@ -99,9 +100,9 @@ export const getStockPriceChartSummary = ({
     }
   }
 
-  const baselineLabel = baselineSource === 'previous-close'
-    ? PREVIOUS_CLOSE_BASELINE_LABEL
-    : SELECTED_PERIOD_BASELINE_LABEL;
+  const changeHeading = baselineSource === 'previous-close'
+    ? PREVIOUS_CLOSE_CHANGE_HEADING
+    : SELECTED_PERIOD_CHANGE_HEADING;
 
   const normalizedCurrentPrice = isFiniteNumber(currentPriceDisplayValue) ? currentPriceDisplayValue : null;
   const changeValue = normalizedCurrentPrice != null && baselineValue != null
@@ -112,7 +113,8 @@ export const getStockPriceChartSummary = ({
     : null;
 
   return {
-    baselineLabel,
+    baselineSource,
+    changeHeading,
     baselineValue,
     changeValue,
     changePercent,
