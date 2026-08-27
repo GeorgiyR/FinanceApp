@@ -429,7 +429,12 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
     ? 'EUR'
     : historyResponse?.normalizedQuoteCurrency ?? historyResponse?.currency ?? null;
   const volumeMetrics = historyResponse?.volumeMetrics ?? null;
-  const baseHistoryChartData = useMemo(() => buildHistoryChartData(historyData, historyRange), [historyData, historyRange]);
+  const baseHistoryChartData = useMemo(
+    () => buildHistoryChartData(historyData, historyRange, null, {
+      currentSessionHasCandles: historyResponse?.currentSessionHasCandles,
+    }),
+    [historyData, historyRange, historyResponse?.currentSessionHasCandles],
+  );
 
   const firstHistoryClose = useMemo(() => {
     for (const point of baseHistoryChartData) {
@@ -532,8 +537,16 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
   const historyChartData = useMemo(
     () => currentQuoteOverlay == null
       ? baseHistoryChartData
-      : buildHistoryChartData(historyData, historyRange, currentQuoteOverlay),
-    [baseHistoryChartData, currentQuoteOverlay, historyData, historyRange],
+      : buildHistoryChartData(historyData, historyRange, currentQuoteOverlay, {
+        currentSessionHasCandles: historyResponse?.currentSessionHasCandles,
+      }),
+    [
+      baseHistoryChartData,
+      currentQuoteOverlay,
+      historyData,
+      historyRange,
+      historyResponse?.currentSessionHasCandles,
+    ],
   );
 
   const volumeScale = useMemo(
@@ -568,6 +581,16 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
     (displayX: number) => resolveTimestampMsForDisplayX(displayHistoryChartData, displayX),
     [displayHistoryChartData],
   );
+  const intradayPointByTimestampMs = useMemo(() => {
+    const map = new Map<number, HistoryChartPoint>();
+    displayHistoryChartData.forEach((point) => {
+      if (point.isGapMarker === true) {
+        return;
+      }
+      map.set(point.timestampMs, point);
+    });
+    return map;
+  }, [displayHistoryChartData]);
   const positiveRenderableVolumePoints = useMemo(
     () => displayHistoryChartData.reduce(
       (count, point) => (point.volumeDisplay != null && Number.isFinite(point.volumeDisplay) && point.volumeDisplay > 0
@@ -781,9 +804,14 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
         tick={{ fontSize: 16 }}
         tickFormatter={(value: number) => {
           const ts = resolveCompressedTs(value);
-          return ts == null
-            ? ''
-            : formatHistoryTimestamp(ts, historyRange, xAxisFormatByRange[historyRange]);
+          if (ts == null) {
+            return '';
+          }
+          const point = intradayPointByTimestampMs.get(ts);
+          if (point?.sessionRole === 'previous-tail') {
+            return formatHistoryTimestamp(ts, historyRange, 'DD.MM HH:mm');
+          }
+          return formatHistoryTimestamp(ts, historyRange, xAxisFormatByRange[historyRange]);
         }}
       />
     ) : (
