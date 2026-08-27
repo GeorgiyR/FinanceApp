@@ -6,6 +6,7 @@ import {
   formatHistoryTimestamp,
   PREVIOUS_CLOSE_MISMATCH_ABSOLUTE_TOLERANCE,
   PREVIOUS_CLOSE_MISMATCH_RELATIVE_TOLERANCE,
+  PREVIOUS_SESSION_TAIL_MAX_POINTS,
   TARGET_INTERSESSION_GAP_CSS_PX,
   usesUtcDateLabels,
 } from './stockPriceChartData';
@@ -40,6 +41,40 @@ describe('buildHistoryChartData', () => {
     expect(data[0]).toMatchObject({ closeChart: 10, volumeChart: 1000 });
     expect(data[1]).toMatchObject({ closeChart: null, volumeChart: null, isGapMarker: true });
     expect(data[2]).toMatchObject({ closeChart: 12, volumeChart: 2500 });
+  });
+
+  it('keeps only a bounded real tail from the previous session for 24h', () => {
+    const previousSessionPoints = Array.from({ length: PREVIOUS_SESSION_TAIL_MAX_POINTS + 2 }, (_, index) =>
+      makeHistoryPoint(`2026-08-20T${String(9 + index).padStart(2, '0')}:00:00.000Z`, 100 + index, 1000 + index));
+    const currentSessionPoints = [
+      makeHistoryPoint('2026-08-21T08:00:00.000Z', 200, 2000),
+      makeHistoryPoint('2026-08-21T09:00:00.000Z', 201, 2100),
+    ];
+
+    const data = buildHistoryChartData([...previousSessionPoints, ...currentSessionPoints], '24h');
+
+    expect(data.filter((point) => point.isGapMarker)).toHaveLength(1);
+    const nonGapPoints = data.filter((point) => point.isGapMarker !== true);
+    expect(nonGapPoints).toHaveLength(PREVIOUS_SESSION_TAIL_MAX_POINTS + currentSessionPoints.length);
+    expect(nonGapPoints[0]?.timestamp).toBe(previousSessionPoints[2].timestamp);
+    expect(nonGapPoints[PREVIOUS_SESSION_TAIL_MAX_POINTS - 1]?.timestamp)
+      .toBe(previousSessionPoints[previousSessionPoints.length - 1].timestamp);
+    expect(nonGapPoints.slice(-currentSessionPoints.length).map((point) => point.timestamp))
+      .toEqual(currentSessionPoints.map((point) => point.timestamp));
+  });
+
+  it('does not fabricate a previous-session tail when only one session is available', () => {
+    const singleSession = [
+      makeHistoryPoint('2026-08-21T08:00:00.000Z', 200, 2000),
+      makeHistoryPoint('2026-08-21T09:00:00.000Z', 201, 2100),
+      makeHistoryPoint('2026-08-21T10:00:00.000Z', 202, 2200),
+    ];
+
+    const data = buildHistoryChartData(singleSession, 'today');
+
+    expect(data).toHaveLength(singleSession.length);
+    expect(data.every((point) => point.isGapMarker !== true)).toBe(true);
+    expect(data.map((point) => point.timestamp)).toEqual(singleSession.map((point) => point.timestamp));
   });
 
   describe('comparePreviousCloseToHistoryEndpoint', () => {

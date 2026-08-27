@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 let responsiveContainerWidth = 960;
 let responsiveContainerHeight = 240;
+const renderedReferenceDots: Array<{ x: unknown; y: unknown; ifOverflow?: unknown; label?: unknown }> = [];
 
 vi.mock('recharts', async () => {
   const actual = await vi.importActual<typeof import('recharts')>('recharts');
@@ -16,6 +17,10 @@ vi.mock('recharts', async () => {
         ? React.cloneElement(children, { width: responsiveContainerWidth, height: responsiveContainerHeight })
         : null
     ),
+    ReferenceDot: (props: { x: unknown; y: unknown; ifOverflow?: unknown; label?: unknown }) => {
+      renderedReferenceDots.push(props);
+      return <g data-testid="reference-dot" />;
+    },
   };
 });
 
@@ -160,6 +165,7 @@ describe('StockPriceChart session baseline presentation', () => {
     vi.clearAllMocks();
     responsiveContainerWidth = 960;
     responsiveContainerHeight = 240;
+    renderedReferenceDots.length = 0;
   });
 
   it('shows previous-close/current-quote markers, previous-close heading, and negative red change for today', async () => {
@@ -181,6 +187,8 @@ describe('StockPriceChart session baseline presentation', () => {
     expect(screen.getAllByText('Текущая цена: €273.40').length).toBeGreaterThan(0);
     expect(screen.getByText(/предыдущее закрытие из котировки/i)).toBeInTheDocument();
     expect(screen.getByText(/€-8\.60 \(-3\.05%\)/)).toHaveStyle({ color: '#cf1322' });
+    expect(screen.queryByTestId('reference-dot')).not.toBeInTheDocument();
+    expect(renderedReferenceDots.some((dot) => dot.ifOverflow === 'extendDomain')).toBe(false);
   });
 
   it('renders positive move vs previous close in green with plus sign', async () => {
@@ -231,6 +239,8 @@ describe('StockPriceChart session baseline presentation', () => {
     await waitFor(() => expect(vi.mocked(api.getStockHistory)).toHaveBeenCalledWith(41, 'today'));
 
     expect(screen.queryByText(/предыдущее закрытие из котировки/i)).not.toBeInTheDocument();
+    expect(screen.getAllByTestId('reference-dot')).toHaveLength(1);
+    expect(renderedReferenceDots[0]?.ifOverflow).toBeUndefined();
   });
 
   it('keeps selected-period heading when previous-close baseline is unavailable', async () => {
