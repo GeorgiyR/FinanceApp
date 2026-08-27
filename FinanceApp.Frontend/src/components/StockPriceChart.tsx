@@ -558,7 +558,7 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
   );
 
   const displayHistoryChartData = useMemo(
-    () => historyRange === '24h'
+    () => (historyRange === '24h' || historyRange === 'today')
       ? compressIntradaySessionGaps(historyChartDataWithVolumeDisplay, chartLayoutWidth)
       : historyChartDataWithVolumeDisplay,
     [chartLayoutWidth, historyChartDataWithVolumeDisplay, historyRange],
@@ -666,44 +666,29 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
     && previousCloseDiagnostics.comparable
     && !previousCloseDiagnostics.matchesWithinTolerance;
 
-  const sessionReferenceMarkers = useMemo(() => {
-    if (!sessionPreviousCloseMode || periodSummary.baselineValue == null || currentPriceDisplayValue == null || latestHistoricalChartPoint == null) {
+  const previousCloseEndpointMarker = useMemo(() => {
+    if (
+      !sessionPreviousCloseMode
+      || periodSummary.baselineValue == null
+      || latestHistoricalChartPoint == null
+      || latestHistoricalChartPoint.closeChart == null
+      || hasPreviousCloseMismatch
+    ) {
       return null;
     }
 
-    const getPointX = (point: HistoryChartPoint): number =>
-      historyRange === '24h'
+    const getPointX = (point: HistoryChartPoint): number => (
+      historyRange === '24h' || historyRange === 'today'
         ? (point.displayX ?? point.timestampMs)
-        : point.timestampMs;
-    const sortedPoints = displayHistoryChartData
-      .filter((point) => point.isGapMarker !== true && point.closeChart != null)
-      .slice()
-      .sort((left, right) => getPointX(left) - getPointX(right));
-    const latestPoint = sortedPoints[sortedPoints.length - 1];
-    if (!latestPoint) {
-      return null;
-    }
-
-    const previousPoint = sortedPoints[sortedPoints.length - 2] ?? null;
-    const latestX = getPointX(latestPoint);
-    const previousX = previousPoint ? getPointX(previousPoint) : null;
-    const defaultGap = historyRange === '24h' ? 60 : 30 * 60 * 1000;
-    const computedGap = previousX != null ? Math.max(defaultGap, Math.abs(latestX - previousX) * 1.6) : defaultGap;
-    const currentQuoteX = latestX + computedGap;
-    const previousCloseX = hasPreviousCloseMismatch
-      ? latestX + computedGap * 0.5
-      : latestX;
+        : point.timestampMs
+    );
+    const latestPointX = getPointX(latestHistoricalChartPoint);
 
     return {
-      previousCloseX,
-      currentQuoteX,
-      previousCloseY: periodSummary.baselineValue,
-      currentQuoteY: currentPriceDisplayValue,
-      alignsWithHistory: !hasPreviousCloseMismatch,
+      x: latestPointX,
+      y: latestHistoricalChartPoint.closeChart,
     };
   }, [
-    currentPriceDisplayValue,
-    displayHistoryChartData,
     hasPreviousCloseMismatch,
     historyRange,
     latestHistoricalChartPoint,
@@ -786,7 +771,7 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
             : '';
         }}
       />
-    ) : historyRange === '24h' ? (
+    ) : (historyRange === '24h' || historyRange === 'today') ? (
       <XAxis
         hide={hide}
         type="number"
@@ -1185,7 +1170,7 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
                       const ts = resolveWeeklyTs(value);
                       return ts != null ? formatHistoryTimestamp(ts, '1w', 'DD.MM.YYYY HH:mm') : '';
                     }
-                    if (historyRange === '24h') {
+                    if (historyRange === '24h' || historyRange === 'today') {
                       const ts = resolveCompressedTs(value);
                       return ts != null ? formatHistoryTimestamp(ts, historyRange, 'DD.MM.YYYY HH:mm') : '';
                     }
@@ -1221,38 +1206,19 @@ const StockPriceChart: React.FC<StockPriceChartProps> = ({
                   strokeWidth={2}
                   connectNulls={false}
                 />
-                {sessionReferenceMarkers && previousCloseMarkerText && (
+                {previousCloseEndpointMarker && previousCloseMarkerText && (
                   <ReferenceDot
-                    x={sessionReferenceMarkers.previousCloseX}
-                    y={sessionReferenceMarkers.previousCloseY}
-                    r={sessionReferenceMarkers.alignsWithHistory ? 5 : 6}
+                    x={previousCloseEndpointMarker.x}
+                    y={previousCloseEndpointMarker.y}
+                    r={5}
                     fill={PREVIOUS_CLOSE_MARKER_COLOR}
                     stroke="#fff"
                     strokeWidth={1.5}
-                    ifOverflow="extendDomain"
                     isFront
                     label={{
                       value: previousCloseMarkerText,
                       position: 'top',
                       fill: PREVIOUS_CLOSE_MARKER_COLOR,
-                      fontSize: 12,
-                    }}
-                  />
-                )}
-                {sessionReferenceMarkers && currentQuoteMarkerText && (
-                  <ReferenceDot
-                    x={sessionReferenceMarkers.currentQuoteX}
-                    y={sessionReferenceMarkers.currentQuoteY}
-                    r={6}
-                    fill={CURRENT_QUOTE_MARKER_COLOR}
-                    stroke="#fff"
-                    strokeWidth={1.5}
-                    ifOverflow="extendDomain"
-                    isFront
-                    label={{
-                      value: currentQuoteMarkerText,
-                      position: 'top',
-                      fill: CURRENT_QUOTE_MARKER_COLOR,
                       fontSize: 12,
                     }}
                   />

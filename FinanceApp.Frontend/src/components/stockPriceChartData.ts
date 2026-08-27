@@ -9,11 +9,13 @@ const MIN_GAP_MARKER_OFFSET_MS = 1;
 export const TARGET_INTERSESSION_GAP_CSS_PX = 75.6;
 export const PREVIOUS_CLOSE_MISMATCH_ABSOLUTE_TOLERANCE = 0.02;
 export const PREVIOUS_CLOSE_MISMATCH_RELATIVE_TOLERANCE = 0.001;
+export const PREVIOUS_SESSION_TAIL_MAX_POINTS = 6;
 
 const historyGapThresholdMsByRange: Partial<Record<StockHistoryRange, number>> = {
   '24h': SHORT_INTRADAY_GAP_THRESHOLD_MS,
   today: SHORT_INTRADAY_GAP_THRESHOLD_MS,
 };
+const INTRADAY_SESSION_TAIL_RANGE_SET = new Set<StockHistoryRange>(['24h', 'today']);
 
 export type HistoryChartPoint = {
   timestamp: string;
@@ -101,6 +103,43 @@ const getEffectiveHistoryDateKey = (
   historyRange: StockHistoryRange,
 ): string => formatHistoryTimestamp(timestamp, historyRange, 'YYYY-MM-DD');
 
+const trimToLatestSessionWithPreviousTail = (
+  sortedPoints: HistoryChartPoint[],
+  historyRange: StockHistoryRange,
+): HistoryChartPoint[] => {
+  const gapThresholdMs = historyGapThresholdMsByRange[historyRange];
+  if (
+    !INTRADAY_SESSION_TAIL_RANGE_SET.has(historyRange)
+    || !gapThresholdMs
+    || sortedPoints.length < 2
+  ) {
+    return sortedPoints;
+  }
+
+  const sessionStartIndices: number[] = [0];
+  for (let i = 1; i < sortedPoints.length; i += 1) {
+    if (sortedPoints[i].timestampMs - sortedPoints[i - 1].timestampMs > gapThresholdMs) {
+      sessionStartIndices.push(i);
+    }
+  }
+
+  if (sessionStartIndices.length < 2) {
+    return sortedPoints;
+  }
+
+  const latestSessionStart = sessionStartIndices[sessionStartIndices.length - 1];
+  const previousSessionStart = sessionStartIndices[sessionStartIndices.length - 2];
+  const previousSessionPoints = sortedPoints.slice(previousSessionStart, latestSessionStart);
+  const latestSessionPoints = sortedPoints.slice(latestSessionStart);
+  if (previousSessionPoints.length < 2 || latestSessionPoints.length < 2) {
+    return sortedPoints;
+  }
+
+  const previousSessionTail = previousSessionPoints.slice(-PREVIOUS_SESSION_TAIL_MAX_POINTS);
+
+  return [...previousSessionTail, ...latestSessionPoints];
+};
+
 export const buildHistoryChartData = (
   historyData: StockHistoryPoint[],
   historyRange: StockHistoryRange,
@@ -157,15 +196,16 @@ export const buildHistoryChartData = (
     return sortedPoints.map((pt, idx) => ({ ...pt, chartIndex: idx }));
   }
 
+  const sessionScopedPoints = trimToLatestSessionWithPreviousTail(sortedPoints, historyRange);
   const gapThresholdMs = historyGapThresholdMsByRange[historyRange];
-  if (!gapThresholdMs || sortedPoints.length < 2) {
-    return sortedPoints;
+  if (!gapThresholdMs || sessionScopedPoints.length < 2) {
+    return sessionScopedPoints;
   }
 
-  const pointsWithGaps: HistoryChartPoint[] = [sortedPoints[0]];
-  let previousPoint = sortedPoints[0];
-  for (let i = 1; i < sortedPoints.length; i += 1) {
-    const currentPoint = sortedPoints[i];
+  const pointsWithGaps: HistoryChartPoint[] = [sessionScopedPoints[0]];
+  let previousPoint = sessionScopedPoints[0];
+  for (let i = 1; i < sessionScopedPoints.length; i += 1) {
+    const currentPoint = sessionScopedPoints[i];
     const gapMs = currentPoint.timestampMs - previousPoint.timestampMs;
     if (gapMs > gapThresholdMs) {
       const gapTimestampMs = previousPoint.timestampMs + MIN_GAP_MARKER_OFFSET_MS;
