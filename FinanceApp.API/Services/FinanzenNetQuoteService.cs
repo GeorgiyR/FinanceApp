@@ -718,7 +718,7 @@ public sealed class FinanzenNetQuoteService : IFinanzenNetQuoteService
     {
         var text = element.TextContent ?? string.Empty;
         // Collapse whitespace
-        return string.Join(" ", text.Split(['\r', '\n', '\t', ' '],
+        return string.Join(" ", text.Split(new char[] { '\r', '\n', '\t', ' ' },
             StringSplitOptions.RemoveEmptyEntries)).Trim();
     }
 

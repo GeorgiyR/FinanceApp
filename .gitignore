@@ -62,3 +62,12 @@ FinanceApp.Frontend/dist/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Local configuration / secrets
+FinanceApp.API/appsettings.json
+FinanceApp.API/appsettings.Development.json
+
+# Temporary / backup files
+*.save
+publish-backup-*/
+publish.backup-*/

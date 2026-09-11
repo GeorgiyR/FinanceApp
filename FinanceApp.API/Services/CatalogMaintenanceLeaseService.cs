@@ -66,6 +66,15 @@ public sealed class CatalogMaintenanceLeaseService(
 
         if (updated == 0)
         {
+            var existing = await db.CatalogMaintenanceLeases
+                .AsNoTracking()
+                .FirstOrDefaultAsync(x => x.LeaseName == leaseName, cancellationToken);
+
+            if (existing is not null)
+            {
+                return false;
+            }
+
             var created = new CatalogMaintenanceLease
             {
                 LeaseName = leaseName,
@@ -74,7 +83,9 @@ public sealed class CatalogMaintenanceLeaseService(
                 CreatedAtUtc = now,
                 UpdatedAtUtc = now
             };
+
             db.CatalogMaintenanceLeases.Add(created);
+
             try
             {
                 await db.SaveChangesAsync(cancellationToken);
@@ -82,6 +93,7 @@ public sealed class CatalogMaintenanceLeaseService(
             }
             catch (DbUpdateException)
             {
+                // Another instance may have created the lease concurrently.
                 return false;
             }
         }

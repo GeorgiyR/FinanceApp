@@ -13,7 +13,7 @@ using FinanceApp.Core.Models;
 using Microsoft.AspNetCore.Identity;
 
 const string DefaultConnectionName = "DefaultConnection";
-var defaultMariaDbVersion = new Version(10, 5, 23);
+var defaultMySqlVersion = new Version(8, 0, 46);
 
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
@@ -82,15 +82,15 @@ var connectionString = builder.Configuration.GetConnectionString(DefaultConnecti
 var jwtKey = builder.Configuration["Jwt:Key"]
     ?? throw new InvalidOperationException("JWT signing key is not configured. Define it in appsettings.json or via Jwt__Key.");
 
-var configuredMariaDbVersion = builder.Configuration["Database:MariaDbVersion"];
-Version? parsedMariaDbVersion = null;
-if (!string.IsNullOrWhiteSpace(configuredMariaDbVersion) &&
-    !Version.TryParse(configuredMariaDbVersion, out parsedMariaDbVersion))
+var configuredMySqlVersion = builder.Configuration["Database:MySqlVersion"];
+Version? parsedMySqlVersion = null;
+if (!string.IsNullOrWhiteSpace(configuredMySqlVersion) &&
+    !Version.TryParse(configuredMySqlVersion, out parsedMySqlVersion))
 {
-    throw new InvalidOperationException("Database:MariaDbVersion must be a valid version string such as '10.5.23'.");
+    throw new InvalidOperationException("Database:MySqlVersion must be a valid version string such as '8.0.46'.");
 }
 
-var serverVersion = new MariaDbServerVersion(parsedMariaDbVersion ?? defaultMariaDbVersion);
+var serverVersion = new MySqlServerVersion(parsedMySqlVersion ?? defaultMySqlVersion);
 
 var dbConnectionStringBuilder = new MySqlConnectionStringBuilder(connectionString);
 NormalizeMySqlServerHost(dbConnectionStringBuilder);
