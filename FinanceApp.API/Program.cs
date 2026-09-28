@@ -11,6 +11,7 @@ using FinanceApp.API.Services;
 using FinanceApp.Data.Data;
 using FinanceApp.Core.Models;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.HttpOverrides;
 
 const string DefaultConnectionName = "DefaultConnection";
 var defaultMySqlVersion = new Version(8, 0, 46);
@@ -21,16 +22,22 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
     ContentRootPath = AppContext.BaseDirectory
 });
 
+// Configure forwarded headers so RemoteIpAddress is populated when behind a reverse proxy
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    // Clear known networks/proxies to allow headers from any proxy (adjust for production security)
+    options.KnownNetworks.Clear();
+    options.KnownProxies.Clear();
+});
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", policy =>
     {
         policy
             .WithOrigins(
-                "http://173.249.42.11",
-                "http://173.249.42.11:80",
-                "http://173.249.42.11:3000",
-                "https://173.249.42.11",
+                "https://vmd205358.contaboserver.net",
                 "http://localhost:5173",
                 "http://localhost:3000"
             )
@@ -242,10 +249,7 @@ app.Use(async (context, next) =>
         var origin = context.Request.Headers["Origin"].ToString();
         var allowedOrigins = new[]
         {
-            "http://173.249.42.11",
-            "http://173.249.42.11:80",
-            "http://173.249.42.11:3000",
-            "https://173.249.42.11",
+            "https://vmd205358.contaboserver.net",     
             "http://localhost:5173",
             "http://localhost:3000"
         };
@@ -261,6 +265,9 @@ app.Use(async (context, next) =>
     }
     await next();
 });
+
+// Apply forwarded headers before routing and other middleware that depends on connection info
+app.UseForwardedHeaders();
 
 app.UseRouting();
 app.UseRateLimiter();
