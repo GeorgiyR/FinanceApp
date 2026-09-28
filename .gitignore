@@ -71,3 +71,6 @@ FinanceApp.API/appsettings.Development.json
 *.save
 publish-backup-*/
 publish.backup-*/
+
+# Database backups
+*.sql
