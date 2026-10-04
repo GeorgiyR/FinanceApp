@@ -223,6 +223,7 @@ builder.Services.AddSingleton<ICatalogFundamentalsRefreshStatusService>(sp =>
 builder.Services.AddHostedService(sp => sp.GetRequiredService<CatalogFundamentalsRefreshHostedService>());
 builder.Services.AddHostedService<StockHistoryRefreshHostedService>();
 builder.Services.AddHostedService<StockQuoteRefreshHostedService>();
+builder.Services.AddScoped<IRabbitMqService, RabbitMqService>();
 
 var app = builder.Build();
 

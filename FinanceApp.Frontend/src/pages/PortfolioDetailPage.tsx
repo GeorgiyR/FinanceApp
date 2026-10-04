@@ -191,6 +191,12 @@ export const computeTransactionPortfolioTotal = (stocksValue: number, remainder:
   stocksValue + remainder;
 
 /**
+ * Buy and sell transactions change the portfolio position table, while cash/dividend transactions do not.
+ */
+export const shouldRefreshPortfolioAfterTransaction = (type: TransactionType): boolean =>
+  type === 'Buy' || type === 'Sell';
+
+/**
  * Computes absolute (positive) totals per transaction type across all supplied transactions.
  */
 export const computeTransactionTypeTotals = (
@@ -637,6 +643,7 @@ const PortfolioDetailPage: React.FC = () => {
    if (!id) return;
    setTxSubmitting(true);
    const hideSnapshot = values.type === 'Deposit' || values.type === 'Withdrawal';
+   const shouldRefreshPortfolio = shouldRefreshPortfolioAfterTransaction(values.type);
    const normalizeCode = (v?: string | null): string | null => {
      if (hideSnapshot) return null;
      const t = (v ?? '').trim();
@@ -661,14 +668,25 @@ const PortfolioDetailPage: React.FC = () => {
         await createTransaction(Number(id), payload);
         message.success('Транзакция добавлена');
       }
-      setTxModalOpen(false); txForm.resetFields(); fetchFinanceData();
+      setTxModalOpen(false); txForm.resetFields();
+      await fetchFinanceData();
+      if (shouldRefreshPortfolio) {
+        await fetchData();
+      }
     } catch { message.error('Ошибка сохранения транзакции'); }
     finally { setTxSubmitting(false); }
   };
   const handleDeleteTx = async (txId: number) => {
     if (!id) return;
-    try { await deleteTransaction(Number(id), txId); message.success('Транзакция удалена'); fetchFinanceData(); }
-    catch { message.error('Ошибка удаления транзакции'); }
+    try {
+      const tx = transactions.find((item) => item.id === txId);
+      await deleteTransaction(Number(id), txId);
+      message.success('Транзакция удалена');
+      await fetchFinanceData();
+      if (tx && shouldRefreshPortfolioAfterTransaction(tx.type)) {
+        await fetchData();
+      }
+    } catch { message.error('Ошибка удаления транзакции'); }
   };
 
   // ── Summary ────────────────────────────────────────────────
@@ -682,7 +700,6 @@ const PortfolioDetailPage: React.FC = () => {
 
   const items = portfolio?.items ?? [];
 
-  // ── Effective quote resolution ────────────────────────────────────────────
   // When a position's stored price is outside the current 10-minute freshness
   // window (or missing), the most recent fresh quote for an equivalent stock on
   // another exchange is used instead. Identity fields are never replaced.

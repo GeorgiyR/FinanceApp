@@ -3,6 +3,7 @@ import {
   computeTransactionRemainder,
   computeTransactionPortfolioTotal,
   computeTransactionTypeTotals,
+  shouldRefreshPortfolioAfterTransaction,
 } from './PortfolioDetailPage';
 import type { Transaction } from '../types';
 
@@ -26,6 +27,19 @@ const tx = (
   instrumentCodeType: null,
   quantity: null,
   unitPrice: null,
+});
+
+describe('shouldRefreshPortfolioAfterTransaction', () => {
+  it('refreshes positions for buy and sell transactions', () => {
+    expect(shouldRefreshPortfolioAfterTransaction('Buy')).toBe(true);
+    expect(shouldRefreshPortfolioAfterTransaction('Sell')).toBe(true);
+  });
+
+  it('does not refresh positions for cash or dividend transactions', () => {
+    expect(shouldRefreshPortfolioAfterTransaction('Deposit')).toBe(false);
+    expect(shouldRefreshPortfolioAfterTransaction('Withdrawal')).toBe(false);
+    expect(shouldRefreshPortfolioAfterTransaction('Dividend')).toBe(false);
+  });
 });
 
 describe('computeTransactionRemainder', () => {

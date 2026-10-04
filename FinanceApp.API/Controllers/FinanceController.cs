@@ -6,6 +6,7 @@ using FinanceApp.Core.Models;
 using System.Security.Claims;
 using System.ComponentModel.DataAnnotations;
 using System.Text.Json.Serialization;
+using FinanceApp.API.Extensions;
 
 namespace FinanceApp.API.Controllers;
 
@@ -114,6 +115,9 @@ public class FinanceController : ControllerBase
 
         if (transaction.StockId.HasValue)
             await _context.Entry(transaction).Reference(t => t.Stock).LoadAsync();
+
+        // Update portfolio items (position quantities) to reflect the transaction
+        _context.UpdatePortfolioItemsForTransaction(portfolioId, transaction);
 
         return Ok(transaction);
     }
