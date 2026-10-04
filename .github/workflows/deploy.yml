@@ -1,0 +1,47 @@
+name: Deploy FinanceApp
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: financeapp-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to production
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure SSH
+        shell: bash
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/financeapp_deploy
+          chmod 600 ~/.ssh/financeapp_deploy
+
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Deploy
+        shell: bash
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          set -euo pipefail
+
+          ssh \
+            -i ~/.ssh/financeapp_deploy \
+            -o IdentitiesOnly=yes \
+            -o BatchMode=yes \
+            deploy@"$DEPLOY_HOST" \
+            'sudo -n /var/FinanceApp/scripts/deploy.sh'
