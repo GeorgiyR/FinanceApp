@@ -111,14 +111,14 @@ public class FinanceController : ControllerBase
             UnitPrice = normalizedSnapshot.UnitPrice,
         };
         _context.Transactions.Add(transaction);
-        await _context.SaveChangesAsync();
-
-        if (transaction.StockId.HasValue)
-            await _context.Entry(transaction).Reference(t => t.Stock).LoadAsync();
 
         // Update portfolio items (position quantities) to reflect the transaction
         _context.UpdatePortfolioItemsForTransaction(portfolioId, transaction);
 
+        await _context.SaveChangesAsync();
+
+        if (transaction.StockId.HasValue)
+            await _context.Entry(transaction).Reference(t => t.Stock).LoadAsync();
         return Ok(transaction);
     }
 
