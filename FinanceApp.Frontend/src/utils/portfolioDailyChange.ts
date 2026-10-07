@@ -5,6 +5,19 @@ export type PortfolioDailyChangeSummary = {
   changePercent: number | null;
 };
 
+const isPriceFromToday = (priceTimestamp: string | null | undefined): boolean => {
+  if (!priceTimestamp) return false;
+  
+  const priceDate = new Date(priceTimestamp);
+  const today = new Date();
+  
+  return (
+    priceDate.getUTCFullYear() === today.getUTCFullYear()
+    && priceDate.getUTCMonth() === today.getUTCMonth()
+    && priceDate.getUTCDate() === today.getUTCDate()
+  );
+};
+
 export const getDailyChangeColor = (value: number | null | undefined): string =>
   value == null || !Number.isFinite(value) || value === 0
     ? '#8c8c8c'
@@ -13,6 +26,9 @@ export const getDailyChangeColor = (value: number | null | undefined): string =>
       : '#cf1322';
 
 export const getPositionDailyChange = (item: PortfolioItem): number | null => {
+  // Only consider daily change if price is from today
+  if (!isPriceFromToday(item.stock?.currentPriceAt)) return null;
+  
   const change = item.stock?.currentPriceChange;
   if (change == null || !Number.isFinite(change) || !Number.isFinite(item.quantity)) return null;
   return change * item.quantity;
