@@ -134,7 +134,10 @@ public class StockPriceController : ControllerBase
             //   - The page explicitly and unambiguously labels the price as pre-market ("PRE")
             // Any failure (timeout, 403, changed markup, ambiguous data) is silently ignored
             // and the existing Yahoo/Finnhub result is preserved.
+
             string? priceSource = null;
+
+            /*
             if (_finanzenNetQuoteService.IsEnabled &&
                 !string.IsNullOrWhiteSpace(finanzenNetSlug))
             {
@@ -172,11 +175,28 @@ public class StockPriceController : ControllerBase
                     // The exception is already logged inside the service.
                 }
             }
+            */
 
             var conversionContext = await _stockQuoteConversionService.GetConversionContextAsync(
                 currency,
                 estimateCurrency,
                 cancellationToken);
+
+
+            //try
+            //{
+            //    await _priceEventPublisher.PublishAsync(
+            //        new PriceUpdatedEvent(
+            //            Guid.NewGuid(),
+            //            symbol));
+            //}
+            //catch (Exception ex)
+            //{
+            //    _logger.LogWarning(
+            //        ex,
+            //        "Could not publish PriceUpdatedEvent for {Symbol}",
+            //        symbol);
+            //}
 
             return Ok(_stockQuoteConversionService.BuildQuoteResponse(
                 providerSymbol,

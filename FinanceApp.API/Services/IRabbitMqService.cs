@@ -1,10 +1,10 @@
-﻿using FinanceApp.Core.Models.RabbitMQ.Events;
+﻿using FinanceApp.Core.Models.RabbitMQ.Commands;
 
 namespace FinanceApp.API.Services;
 
 public interface IRabbitMqService
 {
-    Task PublishTransactionCreatedAsync(
-        TransactionCreatedEvent message,
+    Task PublishUpdatePricesAsync(
+        UpdatePricesCommand message,
         CancellationToken cancellationToken = default);
 }

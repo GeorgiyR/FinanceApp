@@ -1,4 +1,4 @@
-﻿using FinanceApp.Core.Models.RabbitMQ.Events;
+﻿using FinanceApp.Core.Models.RabbitMQ.Commands;
 using RabbitMQ.Client;
 using System.Text;
 using System.Text.Json;
@@ -18,32 +18,36 @@ public class RabbitMqService : IRabbitMqService
         _logger = logger;
     }
 
-    public async Task PublishTransactionCreatedAsync(
-        TransactionCreatedEvent message,
+    public async Task PublishUpdatePricesAsync(
+        UpdatePricesCommand message,
         CancellationToken cancellationToken = default)
     {
         var hostName = _configuration["RabbitMQ:HostName"]
-            ?? throw new InvalidOperationException("RabbitMQ:HostName is not configured.");
+            ?? throw new InvalidOperationException(
+                "RabbitMQ:HostName is not configured.");
 
         var port = _configuration.GetValue<int?>("RabbitMQ:Port") ?? 5672;
 
         var userName = _configuration["RabbitMQ:UserName"]
-            ?? throw new InvalidOperationException("RabbitMQ:UserName is not configured.");
+            ?? throw new InvalidOperationException(
+                "RabbitMQ:UserName is not configured.");
 
         var password = _configuration["RabbitMQ:Password"]
-            ?? throw new InvalidOperationException("RabbitMQ:Password is not configured.");
+            ?? throw new InvalidOperationException(
+                "RabbitMQ:Password is not configured.");
 
         var virtualHost = _configuration["RabbitMQ:VirtualHost"]
             ?? "/";
 
         var exchange = _configuration["RabbitMQ:Exchange"]
-            ?? throw new InvalidOperationException("RabbitMQ:Exchange is not configured.");
-
-        var queue = _configuration["RabbitMQ:TransactionCreatedQueue"]
             ?? throw new InvalidOperationException(
-                "RabbitMQ:TransactionCreatedQueue is not configured.");
+                "RabbitMQ:Exchange is not configured.");
 
-        const string routingKey = "transaction.created";
+        var queue = _configuration["RabbitMQ:PriceUpdateQueue"]
+            ?? throw new InvalidOperationException(
+                "RabbitMQ:PriceUpdateQueue is not configured.");
+
+        const string routingKey = "prices.update";
 
         var factory = new ConnectionFactory
         {
@@ -100,8 +104,8 @@ public class RabbitMqService : IRabbitMqService
             cancellationToken: cancellationToken);
 
         _logger.LogInformation(
-            "Published TransactionCreated event. TransactionId: {TransactionId}, PortfolioId: {PortfolioId}",
-            message.TransactionId,
-            message.PortfolioId);
+            "Published UpdatePrices command. RequestId: {RequestId}, RequestedAt: {RequestedAt}",
+            message.RequestId,
+            message.RequestedAt);
     }
 }
