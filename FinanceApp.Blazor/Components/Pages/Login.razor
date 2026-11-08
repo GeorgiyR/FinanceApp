@@ -1,0 +1,123 @@
+@page "/login"
+@layout BareLayout
+@using System.ComponentModel.DataAnnotations
+@using System.Net
+@using System.Net.Http.Json
+@inject IHttpClientFactory HttpClientFactory
+@inject IJSRuntime JS
+@inject NavigationManager Navigation
+
+<PageTitle>Вход</PageTitle>
+
+<div class="login-page">
+    <section class="login-card">
+        <h1>Войти</h1>
+        <p class="login-description">Войдите, чтобы открыть свои портфели.</p>
+
+        @if (!string.IsNullOrWhiteSpace(_error))
+        {
+            <div class="login-error" role="alert">@_error</div>
+        }
+
+        <EditForm Model="_model" OnValidSubmit="SignInAsync" FormName="login-form" method="post">
+            <DataAnnotationsValidator />
+            <div class="login-field">
+                <label for="identifier">Логин или email</label>
+                <InputText id="identifier" @bind-Value="_model.Identifier" autocomplete="username" />
+                <ValidationMessage For="@(() => _model.Identifier)" />
+            </div>
+            <div class="login-field">
+                <label for="password">Пароль</label>
+                <InputText id="password" type="password" @bind-Value="_model.Password" autocomplete="current-password" />
+                <ValidationMessage For="@(() => _model.Password)" />
+            </div>
+            <button class="login-submit" type="submit" disabled="@_loading">
+                @(_loading ? "Вход…" : "Войти")
+            </button>
+        </EditForm>
+    </section>
+</div>
+
+@code {
+    private readonly LoginModel _model = new();
+    private bool _loading;
+    private string? _error;
+
+    private async Task SignInAsync()
+    {
+        _loading = true;
+        _error = null;
+
+        try
+        {
+            using var client = HttpClientFactory.CreateClient("FinanceApi");
+            using var response = await client.PostAsJsonAsync(
+                "Auth/login",
+                new LoginRequest(_model.Identifier, _model.Password));
+
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                _error = "Неверный логин/email или пароль.";
+                return;
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _error = $"Не удалось выполнить вход (HTTP {(int)response.StatusCode}).";
+                return;
+            }
+
+            var login = await response.Content.ReadFromJsonAsync<LoginResponse>();
+            if (string.IsNullOrWhiteSpace(login?.Token))
+            {
+                _error = "Сервер не вернул токен авторизации.";
+                return;
+            }
+
+            var module = await JS.InvokeAsync<IJSObjectReference>("import", "./portfolioApi.js");
+            try
+            {
+                await module.InvokeVoidAsync("setToken", login.Token);
+            }
+            finally
+            {
+                await module.DisposeAsync();
+            }
+
+            Navigation.NavigateTo("/portfolios");
+        }
+        catch
+        {
+            _error = "Не удалось связаться с API. Проверьте подключение и попробуйте ещё раз.";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private sealed class LoginModel
+    {
+        public LoginModel() { }
+
+        [Required(ErrorMessage = "Введите логин или email")]
+        public string Identifier { get; set; } = string.Empty;
+
+        [Required(ErrorMessage = "Введите пароль")]
+        public string Password { get; set; } = string.Empty;
+    }
+
+    private sealed class LoginRequest(string identifier, string password)
+    {
+        public string Identifier { get; } = identifier;
+        public string Password { get; } = password;
+    }
+
+    private sealed class LoginResponse
+    {
+        public LoginResponse() { }
+        public string Token { get; set; } = string.Empty;
+    }
+}
+
+

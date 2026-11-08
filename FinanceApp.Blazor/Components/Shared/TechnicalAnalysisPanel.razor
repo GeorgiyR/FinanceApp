@@ -1,0 +1,177 @@
+@using System.Globalization
+@using System.Net
+@using System.Net.Http.Headers
+@using System.Net.Http.Json
+@using System.Text.Json
+@inject IHttpClientFactory HttpClientFactory
+@inject IJSRuntime JS
+
+<section class="technical-analysis-panel" aria-label="Аналитический сигнал">
+    <div class="technical-analysis-header"><h3>Аналитический сигнал</h3></div>
+    @if (_loading)
+    {
+        <div class="technical-analysis-state">Загрузка аналитического сигнала…</div>
+    }
+    else if (!string.IsNullOrWhiteSpace(_error))
+    {
+        <div class="technical-analysis-error" role="alert"><span>@_error</span><button type="button" @onclick="LoadAsync">Повторить</button></div>
+    }
+    else if (_response is not null && SelectedHorizon is TechnicalAnalysisHorizon horizon)
+    {
+        <div class="technical-analysis-body">
+            <div class="technical-analysis-horizons" role="tablist" aria-label="Горизонт аналитического сигнала">
+                @foreach (var option in Horizons)
+                {
+                    <button type="button" role="tab" aria-selected="@(_horizon == option.Key)" class="@(_horizon == option.Key ? "selected" : "")" @onclick="() => _horizon = option.Key">@option.Label</button>
+                }
+            </div>
+            <div class="technical-analysis-summary">
+                <div><span>Score</span><strong>@FormatScore(horizon.Score)</strong></div>
+                <div><span>Сигнал</span><strong class="analysis-signal" style="color:@SignalColor(horizon.Signal)">@SignalLabel(horizon.Signal)</strong></div>
+                <div><span>Уверенность</span><strong>@FormatFractionPercent(horizon.Confidence, 0)</strong></div>
+                <div><span>Данные на</span><strong>@FormatDate(_response.AsOfUtc)</strong></div>
+            </div>
+            @if (_response.IsPotentiallyStale) { <div class="technical-analysis-warning">Данные аналитического сигнала могут быть устаревшими.</div> }
+            @if (horizon.Confidence < 0.5) { <div class="technical-analysis-warning">Низкая уверенность сигнала: @FormatFractionPercent(horizon.Confidence, 0).</div> }
+            <h4>Компоненты</h4>
+            <div class="analysis-components">
+                @foreach (var component in Components)
+                {
+                    var score = ComponentScore(horizon.ComponentScores, component.Key);
+                    <div class="analysis-component-card">
+                        <div><strong>@component.Label</strong><span>Вес: @FormatFractionPercent(ComponentWeight(horizon.ComponentWeights, component.Key), 0)</span></div>
+                        @if (score is double componentScore)
+                        {
+                            <div class="analysis-progress"><span style="width: @ProgressWidth(componentScore); background-color: @SignalColor(horizon.Signal)"></span></div>
+                            <strong>@FormatScore(componentScore) / 100</strong>
+                        }
+                        else { <span>Недостаточно данных</span> }
+                    </div>
+                }
+            </div>
+            <div class="analysis-factors-grid">
+                @FactorSection("Положительные факторы", horizon.PositiveFactors, "Факторы отсутствуют.")
+                @FactorSection("Факторы риска", horizon.NegativeFactors, "Факторы отсутствуют.")
+            </div>
+            @FactorSection("Предупреждения", Warnings, "Предупреждения отсутствуют.")
+            <details class="analysis-details"><summary>Показатели</summary>
+                <div class="analysis-details-grid">
+                    <div>Последняя цена<strong>@FormatNumber(_response.Metrics.LatestPrice)</strong></div>
+                    <div>Свечей (Daily)<strong>@_response.Metrics.DailyCandleCount</strong></div>
+                    <div>AdjustedClose coverage<strong>@FormatFractionPercent(_response.Metrics.AdjustedCloseCoverage, 1)</strong></div>
+                    <div>SMA20 / SMA50 / SMA200<strong>@FormatNumber(_response.Metrics.Sma20) / @FormatNumber(_response.Metrics.Sma50) / @FormatNumber(_response.Metrics.Sma200)</strong></div>
+                    <div>EMA12 / EMA26<strong>@FormatNumber(_response.Metrics.Ema12) / @FormatNumber(_response.Metrics.Ema26)</strong></div>
+                    <div>RSI14<strong>@FormatNumber(_response.Metrics.Rsi14, 1)</strong></div>
+                    <div>MACD / Signal / Hist<strong>@FormatNumber(_response.Metrics.Macd) / @FormatNumber(_response.Metrics.MacdSignal) / @FormatNumber(_response.Metrics.MacdHistogram)</strong></div>
+                    <div>1м / 3м / 6м / 1г<strong>@FormatPercentPoints(_response.Metrics.Return1Month) / @FormatPercentPoints(_response.Metrics.Return3Months) / @FormatPercentPoints(_response.Metrics.Return6Months) / @FormatPercentPoints(_response.Metrics.Return1Year)</strong></div>
+                    <div>Volatility20 / Volatility60<strong>@FormatFractionPercent(_response.Metrics.VolatilityAnnualized20, 1) / @FormatFractionPercent(_response.Metrics.VolatilityAnnualized60, 1)</strong></div>
+                    <div>Max Drawdown<strong>@FormatPercentPoints(_response.Metrics.MaxDrawdown, 1)</strong></div>
+                    <div>ATR14<strong>@FormatNumber(_response.Metrics.Atr14, 3)</strong></div>
+                </div>
+                @if (_response.Metrics.PriceBasis.Count > 0)
+                {
+                    <div class="analysis-price-basis"><h4>База цен</h4><ul>@foreach (var basis in _response.Metrics.PriceBasis) { <li><strong>@basis.Metric</strong>: @basis.Basis. @basis.Reason</li> }</ul></div>
+                }
+            </details>
+            <p class="analysis-disclaimer">Аналитический сигнал основан на исторических данных и не является персональной инвестиционной рекомендацией.</p>
+        </div>
+    }
+</section>
+
+@code {
+    private static readonly CultureInfo RussianCulture = CultureInfo.GetCultureInfo("ru-RU");
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly (string Key, string Label)[] Horizons = [("threeMonths", "3 месяца"), ("sixMonths", "6 месяцев"), ("oneYear", "1 год"), ("twoYears", "2 года")];
+    private static readonly (string Key, string Label)[] Components = [("trend", "Тренд"), ("momentum", "Моментум"), ("returns", "Доходность"), ("risk", "Риск"), ("fundamentals", "Фундаментальные")];
+
+    [Parameter, EditorRequired] public int StockId { get; set; }
+    private bool _loading = true;
+    private string? _error;
+    private TechnicalAnalysisResponse? _response;
+    private int? _loadedStockId;
+    private string _horizon = "threeMonths";
+    private TechnicalAnalysisHorizon? SelectedHorizon => _response is null ? null : _horizon switch { "sixMonths" => _response.SixMonths, "oneYear" => _response.OneYear, "twoYears" => _response.TwoYears, _ => _response.ThreeMonths };
+    private List<TechnicalAnalysisFactor> Warnings => _response is null || SelectedHorizon is null ? [] : _response.Warnings.Concat(SelectedHorizon.Warnings).DistinctBy(factor => $"{factor.Code}\0{factor.Message}").ToList();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedStockId == StockId) return;
+        _loadedStockId = StockId;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true; _error = null;
+        try
+        {
+            var module = await JS.InvokeAsync<IJSObjectReference>("import", "./portfolioApi.js");
+            string? token;
+            try { token = await module.InvokeAsync<string?>("getToken"); }
+            finally { await module.DisposeAsync(); }
+            if (string.IsNullOrWhiteSpace(token)) { _error = "Войдите в приложение, чтобы увидеть аналитический сигнал."; return; }
+
+            using var client = HttpClientFactory.CreateClient("FinanceApi");
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            using var response = await client.GetAsync($"Stocks/{StockId}/technical-analysis");
+            if (!response.IsSuccessStatusCode)
+            {
+                _error = response.StatusCode == HttpStatusCode.Unauthorized ? "Войдите в приложение, чтобы увидеть аналитический сигнал." : $"Не удалось загрузить аналитический сигнал (HTTP {(int)response.StatusCode}).";
+                return;
+            }
+            _response = await response.Content.ReadFromJsonAsync<TechnicalAnalysisResponse>(JsonOptions);
+        }
+        catch { _error = "Не удалось загрузить аналитический сигнал."; }
+        finally { _loading = false; }
+    }
+
+    private static RenderFragment FactorSection(string title, IReadOnlyList<TechnicalAnalysisFactor> factors, string emptyText) => builder =>
+    {
+        builder.OpenElement(0, "section"); builder.AddAttribute(1, "class", "analysis-factor-card"); builder.AddAttribute(2, "aria-label", title);
+        builder.OpenElement(3, "h4"); builder.AddContent(4, title); builder.CloseElement();
+        if (factors.Count == 0) builder.AddContent(5, emptyText);
+        else
+        {
+            builder.OpenElement(6, "ul"); var seq = 7;
+            foreach (var factor in factors)
+            {
+                builder.OpenElement(seq++, "li"); builder.OpenElement(seq++, "code"); builder.AddContent(seq++, factor.Code); builder.CloseElement(); builder.AddContent(seq++, " "); builder.AddContent(seq++, LocalizeFactor(factor)); builder.CloseElement();
+            }
+            builder.CloseElement();
+        }
+        builder.CloseElement();
+    };
+
+    private static double? ComponentScore(TechnicalAnalysisComponentScores? scores, string key) => key switch { "trend" => scores?.Trend, "momentum" => scores?.Momentum, "returns" => scores?.Returns, "risk" => scores?.Risk, "fundamentals" => scores?.Fundamentals, _ => null };
+    private static double ComponentWeight(TechnicalAnalysisComponentWeights weights, string key) => key switch { "trend" => weights.Trend, "momentum" => weights.Momentum, "returns" => weights.Returns, "risk" => weights.Risk, "fundamentals" => weights.Fundamentals, _ => 0d };
+    private static string FormatScore(double? value) => value is double score ? Math.Round(score).ToString("0", RussianCulture) : "Недостаточно данных";
+    private static string ProgressWidth(double score) => $"{Math.Clamp(score, 0d, 100d).ToString("0.#", CultureInfo.InvariantCulture)}%";
+    private static string FormatNumber(double? value, int digits = 2) => value?.ToString($"N{digits}", RussianCulture) ?? "—";
+    private static string FormatPercentPoints(double? value, int digits = 1) => value is double number ? $"{number.ToString($"N{digits}", RussianCulture)}%" : "Недостаточно данных";
+    private static string FormatFractionPercent(double? value, int digits = 0) => value is double number ? $"{(number * 100d).ToString($"N{digits}", RussianCulture)}%" : "Недостаточно данных";
+    private static string FormatDate(DateTime? value) => value?.ToLocalTime().ToString("dd.MM.yyyy HH:mm", RussianCulture) ?? "Недостаточно данных";
+    private static string SignalLabel(string signal) => signal switch { "StrongBullish" => "Сильный бычий", "ModeratelyBullish" => "Умеренно бычий", "Neutral" => "Нейтральный", "ModeratelyBearish" => "Умеренно медвежий", "StrongBearish" => "Сильный медвежий", _ => signal };
+    private static string SignalColor(string signal) => signal switch { "StrongBullish" => "#135200", "ModeratelyBullish" => "#389e0d", "Neutral" => "#d48806", "ModeratelyBearish" => "#d46b08", "StrongBearish" => "#a8071a", _ => "#595959" };
+    private static string LocalizeFactor(TechnicalAnalysisFactor factor) => FactorMessages.TryGetValue(factor.Code, out var localized) ? localized : factor.Message;
+
+    private static readonly IReadOnlyDictionary<string, string> FactorMessages = new Dictionary<string, string>
+    {
+        ["PRICE_ABOVE_SMA50"] = "Цена выше SMA50.", ["PRICE_BELOW_SMA50"] = "Цена ниже SMA50.", ["PRICE_ABOVE_SMA200"] = "Цена выше SMA200.", ["PRICE_BELOW_SMA200"] = "Цена ниже SMA200.",
+        ["MA_ORDER_BULLISH"] = "Скользящие средние указывают на бычий порядок.", ["MA_ORDER_BEARISH"] = "Скользящие средние указывают на медвежий порядок.", ["SMA20_ABOVE_SMA50"] = "SMA20 выше SMA50.", ["SMA20_BELOW_SMA50"] = "SMA20 ниже SMA50.",
+        ["RSI_BULLISH_RANGE"] = "RSI в бычьем диапазоне.", ["RSI_OVERBOUGHT"] = "RSI в зоне перекупленности.", ["RSI_WEAK"] = "RSI указывает на ослабление импульса.", ["RSI_OVERSOLD"] = "RSI в зоне перепроданности.",
+        ["MACD_HISTOGRAM_POSITIVE"] = "Гистограмма MACD положительная.", ["MACD_HISTOGRAM_NEGATIVE"] = "Гистограмма MACD отрицательная.", ["EMA_BULLISH"] = "EMA12 выше EMA26.", ["EMA_BEARISH"] = "EMA12 ниже EMA26.",
+        ["RETURN_POSITIVE"] = "Доходность положительная.", ["RETURN_NEGATIVE"] = "Доходность отрицательная.", ["VOLATILITY_MODERATE"] = "Волатильность умеренная.", ["VOLATILITY_HIGH"] = "Волатильность высокая.", ["VOLATILITY_ELEVATED"] = "Волатильность повышенная.",
+        ["DRAWDOWN_CONTAINED"] = "Просадка контролируемая.", ["DRAWDOWN_ELEVATED"] = "Просадка повышенная.", ["DRAWDOWN_SEVERE"] = "Просадка выраженная.", ["ATR_CONTAINED"] = "ATR в допустимом диапазоне.", ["ATR_ELEVATED"] = "ATR повышен.",
+        ["FUNDAMENTALS_MISSING"] = "Фундаментальные данные отсутствуют.", ["FUNDAMENTALS_STALE"] = "Фундаментальные данные устарели.", ["FUNDAMENTALS_UNUSABLE"] = "Фундаментальные данные непригодны для оценки.", ["FUNDAMENTAL_HISTORY_INSUFFICIENT"] = "Недостаточно фундаментальной истории.",
+        ["HISTORY_MISSING"] = "История котировок отсутствует.", ["HISTORY_STALE"] = "История котировок устарела.", ["HISTORY_INSUFFICIENT"] = "Недостаточно исторических данных.", ["SMA200_UNAVAILABLE"] = "SMA200 недоступна из-за недостаточной истории.", ["ADJUSTED_CLOSE_INCOMPLETE"] = "Покрытие AdjustedClose неполное.", ["ADJUSTED_CLOSE_FALLBACK"] = "Использован fallback с AdjustedClose на Close.", ["COMPONENTS_MISSING"] = "Часть компонент оценки недоступна.", ["DUPLICATE_CANDLES"] = "Обнаружены дублирующиеся свечи.", ["INVALID_CLOSE_POINTS"] = "Обнаружены некорректные значения Close.", ["CONSTANT_PRICE_SERIES"] = "Серия цен постоянная."
+    };
+
+    private sealed class TechnicalAnalysisResponse { public DateTime? AsOfUtc { get; set; } public bool IsPotentiallyStale { get; set; } public TechnicalAnalysisMetrics Metrics { get; set; } = new(); public TechnicalAnalysisHorizon ThreeMonths { get; set; } = new(); public TechnicalAnalysisHorizon SixMonths { get; set; } = new(); public TechnicalAnalysisHorizon OneYear { get; set; } = new(); public TechnicalAnalysisHorizon TwoYears { get; set; } = new(); public List<TechnicalAnalysisFactor> Warnings { get; set; } = []; }
+    private sealed class TechnicalAnalysisMetrics { public double? LatestPrice { get; set; } public int DailyCandleCount { get; set; } public double AdjustedCloseCoverage { get; set; } public double? Sma20 { get; set; } public double? Sma50 { get; set; } public double? Sma200 { get; set; } public double? Ema12 { get; set; } public double? Ema26 { get; set; } public double? Rsi14 { get; set; } public double? Macd { get; set; } public double? MacdSignal { get; set; } public double? MacdHistogram { get; set; } public double? Return1Month { get; set; } public double? Return3Months { get; set; } public double? Return6Months { get; set; } public double? Return1Year { get; set; } public double? VolatilityAnnualized20 { get; set; } public double? VolatilityAnnualized60 { get; set; } public double? MaxDrawdown { get; set; } public double? Atr14 { get; set; } public List<TechnicalAnalysisPriceBasis> PriceBasis { get; set; } = []; }
+    private sealed class TechnicalAnalysisHorizon { public double Score { get; set; } public string Signal { get; set; } = "Neutral"; public double Confidence { get; set; } public TechnicalAnalysisComponentScores? ComponentScores { get; set; } = new(); public TechnicalAnalysisComponentWeights ComponentWeights { get; set; } = new(); public List<TechnicalAnalysisFactor> PositiveFactors { get; set; } = []; public List<TechnicalAnalysisFactor> NegativeFactors { get; set; } = []; public List<TechnicalAnalysisFactor> Warnings { get; set; } = []; }
+    private sealed class TechnicalAnalysisComponentScores { public double? Trend { get; set; } public double? Momentum { get; set; } public double? Returns { get; set; } public double? Risk { get; set; } public double? Fundamentals { get; set; } }
+    private sealed class TechnicalAnalysisComponentWeights { public double Trend { get; set; } public double Momentum { get; set; } public double Returns { get; set; } public double Risk { get; set; } public double Fundamentals { get; set; } }
+    private sealed class TechnicalAnalysisFactor { public string Code { get; set; } = string.Empty; public string Message { get; set; } = string.Empty; }
+    private sealed class TechnicalAnalysisPriceBasis { public string Metric { get; set; } = string.Empty; public string Basis { get; set; } = string.Empty; public string Reason { get; set; } = string.Empty; }
+
+}

@@ -1,0 +1,128 @@
+@using System.Globalization
+@using FinanceApp.Blazor.Components.Models
+
+<section class="transactions-page">
+    @if (!Loading && string.IsNullOrWhiteSpace(Error))
+    {
+        <div class="transaction-finance-summary">
+            <div class="transaction-finance-primary">
+                <article><span>Итого портфель</span><strong>@FormatMoney(StockValue + CashRemainder)</strong></article>
+                <article><span>Стоимость акций</span><strong>@FormatMoney(StockValue)</strong></article>
+                <article><span>Остаток</span><strong>@FormatMoney(CashRemainder)</strong></article>
+            </div>
+            <div class="transaction-finance-types">
+                <article><span>Пополнения</span><strong>@FormatMoney(TypeTotal("Deposit"))</strong></article>
+                <article><span>Вывод</span><strong>@FormatMoney(TypeTotal("Withdrawal"))</strong></article>
+                <article><span>Покупка</span><strong>@FormatMoney(TypeTotal("Buy"))</strong></article>
+                <article><span>Продажа</span><strong>@FormatMoney(TypeTotal("Sell"))</strong></article>
+                <article><span>Дивиденды</span><strong>@FormatMoney(TypeTotal("Dividend"))</strong></article>
+            </div>
+        </div>
+    }
+    <div class="transactions-toolbar">
+        <select aria-label="Фильтр по типу транзакции" @bind="_typeFilter">
+            <option value="all">Все типы</option><option value="Deposit">Пополнение</option><option value="Withdrawal">Вывод</option>
+            <option value="Buy">Покупка</option><option value="Sell">Продажа</option><option value="Dividend">Дивиденды</option>
+        </select>
+        <input type="date" aria-label="Дата от" value="@_dateFrom" @onchange="args => _dateFrom = args.Value?.ToString() ?? string.Empty" />
+        <input type="date" aria-label="Дата до" value="@_dateTo" @onchange="args => _dateTo = args.Value?.ToString() ?? string.Empty" />
+        <input type="search" placeholder="Поиск по описанию, тикеру…" aria-label="Поиск по транзакциям" @bind="_search" @bind:event="oninput" />
+        <button class="portfolio-primary-button" @onclick="OnCreate">Новая транзакция</button>
+    </div>
+    @if (Loading)
+    {
+        <div class="portfolio-state">Загрузка транзакций…</div>
+    }
+    else if (!string.IsNullOrWhiteSpace(Error))
+    {
+        <div class="portfolio-state portfolio-state-error" role="alert"><p>@Error</p><button class="portfolio-refresh-button" @onclick="OnRefresh">Повторить</button></div>
+    }
+    else if (FilteredTransactions.Count == 0)
+    {
+        <div class="portfolio-state">Транзакции не найдены.</div>
+    }
+    else
+    {
+        <div class="transactions-table-wrap">
+            <table class="transactions-table">
+                <thead><tr><th>Тип</th><th>Дата</th><th class="numeric">Сумма</th><th>Акция</th><th>ISIN</th><th class="numeric">Цена за единицу (€)</th><th class="numeric">Количество</th><th class="actions-heading">Действия</th></tr></thead>
+                <tbody>
+                    @foreach (var transaction in FilteredTransactions)
+                    {
+                        <tr>
+                            <td><button type="button" class="transaction-type-toggle" @onclick="() => ToggleDescription(transaction.Id)" aria-expanded="@(_expandedId == transaction.Id)"><span class="transaction-type-tag transaction-@transaction.Type.ToLowerInvariant()">@TypeLabel(transaction.Type)</span><span class="transaction-description-caret @(_expandedId == transaction.Id ? "expanded" : "")">›</span></button></td>
+                            <td>@transaction.CreatedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm", RussianCulture)</td>
+                            <td class="numeric @AmountClass(transaction)">@FormatSignedMoney(EffectiveAmount(transaction))</td>
+                            <td>@((transaction.Type is "Buy" or "Sell" or "Dividend") ? StockName(transaction) : "—")</td>
+                            <td>@(transaction.Stock?.Isin ?? (transaction.InstrumentCodeType == "ISIN" ? transaction.InstrumentCode : null) ?? "—")</td>
+                            <td class="numeric">@((transaction.Type is "Buy" or "Sell") && transaction.UnitPrice is decimal unitPrice ? FormatMoney(unitPrice) : "—")</td>
+                            <td class="numeric">@((transaction.Type is "Buy" or "Sell") && transaction.Quantity is decimal quantity ? quantity.ToString("N0", RussianCulture) : "—")</td>
+                            <td class="transaction-row-actions">
+                                @if (transaction.OrderId is null)
+                                {
+                                    <button type="button" class="action-icon-button" title="Редактировать" aria-label="Редактировать транзакцию" @onclick="() => OnEdit.InvokeAsync(transaction)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m3 14.8-.8 3 3-.8L16.8 5.4a1.8 1.8 0 0 0-2.6-2.6L3 14.8Zm9.9-9.9 2.6 2.6" /></svg></button>
+                                }
+                                <button type="button" class="action-icon-button action-delete-button" title="Удалить" aria-label="Удалить транзакцию" @onclick="() => OnDelete.InvokeAsync(transaction)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14m-9 0V3h4v2m3 0-.8 12H5.8L5 5m3 3v6m4-6v6" /></svg></button>
+                            </td>
+                        </tr>
+                        @if (_expandedId == transaction.Id)
+                        {
+                            <tr class="transaction-description-row"><td colspan="8"><strong>Описание</strong><div>@Description(transaction)</div></td></tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</section>
+
+@code {
+    private static readonly CultureInfo RussianCulture = CultureInfo.GetCultureInfo("ru-RU");
+    private string _typeFilter = "all";
+    private string _dateFrom = string.Empty;
+    private string _dateTo = string.Empty;
+    private string _search = string.Empty;
+    private int? _expandedId;
+
+    [Parameter, EditorRequired] public IReadOnlyList<PortfolioTransactionViewModel> Transactions { get; set; } = [];
+    [Parameter] public decimal StockValue { get; set; }
+    [Parameter] public bool Loading { get; set; }
+    [Parameter] public string? Error { get; set; }
+    [Parameter] public EventCallback OnCreate { get; set; }
+    [Parameter] public EventCallback OnRefresh { get; set; }
+    [Parameter] public EventCallback<PortfolioTransactionViewModel> OnEdit { get; set; }
+    [Parameter] public EventCallback<PortfolioTransactionViewModel> OnDelete { get; set; }
+
+    private List<PortfolioTransactionViewModel> FilteredTransactions => Transactions.Where(MatchesFilters).OrderByDescending(transaction => transaction.CreatedAt).ToList();
+    private decimal CashRemainder => Transactions.Sum(EffectiveAmount);
+    private decimal TypeTotal(string type) => Transactions.Where(transaction => transaction.Type == type).Sum(transaction => transaction.Amount);
+    private bool MatchesFilters(PortfolioTransactionViewModel transaction)
+    {
+        if (_typeFilter != "all" && transaction.Type != _typeFilter) return false;
+        var localDate = DateOnly.FromDateTime(transaction.CreatedAt.ToLocalTime());
+        if (DateOnly.TryParse(_dateFrom, out var from) && localDate < from) return false;
+        if (DateOnly.TryParse(_dateTo, out var to) && localDate > to) return false;
+        if (string.IsNullOrWhiteSpace(_search)) return true;
+        var query = _search.Trim();
+        return TypeLabel(transaction.Type).Contains(query, StringComparison.CurrentCultureIgnoreCase)
+            || (transaction.Description?.Contains(query, StringComparison.CurrentCultureIgnoreCase) ?? false)
+            || (transaction.Stock?.Ticker?.Contains(query, StringComparison.CurrentCultureIgnoreCase) ?? false)
+            || (transaction.Stock?.Name?.Contains(query, StringComparison.CurrentCultureIgnoreCase) ?? false)
+            || (transaction.Stock?.CommonName?.Contains(query, StringComparison.CurrentCultureIgnoreCase) ?? false)
+            || (transaction.InstrumentCode?.Contains(query, StringComparison.CurrentCultureIgnoreCase) ?? false);
+    }
+    private void ToggleDescription(int id) => _expandedId = _expandedId == id ? null : id;
+    private static string TypeLabel(string type) => type switch { "Deposit" => "Пополнение", "Withdrawal" => "Вывод", "Buy" => "Покупка", "Sell" => "Продажа", "Dividend" => "Дивиденды", _ => type };
+    private static decimal EffectiveAmount(PortfolioTransactionViewModel transaction) => transaction.SignedAmount != 0m || transaction.Amount == 0m ? transaction.SignedAmount : transaction.Type is "Deposit" or "Sell" or "Dividend" ? transaction.Amount : -transaction.Amount;
+    private static string AmountClass(PortfolioTransactionViewModel transaction) => EffectiveAmount(transaction) >= 0m ? "positive" : "negative";
+    private static string StockName(PortfolioTransactionViewModel transaction) => transaction.Stock?.Name ?? transaction.InstrumentCode ?? "—";
+    private static string Description(PortfolioTransactionViewModel transaction)
+    {
+        if (!string.IsNullOrWhiteSpace(transaction.Description)) return transaction.Description;
+        var label = TypeLabel(transaction.Type);
+        if (transaction.Stock is null) return label;
+        return $"{label} — {transaction.Stock.Ticker} · {transaction.Stock.Name}";
+    }
+    private static string FormatMoney(decimal value) => $"{value.ToString("N2", RussianCulture)} €";
+    private static string FormatSignedMoney(decimal value) => $"{(value >= 0m ? "+" : "−")}{FormatMoney(Math.Abs(value))}";
+}

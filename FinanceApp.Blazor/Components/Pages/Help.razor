@@ -1,0 +1,8 @@
+@page "/help"
+@page "/help/{ArticleSlug}"
+<PageTitle>Справка</PageTitle>
+<h1>Справка</h1>
+
+@code {
+    [Parameter] public string? ArticleSlug { get; set; }
+}

@@ -1,0 +1,1091 @@
+@page "/portfolios/{Id:int}"
+@using System.ComponentModel.DataAnnotations
+@using System.Globalization
+@using System.Net
+@using System.Net.Http.Headers
+@using System.Net.Http.Json
+@using System.Text.Json
+@using FinanceApp.Blazor.Components.Models
+@inject IHttpClientFactory HttpClientFactory
+@inject IJSRuntime JS
+
+<PageTitle>@PageHeading</PageTitle>
+
+<div class="portfolio-detail-page">
+    <div class="portfolio-detail-heading">
+        <div>
+            <p class="portfolio-detail-name">@(_portfolio?.Name ?? "Портфель")</p>
+            <h1>@PageHeading</h1>
+        </div>
+        @if (SelectedSection == "positions" && !_loading)
+        {
+            <div class="portfolio-detail-actions">
+                <button class="portfolio-refresh-button" @onclick="LoadPortfolioAsync" disabled="@_loading">Обновить</button>
+                <button class="portfolio-primary-button" @onclick="OpenAddPositionAsync">Добавить позицию</button>
+            </div>
+        }
+        else if (SelectedSection == "transactions" && !_transactionsLoading)
+        {
+            <div class="portfolio-detail-actions">
+                <button class="portfolio-refresh-button" @onclick="LoadTransactionsAsync">Обновить</button>
+            </div>
+        }
+    </div>
+
+    @if (SelectedSection == "positions")
+    {
+        @if (_loading)
+        {
+            <div class="portfolio-state">Загрузка позиций…</div>
+        }
+        else if (!string.IsNullOrWhiteSpace(_error))
+        {
+            <div class="portfolio-state portfolio-state-error" role="alert">
+                <p>@_error</p>
+                @if (_requiresLogin)
+                {
+                    <a class="portfolio-login-link" href="/login">Войти</a>
+                }
+                <button class="portfolio-refresh-button" @onclick="LoadPortfolioAsync">Повторить</button>
+            </div>
+        }
+        else if (_portfolio?.Items.Count is null or 0)
+        {
+            <div class="portfolio-state">В этом портфеле пока нет позиций.</div>
+        }
+        else
+        {
+            <div class="positions-summary">
+                <div class="positions-summary-card">
+                    <span>Общая стоимость</span>
+                    <strong>@FormatMoney(TotalCurrentValue)</strong>
+                </div>
+                <div class="positions-summary-card">
+                    <span>Общий P&amp;L (€)</span>
+                    <strong class="@ProfitClass(TotalProfitLoss)">@FormatSignedMoney(TotalProfitLoss)</strong>
+                </div>
+                <div class="positions-summary-card">
+                    <span>Общий P&amp;L (%)</span>
+                    <strong class="@ProfitClass(TotalProfitPercent)">@FormatSignedPercent(TotalProfitPercent)</strong>
+                </div>
+                <div class="positions-summary-card">
+                    <span>Позиций</span>
+                    <strong>@_portfolio.Items.Count</strong>
+                </div>
+                <div class="positions-summary-card positions-summary-daily-eur">
+                    <span>Изменение за день (€)</span>
+                    <strong class="@ProfitClass(DailyChangeEur ?? 0m)">@(DailyChangeEur is decimal dailyEur ? FormatSignedMoney(dailyEur) : "—")</strong>
+                </div>
+                <div class="positions-summary-card">
+                    <span>Изменение за день (%)</span>
+                    <strong class="@ProfitClass(DailyChangePercent ?? 0m)">@(DailyChangePercent is decimal dailyPercent ? FormatSignedPercent(dailyPercent) : "—")</strong>
+                </div>
+            </div>
+
+            <PortfolioPositionsTable Items="_portfolio.Items" OnFundamentals="OpenFundamentalsAsync" OnEdit="BeginEdit" OnDelete="AskDelete" />
+        }
+    }
+    else
+    {
+        <PortfolioTransactionsTable Transactions="@_transactions" StockValue="@TotalCurrentValue" Loading="@_transactionsLoading" Error="@_transactionsError"
+                                    OnCreate="OpenNewTransaction" OnRefresh="LoadTransactionsAsync" OnEdit="OpenEditTransaction" OnDelete="DeleteTransactionAsync" />
+    }
+</div>
+
+@if (_addPositionOpen)
+{
+    <div class="dialog-backdrop" role="presentation" @onclick="CloseAddPosition">
+        <section class="action-dialog" role="dialog" aria-modal="true" aria-labelledby="add-position-title" @onclick:stopPropagation>
+            <h2 id="add-position-title">Добавить позицию</h2>
+            @if (!string.IsNullOrWhiteSpace(_addError))
+            {
+                <div class="login-error" role="alert">@_addError</div>
+            }
+            @if (!string.IsNullOrWhiteSpace(_stockOptionsError))
+            {
+                <div class="login-error" role="alert">@_stockOptionsError</div>
+            }
+            <EditForm Model="_addModel" OnValidSubmit="AddPositionAsync" FormName="add-position-form">
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+                <div class="login-field stock-autocomplete-field">
+                    <label for="add-stock-search">Акция</label>
+                    <input id="add-stock-search" class="stock-search-input" type="search" role="combobox"
+                           aria-autocomplete="list" aria-controls="stock-search-results" aria-expanded="@_stockSearchOpen"
+                           autocomplete="off" placeholder="Введите тикер или название"
+                           value="@_stockSearch" @oninput="OnStockSearchChanged" />
+                    @if (_stockSearchOpen)
+                    {
+                        <div id="stock-search-results" class="stock-autocomplete-results" role="listbox">
+                            @if (_loadingStockOptions)
+                            {
+                                <div class="stock-search-message">Поиск акций…</div>
+                            }
+                            else if (!string.IsNullOrWhiteSpace(_stockOptionsError))
+                            {
+                                <div class="stock-search-message stock-search-error">@_stockOptionsError</div>
+                            }
+                            else if (_stockOptions.Count == 0)
+                            {
+                                <div class="stock-search-message">@(_stockSearchMessage ?? "Совпадений не найдено.")</div>
+                            }
+                            else
+                            {
+                                @foreach (var stock in _stockOptions)
+                                {
+                                    <button type="button" role="option" class="stock-search-option" @onclick="() => SelectStock(stock)">
+                                        <span><strong>@stock.Ticker</strong> <small>[@stock.Exchange]</small><br />@stock.Name</span>
+                                        <span class="stock-search-price">@FormatMoney(stock.CurrentPrice)</span>
+                                    </button>
+                                }
+                            }
+                        </div>
+                    }
+                    <ValidationMessage For="@(() => _addModel.StockId)" />
+                </div>
+                <div class="login-field">
+                    <label for="add-quantity">Количество</label>
+                    <InputNumber id="add-quantity" @bind-Value="_addModel.Quantity" step="0.01" min="0.01" />
+                    <ValidationMessage For="@(() => _addModel.Quantity)" />
+                </div>
+                <div class="login-field">
+                    <label for="add-buy-price">Цена покупки (€)</label>
+                    <InputNumber id="add-buy-price" @bind-Value="_addModel.BuyPrice" step="0.01" min="0" />
+                    <ValidationMessage For="@(() => _addModel.BuyPrice)" />
+                </div>
+                <div class="dialog-actions">
+                    <button type="button" class="dialog-secondary-button" @onclick="CloseAddPosition">Отмена</button>
+                    <button type="submit" class="login-submit" disabled="@(_savingPosition || _loadingStockOptions || _addModel.StockId is null)">
+                        @(_savingPosition ? "Добавление…" : "Добавить")
+                    </button>
+                </div>
+            </EditForm>
+        </section>
+    </div>
+}
+@if (_editingPosition is not null)
+{
+    <div class="dialog-backdrop" role="presentation" @onclick="CloseEdit">
+        <section class="action-dialog" role="dialog" aria-modal="true" aria-labelledby="edit-position-title" @onclick:stopPropagation>
+            <h2 id="edit-position-title">Редактировать позицию</h2>
+            <p class="action-dialog-subtitle">@_editingPosition.Stock?.Ticker — @_editingPosition.Stock?.Name</p>
+            @if (!string.IsNullOrWhiteSpace(_editError))
+            {
+                <div class="login-error" role="alert">@_editError</div>
+            }
+            <EditForm Model="_editModel" OnValidSubmit="SavePositionAsync" FormName="edit-position-form">
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+                <div class="login-field">
+                    <label for="edit-quantity">Количество</label>
+                    <InputNumber id="edit-quantity" @bind-Value="_editModel.Quantity" step="0.01" min="0.01" />
+                    <ValidationMessage For="@(() => _editModel.Quantity)" />
+                </div>
+                <div class="login-field">
+                    <label for="edit-buy-price">Цена покупки (€)</label>
+                    <InputNumber id="edit-buy-price" @bind-Value="_editModel.BuyPrice" step="0.01" min="0" />
+                    <ValidationMessage For="@(() => _editModel.BuyPrice)" />
+                </div>
+                <div class="dialog-actions">
+                    <button type="button" class="dialog-secondary-button" @onclick="CloseEdit">Отмена</button>
+                    <button type="submit" class="login-submit" disabled="@_savingPosition">@(_savingPosition ? "Сохранение…" : "Сохранить")</button>
+                </div>
+            </EditForm>
+        </section>
+    </div>
+}
+
+@if (_deletingPosition is not null)
+{
+    <div class="dialog-backdrop" role="presentation" @onclick="CancelDelete">
+        <section class="action-dialog action-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-position-title" @onclick:stopPropagation>
+            <h2 id="delete-position-title">Удалить позицию?</h2>
+            <p>Позиция @_deletingPosition.Stock?.Ticker будет удалена из портфеля.</p>
+            @if (!string.IsNullOrWhiteSpace(_deleteError))
+            {
+                <div class="login-error" role="alert">@_deleteError</div>
+            }
+            <div class="dialog-actions">
+                <button type="button" class="dialog-secondary-button" @onclick="CancelDelete">Отмена</button>
+                <button type="button" class="dialog-danger-button" @onclick="DeletePositionAsync" disabled="@_deleting">
+                    @(_deleting ? "Удаление…" : "Удалить")
+                </button>
+            </div>
+        </section>
+    </div>
+}
+
+@if (_fundamentalStock is not null)
+{
+    <StockFundamentalsPanel StockId="@_fundamentalStock.Id" Ticker="@_fundamentalStock.Ticker" Name="@_fundamentalStock.Name" OnClose="CloseFundamentals" />
+}
+
+@if (_transactionModalOpen)
+{
+    <div class="dialog-backdrop" role="presentation" @onclick="CloseTransactionModal">
+        <section class="action-dialog transaction-dialog" role="dialog" aria-modal="true" aria-labelledby="transaction-dialog-title" @onclick:stopPropagation>
+            <h2 id="transaction-dialog-title">@(_editingTransaction is null ? "Новая транзакция" : "Редактировать транзакцию")</h2>
+            @if (!string.IsNullOrWhiteSpace(_transactionFormError))
+            {
+                <div class="login-error" role="alert">@_transactionFormError</div>
+            }
+            <EditForm Model="_transactionForm" OnValidSubmit="SaveTransactionAsync" FormName="@($"portfolio-transaction-{Id}")" method="post">
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+                <div class="login-field">
+                    <label for="transaction-type">Тип</label>
+                    <InputSelect id="transaction-type" @bind-Value="_transactionForm.Type">
+                        <option value="Deposit">Пополнение</option><option value="Withdrawal">Вывод</option><option value="Buy">Покупка</option><option value="Sell">Продажа</option><option value="Dividend">Дивиденды</option>
+                    </InputSelect>
+                </div>
+                <div class="login-field">
+                    <label for="transaction-amount">Сумма (€)</label>
+                    <InputNumber id="transaction-amount" @bind-Value="_transactionForm.Amount" min="0.01" step="0.01" />
+                    <ValidationMessage For="@(() => _transactionForm.Amount)" />
+                </div>
+                <div class="login-field">
+                    <label for="transaction-created-at">Дата и время</label>
+                    <InputDate id="transaction-created-at" Type="InputDateType.DateTimeLocal" @bind-Value="_transactionForm.CreatedAt" />
+                </div>
+                <div class="login-field stock-autocomplete-field">
+                    <label for="transaction-stock-search">Акция</label>
+                    <input id="transaction-stock-search" class="stock-search-input" type="search" autocomplete="off" placeholder="Необязательно: введите тикер или название" value="@_transactionStockSearch" @oninput="OnTransactionStockSearchChanged" />
+                    @if (_transactionStockSearchOpen)
+                    {
+                        <div class="stock-autocomplete-results" role="listbox">
+                            @if (_transactionStockSearchLoading) { <div class="stock-search-message">Поиск акций…</div> }
+                            else if (_transactionStockOptions.Count == 0) { <div class="stock-search-message">Акции не найдены.</div> }
+                            else
+                            {
+                                @foreach (var stock in _transactionStockOptions)
+                                {
+                                    <button type="button" class="stock-autocomplete-option" role="option" @onclick="() => SelectTransactionStock(stock)"><strong>@stock.Ticker</strong> [@GetExchangeAbbreviation(stock.Exchange)] — @stock.Name</button>
+                                }
+                            }
+                        </div>
+                    }
+                    @if (_transactionForm.StockId is not null)
+                    {
+                        <div class="transaction-selected-stock">Выбрана акция: @_transactionStockSearch <button type="button" @onclick="ClearTransactionStock">Убрать</button></div>
+                    }
+                </div>
+                @if (_transactionForm.Type is "Buy" or "Sell" or "Dividend")
+                {
+                    <div class="transaction-form-grid">
+                        <div class="login-field"><label for="transaction-quantity">Количество</label><InputNumber id="transaction-quantity" @bind-Value="_transactionForm.Quantity" min="0" step="0.00000001" /></div>
+                        <div class="login-field"><label for="transaction-unit-price">Цена за единицу (€)</label><InputNumber id="transaction-unit-price" @bind-Value="_transactionForm.UnitPrice" min="0" step="0.01" /></div>
+                    </div>
+                    <div class="transaction-form-grid">
+                        <div class="login-field"><label for="transaction-code-type">Тип кода</label><InputSelect id="transaction-code-type" @bind-Value="_transactionForm.InstrumentCodeType"><option value="">Не указан</option><option value="ISIN">ISIN</option><option value="Ticker">Ticker</option></InputSelect></div>
+                        <div class="login-field"><label for="transaction-code">Код инструмента</label><InputText id="transaction-code" @bind-Value="_transactionForm.InstrumentCode" maxlength="32" /></div>
+                    </div>
+                }
+                <div class="login-field"><label for="transaction-description">Описание</label><InputText id="transaction-description" @bind-Value="_transactionForm.Description" /></div>
+                <div class="dialog-actions">
+                    <button type="button" class="dialog-secondary-button" @onclick="CloseTransactionModal">Отмена</button>
+                    <button type="submit" class="login-submit" disabled="@_transactionSaving">@(_transactionSaving ? "Сохранение…" : "Сохранить")</button>
+                </div>
+            </EditForm>
+        </section>
+    </div>
+}
+
+@code {
+    private static readonly CultureInfo RussianCulture = CultureInfo.GetCultureInfo("ru-RU");
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
+    [Parameter] public int Id { get; set; }
+    [SupplyParameterFromQuery(Name = "section")] public string? Section { get; set; }
+
+    private PortfolioDetailsViewModel? _portfolio;
+    private bool _loading = true;
+    private bool _requiresLogin;
+    private string? _error;
+    private int? _requestedPortfolioId;
+    private string? _requestedSection;
+    private bool _transactionsLoading;
+    private string? _transactionsError;
+    private List<PortfolioTransactionViewModel> _transactions = [];
+    private bool _transactionModalOpen;
+    private bool _transactionSaving;
+    private string? _transactionFormError;
+    private PortfolioTransactionViewModel? _editingTransaction;
+    private readonly TransactionFormModel _transactionForm = new();
+    private string _transactionStockSearch = string.Empty;
+    private bool _transactionStockSearchOpen;
+    private bool _transactionStockSearchLoading;
+    private List<StockOption> _transactionStockOptions = [];
+    private CancellationTokenSource? _transactionStockSearchCancellation;
+    private PortfolioPositionViewModel? _editingPosition;
+    private bool _addPositionOpen;
+    private bool _loadingStockOptions;
+    private List<StockOption> _stockOptions = [];
+    private string? _stockOptionsError;
+    private string _stockSearch = string.Empty;
+    private string? _stockSearchMessage;
+    private bool _stockSearchOpen;
+    private CancellationTokenSource? _stockSearchCancellation;
+    private string? _addError;
+    private readonly AddPositionModel _addModel = new();
+    private PortfolioPositionViewModel? _deletingPosition;
+    private PortfolioStockViewModel? _fundamentalStock;
+    private readonly EditPositionModel _editModel = new();
+    private string? _editError;
+    private string? _deleteError;
+    private bool _savingPosition;
+    private bool _deleting;
+
+    private string SelectedSection => Section?.ToLowerInvariant() == "transactions" ? "transactions" : "positions";
+    private string PageHeading => SelectedSection == "transactions" ? "Транзакции" : "Позиции";
+    private decimal TotalCurrentValue => _portfolio?.Items.Sum(item => (item.Stock?.CurrentPrice ?? 0m) * item.Quantity) ?? 0m;
+    private decimal TotalCost => _portfolio?.Items.Sum(item => item.BuyPrice * item.Quantity) ?? 0m;
+    private decimal TotalProfitLoss => TotalCurrentValue - TotalCost;
+    private decimal TotalProfitPercent => TotalCost > 0m ? TotalProfitLoss / TotalCost * 100m : 0m;
+    private decimal? DailyChangeEur
+    {
+        get
+        {
+            var validItems = _portfolio?.Items.Where(item => item.Stock?.CurrentPriceAt?.Date == DateTime.UtcNow.Date && item.Stock.CurrentPriceChange is not null).ToList() ?? [];
+            return validItems.Count == 0 ? null : validItems.Sum(item => item.Stock!.CurrentPriceChange!.Value * item.Quantity);
+        }
+    }
+    private decimal? DailyChangePercent
+    {
+        get
+        {
+            var change = DailyChangeEur;
+            if (change is null) return null;
+            var currentValue = _portfolio!.Items.Where(item => item.Stock?.CurrentPriceAt?.Date == DateTime.UtcNow.Date && item.Stock.CurrentPriceChange is not null).Sum(item => item.Stock!.CurrentPrice * item.Quantity);
+            var previousValue = currentValue - change.Value;
+            return previousValue == 0m ? null : change.Value / previousValue * 100m;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_requestedPortfolioId != Id)
+        {
+            _requestedPortfolioId = Id;
+            _requestedSection = SelectedSection;
+            await LoadPortfolioAsync();
+            if (SelectedSection == "transactions") await LoadTransactionsAsync();
+            return;
+        }
+
+        if (_requestedSection != SelectedSection)
+        {
+            _requestedSection = SelectedSection;
+            if (SelectedSection == "transactions") await LoadTransactionsAsync();
+        }
+    }
+
+    private async Task LoadTransactionsAsync()
+    {
+        _transactionsLoading = true;
+        _transactionsError = null;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null)
+            {
+                _transactionsError = "Войдите в приложение, чтобы увидеть транзакции.";
+                return;
+            }
+
+            var response = await client.GetAsync($"Portfolios/{Id}/finance/transactions");
+            if (!response.IsSuccessStatusCode)
+            {
+                _transactionsError = response.StatusCode == HttpStatusCode.Unauthorized
+                    ? "Войдите в приложение, чтобы увидеть транзакции."
+                    : $"Не удалось загрузить транзакции (HTTP {(int)response.StatusCode}).";
+                return;
+            }
+
+            _transactions = await response.Content.ReadFromJsonAsync<List<PortfolioTransactionViewModel>>(JsonOptions) ?? [];
+        }
+        catch (Exception)
+        {
+            _transactionsError = "Не удалось загрузить транзакции.";
+        }
+        finally
+        {
+            _transactionsLoading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void OpenNewTransaction()
+    {
+        _editingTransaction = null;
+        _transactionFormError = null;
+        _transactionForm.Type = "Deposit";
+        _transactionForm.Amount = 0m;
+        _transactionForm.CreatedAt = DateTime.Now;
+        _transactionForm.StockId = null;
+        _transactionForm.Description = string.Empty;
+        _transactionForm.Quantity = null;
+        _transactionForm.UnitPrice = null;
+        _transactionForm.InstrumentCode = string.Empty;
+        _transactionForm.InstrumentCodeType = null;
+        _transactionStockSearch = string.Empty;
+        _transactionModalOpen = true;
+    }
+
+    private void OpenEditTransaction(PortfolioTransactionViewModel transaction)
+    {
+        _editingTransaction = transaction;
+        _transactionFormError = null;
+        _transactionForm.Type = transaction.Type;
+        _transactionForm.Amount = transaction.Amount;
+        _transactionForm.CreatedAt = transaction.CreatedAt.ToLocalTime();
+        _transactionForm.StockId = transaction.StockId;
+        _transactionForm.Description = transaction.Description ?? string.Empty;
+        _transactionForm.Quantity = transaction.Quantity;
+        _transactionForm.UnitPrice = transaction.UnitPrice;
+        _transactionForm.InstrumentCode = transaction.InstrumentCode ?? string.Empty;
+        _transactionForm.InstrumentCodeType = transaction.InstrumentCodeType;
+        _transactionStockSearch = transaction.Stock is null ? string.Empty : $"{transaction.Stock.Ticker} — {transaction.Stock.Name}";
+        _transactionStockSearchOpen = false;
+        _transactionModalOpen = true;
+    }
+
+    private void CloseTransactionModal()
+    {
+        if (_transactionSaving) return;
+        _transactionModalOpen = false;
+        _transactionFormError = null;
+        _transactionStockSearchCancellation?.Cancel();
+        _transactionStockSearchOpen = false;
+    }
+
+    private async Task OnTransactionStockSearchChanged(ChangeEventArgs args)
+    {
+        _transactionStockSearch = args.Value?.ToString() ?? string.Empty;
+        _transactionForm.StockId = null;
+        _transactionStockOptions = [];
+        _transactionStockSearchLoading = false;
+        var query = _transactionStockSearch.Trim();
+        _transactionStockSearchOpen = query.Length >= 2;
+        _transactionStockSearchCancellation?.Cancel();
+        _transactionStockSearchCancellation?.Dispose();
+        _transactionStockSearchCancellation = null;
+        if (query.Length < 2) return;
+
+        var cancellation = new CancellationTokenSource();
+        _transactionStockSearchCancellation = cancellation;
+        _transactionStockSearchLoading = true;
+        try
+        {
+            await Task.Delay(250, cancellation.Token);
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null) return;
+            using var response = await client.GetAsync($"Stocks/search?q={Uri.EscapeDataString(query)}&limit=15", cancellation.Token);
+            if (response.IsSuccessStatusCode)
+            {
+                _transactionStockOptions = await response.Content.ReadFromJsonAsync<List<StockOption>>(JsonOptions, cancellation.Token) ?? [];
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch { _transactionFormError = "Не удалось выполнить поиск акции."; }
+        finally
+        {
+            if (!cancellation.IsCancellationRequested)
+            {
+                _transactionStockSearchLoading = false;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+    }
+
+    private void SelectTransactionStock(StockOption stock)
+    {
+        _transactionForm.StockId = stock.Id;
+        _transactionStockSearch = $"{stock.Ticker} — {stock.Name}";
+        _transactionStockSearchOpen = false;
+        _transactionStockOptions = [];
+        if (string.IsNullOrWhiteSpace(_transactionForm.InstrumentCode))
+        {
+            _transactionForm.InstrumentCode = stock.Ticker;
+            _transactionForm.InstrumentCodeType = "Ticker";
+        }
+    }
+
+    private void ClearTransactionStock()
+    {
+        _transactionForm.StockId = null;
+        _transactionStockSearch = string.Empty;
+        _transactionForm.InstrumentCode = string.Empty;
+        _transactionForm.InstrumentCodeType = null;
+        _transactionStockSearchOpen = false;
+    }
+
+    private async Task SaveTransactionAsync()
+    {
+        _transactionSaving = true;
+        _transactionFormError = null;
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null)
+            {
+                _transactionFormError = "Войдите в приложение и повторите попытку.";
+                return;
+            }
+
+            var hasInstrument = _transactionForm.Type is "Buy" or "Sell" or "Dividend";
+            var payload = new
+            {
+                type = _transactionForm.Type,
+                amount = Math.Abs(_transactionForm.Amount),
+                createdAt = _transactionForm.CreatedAt.ToUniversalTime(),
+                stockId = _transactionForm.StockId,
+                description = string.IsNullOrWhiteSpace(_transactionForm.Description) ? null : _transactionForm.Description.Trim(),
+                instrumentCode = hasInstrument && !string.IsNullOrWhiteSpace(_transactionForm.InstrumentCode) ? _transactionForm.InstrumentCode.Trim() : null,
+                instrumentCodeType = hasInstrument ? _transactionForm.InstrumentCodeType : null,
+                quantity = hasInstrument ? _transactionForm.Quantity : null,
+                unitPrice = hasInstrument ? _transactionForm.UnitPrice : null
+            };
+
+            using var response = _editingTransaction is null
+                ? await client.PostAsJsonAsync($"Portfolios/{Id}/finance/transactions", payload)
+                : await client.PutAsJsonAsync($"Portfolios/{Id}/finance/transactions/{_editingTransaction.Id}", payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                _transactionFormError = $"Не удалось сохранить транзакцию (HTTP {(int)response.StatusCode}).";
+                return;
+            }
+
+            var refreshPositions = _transactionForm.Type is "Buy" or "Sell";
+            _transactionModalOpen = false;
+            await LoadTransactionsAsync();
+            if (refreshPositions) await LoadPortfolioAsync();
+        }
+        catch
+        {
+            _transactionFormError = "Не удалось связаться с API.";
+        }
+        finally
+        {
+            _transactionSaving = false;
+        }
+    }
+
+    private async Task DeleteTransactionAsync(PortfolioTransactionViewModel transaction)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "Удалить транзакцию?")) return;
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null) return;
+            using var response = await client.DeleteAsync($"Portfolios/{Id}/finance/transactions/{transaction.Id}");
+            if (!response.IsSuccessStatusCode)
+            {
+                _transactionsError = $"Не удалось удалить транзакцию (HTTP {(int)response.StatusCode}).";
+                return;
+            }
+            await LoadTransactionsAsync();
+            if (transaction.Type is "Buy" or "Sell") await LoadPortfolioAsync();
+        }
+        catch
+        {
+            _transactionsError = "Не удалось связаться с API.";
+        }
+    }
+
+    private async Task LoadPortfolioAsync()
+    {
+        _loading = true;
+        _error = null;
+        _requiresLogin = false;
+        StateHasChanged();
+
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null)
+            {
+                _requiresLogin = true;
+                _error = "Войдите в приложение, чтобы увидеть позиции.";
+                return;
+            }
+
+            using var response = await client.GetAsync($"Portfolios/{Id}");
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                _requiresLogin = true;
+                _error = "Сессия истекла. Войдите в приложение и попробуйте снова.";
+            }
+            else if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                _error = "Портфель не найден.";
+            }
+            else if (!response.IsSuccessStatusCode)
+            {
+                _error = $"Не удалось загрузить позиции (HTTP {(int)response.StatusCode}).";
+            }
+            else
+            {
+                _portfolio = await response.Content.ReadFromJsonAsync<PortfolioDetailsViewModel>(JsonOptions);
+                if (_portfolio is null)
+                {
+                    _error = "Сервер не вернул данные портфеля.";
+                }
+            }
+        }
+        catch
+        {
+            _error = "Не удалось связаться с API. Проверьте подключение и попробуйте ещё раз.";
+        }
+        finally
+        {
+            _loading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task OpenAddPositionAsync()
+    {
+        _addPositionOpen = true;
+        _addError = null;
+        _stockOptionsError = null;
+        _stockSearchMessage = "Введите не менее двух символов для поиска.";
+        _stockSearchOpen = false;
+        _stockSearch = string.Empty;
+        _stockOptions.Clear();
+        _addModel.StockId = null;
+        _addModel.Quantity = 0m;
+        _addModel.BuyPrice = 0m;
+    }
+
+    private void CloseAddPosition()
+    {
+        if (!_savingPosition)
+        {
+            _addPositionOpen = false;
+            _addError = null;
+        }
+    }
+
+    private void SelectStock(StockOption stock)
+    {
+        _addModel.StockId = stock.Id;
+        _stockSearch = $"{stock.Ticker} [{stock.Exchange}] — {stock.Name}";
+        _stockSearchOpen = false;
+        _stockSearchMessage = null;
+        _stockOptionsError = null;
+        _stockOptions.Clear();
+    }
+
+    private async Task OnStockSearchChanged(ChangeEventArgs args)
+    {
+        _stockSearch = args.Value?.ToString() ?? string.Empty;
+        _addModel.StockId = null;
+        _stockOptions.Clear();
+        _stockOptionsError = null;
+
+        var query = _stockSearch.Trim();
+        _stockSearchOpen = query.Length >= 2;
+        _stockSearchMessage = query.Length < 2 ? "Введите не менее двух символов для поиска." : null;
+
+        _stockSearchCancellation?.Cancel();
+        _stockSearchCancellation?.Dispose();
+        _stockSearchCancellation = null;
+
+        if (query.Length < 2)
+        {
+            _loadingStockOptions = false;
+            return;
+        }
+
+        var cancellation = new CancellationTokenSource();
+        _stockSearchCancellation = cancellation;
+        _loadingStockOptions = true;
+        try
+        {
+            await Task.Delay(250, cancellation.Token);
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null)
+            {
+                _stockOptionsError = "Войдите в приложение для поиска акций.";
+                return;
+            }
+
+            var url = $"Stocks/search?q={Uri.EscapeDataString(query)}&limit=15";
+            using var response = await client.GetAsync(url, cancellation.Token);
+            if (!response.IsSuccessStatusCode)
+            {
+                _stockOptionsError = $"Не удалось выполнить поиск (HTTP {(int)response.StatusCode}).";
+                return;
+            }
+
+            _stockOptions = await response.Content.ReadFromJsonAsync<List<StockOption>>(JsonOptions, cancellation.Token) ?? [];
+            if (_stockOptions.Count == 0)
+            {
+                _stockSearchMessage = "Совпадений не найдено.";
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch
+        {
+            if (!cancellation.IsCancellationRequested)
+            {
+                _stockOptionsError = "Не удалось связаться с API.";
+            }
+        }
+        finally
+        {
+            if (!cancellation.IsCancellationRequested)
+            {
+                _loadingStockOptions = false;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+    }
+
+    private async Task AddPositionAsync()
+    {
+        if (_addModel.StockId is null)
+        {
+            _addError = "Выберите акцию.";
+            return;
+        }
+
+        _savingPosition = true;
+        _addError = null;
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null)
+            {
+                _addError = "Войдите в приложение и повторите попытку.";
+                return;
+            }
+
+            var request = new AddPositionRequest(_addModel.StockId.Value, _addModel.Quantity, _addModel.BuyPrice);
+            using var response = await client.PostAsJsonAsync($"Portfolios/{Id}/items", request);
+            if (!response.IsSuccessStatusCode)
+            {
+                _addError = $"Не удалось добавить позицию (HTTP {(int)response.StatusCode}).";
+                return;
+            }
+
+            _addPositionOpen = false;
+            await LoadPortfolioAsync();
+        }
+        catch
+        {
+            _addError = "Не удалось связаться с API.";
+        }
+        finally
+        {
+            _savingPosition = false;
+        }
+    }
+
+    private void BeginEdit(PortfolioPositionViewModel item)
+    {
+        _editingPosition = item;
+        _editError = null;
+        _editModel.Quantity = item.Quantity;
+        _editModel.BuyPrice = item.BuyPrice;
+    }
+
+    private void CloseEdit()
+    {
+        if (!_savingPosition)
+        {
+            _editingPosition = null;
+            _editError = null;
+        }
+    }
+
+    private async Task SavePositionAsync()
+    {
+        if (_editingPosition is null)
+        {
+            return;
+        }
+
+        _savingPosition = true;
+        _editError = null;
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null)
+            {
+                _editError = "Войдите в приложение и повторите попытку.";
+                return;
+            }
+
+            var request = new UpdatePositionRequest(_editingPosition.StockId, _editModel.Quantity, _editModel.BuyPrice);
+            using var response = await client.PutAsJsonAsync($"Portfolios/{Id}/items/{_editingPosition.Id}", request);
+            if (!response.IsSuccessStatusCode)
+            {
+                _editError = $"Не удалось сохранить позицию (HTTP {(int)response.StatusCode}).";
+                return;
+            }
+
+            _editingPosition = null;
+            await LoadPortfolioAsync();
+        }
+        catch
+        {
+            _editError = "Не удалось связаться с API.";
+        }
+        finally
+        {
+            _savingPosition = false;
+        }
+    }
+
+    private void AskDelete(PortfolioPositionViewModel item)
+    {
+        _deletingPosition = item;
+        _deleteError = null;
+    }
+
+    private void CancelDelete()
+    {
+        if (!_deleting)
+        {
+            _deletingPosition = null;
+            _deleteError = null;
+        }
+    }
+
+    private async Task DeletePositionAsync()
+    {
+        if (_deletingPosition is null)
+        {
+            return;
+        }
+
+        _deleting = true;
+        _deleteError = null;
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null)
+            {
+                _deleteError = "Войдите в приложение и повторите попытку.";
+                return;
+            }
+
+            using var response = await client.DeleteAsync($"Portfolios/{Id}/items/{_deletingPosition.Id}");
+            if (!response.IsSuccessStatusCode)
+            {
+                _deleteError = $"Не удалось удалить позицию (HTTP {(int)response.StatusCode}).";
+                return;
+            }
+
+            _deletingPosition = null;
+            await LoadPortfolioAsync();
+        }
+        catch
+        {
+            _deleteError = "Не удалось связаться с API.";
+        }
+        finally
+        {
+            _deleting = false;
+        }
+    }
+
+    private Task OpenFundamentalsAsync(PortfolioStockViewModel? stock)
+    {
+        if (stock is not null) _fundamentalStock = stock;
+        return Task.CompletedTask;
+    }
+
+    private void CloseFundamentals()
+    {
+        _fundamentalStock = null;
+    }
+
+    private async Task<HttpClient?> CreateAuthenticatedClientAsync()
+    {
+        var module = await JS.InvokeAsync<IJSObjectReference>("import", "./portfolioApi.js");
+        string? token;
+        try
+        {
+            token = await module.InvokeAsync<string?>("getToken");
+        }
+        finally
+        {
+            await module.DisposeAsync();
+        }
+
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return null;
+        }
+
+        var client = HttpClientFactory.CreateClient("FinanceApi");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        return client;
+    }
+
+    private static string FormatMoney(decimal value) => $"{value.ToString("N2", RussianCulture)} €";
+    private static string FormatSignedMoney(decimal value) => $"{(value >= 0m ? "+" : "")}{FormatMoney(value)}";
+    private static string FormatSignedPercent(decimal value) => $"{(value >= 0m ? "+" : "")}{value.ToString("N2", RussianCulture)}%";
+    private static string GetExchangeAbbreviation(string exchange) => exchange.Trim().ToUpperInvariant() switch
+    {
+        "FRANKFURT" => "F",
+        "NASDAQ" or "NYSE" => "N",
+        _ => exchange.Trim()
+    };
+private static string FormatFinancial(decimal? value, string? currency = null)
+    {
+        if (value is not decimal amount) return "—";
+        var abs = Math.Abs(amount);
+        var divisor = abs >= 1_000_000_000_000m ? 1_000_000_000_000m
+            : abs >= 1_000_000_000m ? 1_000_000_000m
+            : abs >= 1_000_000m ? 1_000_000m
+            : abs >= 1_000m ? 1_000m
+            : 1m;
+        var suffix = divisor == 1_000_000_000_000m ? "T"
+            : divisor == 1_000_000_000m ? "B"
+            : divisor == 1_000_000m ? "M"
+            : divisor == 1_000m ? "K"
+            : string.Empty;
+        var formatted = divisor == 1m ? amount.ToString("N2", RussianCulture) : $"{(amount / divisor).ToString("N1", RussianCulture)}{suffix}";
+        return string.IsNullOrWhiteSpace(currency) ? formatted : $"{formatted} {currency}";
+    }
+    private static string FormatNumber(decimal? value, int digits = 2) => value?.ToString("N"+digits, RussianCulture) ?? "—";
+    private static string FormatDividendYield(decimal? value) => value is decimal amount ? $"{(amount * 100m).ToString("N2", RussianCulture)}%" : "—";
+    private static string FormatDate(DateTime? value) => value?.ToLocalTime().ToString("dd.MM.yyyy", RussianCulture) ?? "—";
+    private static string FormatEarningsDate(EarningsEvent item)
+    {
+        if (item.ReportDate is null) return "—";
+        var start = FormatDate(item.ReportDate);
+        var end = item.ReportDateEnd is null ? null : FormatDate(item.ReportDateEnd);
+        return !string.IsNullOrWhiteSpace(end) && end != start ? $"{start} – {end}" : start;
+    }
+    private static string FormatEarningsStatus(string status) => status switch
+    {
+        "Estimated" => "Ожидаемая",
+        "Confirmed" => "Подтверждённая",
+        _ => "Статус неизвестен"
+    };
+    private static string ProfitClass(decimal value) => value > 0m ? "positive" : value < 0m ? "negative" : string.Empty;
+
+    private sealed class AddPositionModel
+    {
+        [Required(ErrorMessage = "Выберите акцию.")]
+        public int? StockId { get; set; }
+
+        [Range(typeof(decimal), "0.01", "1000000000", ParseLimitsInInvariantCulture = true, ErrorMessage = "Количество должно быть больше нуля.")]
+        public decimal Quantity { get; set; }
+
+        [Range(typeof(decimal), "0", "1000000000", ParseLimitsInInvariantCulture = true, ErrorMessage = "Цена не может быть отрицательной.")]
+        public decimal BuyPrice { get; set; }
+    }
+
+    private sealed record AddPositionRequest(int StockId, decimal Quantity, decimal BuyPrice);
+
+    private sealed class StockOption
+    {
+        public StockOption() { }
+        public int Id { get; set; }
+        public string Ticker { get; set; } = string.Empty;
+        public string Exchange { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public decimal CurrentPrice { get; set; }
+    }
+
+    private sealed class EditPositionModel
+    {
+        [Range(typeof(decimal), "0.01", "1000000000", ParseLimitsInInvariantCulture = true, ErrorMessage = "Количество должно быть больше нуля.")]
+        public decimal Quantity { get; set; }
+
+        [Range(typeof(decimal), "0", "1000000000", ParseLimitsInInvariantCulture = true, ErrorMessage = "Цена не может быть отрицательной.")]
+        public decimal BuyPrice { get; set; }
+    }
+
+    private sealed record UpdatePositionRequest(int StockId, decimal Quantity, decimal BuyPrice);
+
+
+    private sealed class TransactionFormModel
+    {
+        [Required(ErrorMessage = "Выберите тип транзакции.")]
+        public string Type { get; set; } = "Deposit";
+
+        [Range(typeof(decimal), "0.01", "9999999999999999", ParseLimitsInInvariantCulture = true, ErrorMessage = "Сумма должна быть больше нуля.")]
+        public decimal Amount { get; set; }
+
+        public DateTime CreatedAt { get; set; } = DateTime.Now;
+        public int? StockId { get; set; }
+        public string? Description { get; set; }
+        public string? InstrumentCode { get; set; }
+        public string? InstrumentCodeType { get; set; }
+        public decimal? Quantity { get; set; }
+        public decimal? UnitPrice { get; set; }
+    }
+
+
+    private sealed class FundamentalsResponse
+    {
+        public FundamentalsResponse() { }
+        public string State { get; set; } = string.Empty;
+        public string? WarningMessage { get; set; }
+        public FundamentalsSnapshot? Snapshot { get; set; }
+        public List<FinancialPeriod> Periods { get; set; } = [];
+        public List<EarningsEvent> EarningsEvents { get; set; } = [];
+    }
+
+    private sealed class FundamentalsSnapshot
+    {
+        public FundamentalsSnapshot() { }
+        public decimal? MarketCap { get; set; }
+        public decimal? EnterpriseValue { get; set; }
+        public decimal? TotalDebt { get; set; }
+        public decimal? CashAndEquivalents { get; set; }
+        public decimal? RevenueTtm { get; set; }
+        public decimal? NetIncomeTtm { get; set; }
+        public decimal? EbitdaTtm { get; set; }
+        public decimal? FreeCashFlowTtm { get; set; }
+        public decimal? TotalAssets { get; set; }
+        public decimal? TotalLiabilities { get; set; }
+        public decimal? PeRatio { get; set; }
+        public decimal? ForwardPeRatio { get; set; }
+        public decimal? PbRatio { get; set; }
+        public decimal? DividendYield { get; set; }
+        public string? Currency { get; set; }
+        public string? Source { get; set; }
+    }
+
+    private sealed class FinancialPeriod
+    {
+        public FinancialPeriod() { }
+        public string PeriodType { get; set; } = string.Empty;
+        public DateTime? PeriodEndDate { get; set; }
+        public string? ReportedCurrency { get; set; }
+        public decimal? Revenue { get; set; }
+        public decimal? OperatingIncome { get; set; }
+        public decimal? NetIncome { get; set; }
+        public decimal? Ebitda { get; set; }
+        public decimal? FreeCashFlow { get; set; }
+    }
+
+    private sealed class EarningsEvent
+    {
+        public EarningsEvent() { }
+        public DateTime? ReportDate { get; set; }
+        public DateTime? ReportDateEnd { get; set; }
+        public string DateStatus { get; set; } = string.Empty;
+        public decimal? EpsEstimate { get; set; }
+        public decimal? EpsReported { get; set; }
+        public decimal? RevenueEstimate { get; set; }
+        public decimal? RevenueReported { get; set; }
+        public string? FiscalPeriod { get; set; }
+    }
+}
+
+
+
+
+
+

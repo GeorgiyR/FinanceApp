@@ -1,0 +1,130 @@
+@using System.Globalization
+@using System.Net.Http.Json
+@using System.Net.Http.Headers
+@using System.Text.Json
+@implements IAsyncDisposable
+@inject IHttpClientFactory HttpClientFactory
+@inject IJSRuntime JS
+
+<div class="dialog-backdrop" role="presentation" @onclick="Close">
+    <section class="action-dialog fundamentals-dialog" role="dialog" aria-modal="true" aria-labelledby="stock-fundamentals-title" @onclick:stopPropagation>
+        <div class="fundamentals-heading">
+            <div><h2 id="stock-fundamentals-title">@Ticker — фундаментальные данные</h2><p class="action-dialog-subtitle">@Name</p></div>
+            <button type="button" class="dialog-close-button" aria-label="Закрыть" @onclick="Close">×</button>
+        </div>
+        @if (_loading)
+        {
+            <div class="portfolio-state">Загрузка фундаментальных данных…</div>
+        }
+        else if (!string.IsNullOrWhiteSpace(_error))
+        {
+            <div class="portfolio-state portfolio-state-error" role="alert">@_error</div>
+        }
+        else if (_data?.Snapshot is null)
+        {
+            <div class="portfolio-state">@(_data?.WarningMessage ?? "Фундаментальные данные пока недоступны.")</div>
+        }
+        else
+        {
+            var snapshot = _data.Snapshot;
+            <div class="fundamentals-state">@(_data.State == "Fresh" ? "Свежие данные" : "Устаревшие данные") · источник: @snapshot.Source</div>
+            @if (!string.IsNullOrWhiteSpace(_data.WarningMessage)) { <div class="fundamentals-warning">@_data.WarningMessage</div> }
+            <div class="fundamentals-grid">
+                <div><span>Market Cap</span><strong>@Financial(snapshot.MarketCap, snapshot.Currency)</strong></div><div><span>Enterprise Value</span><strong>@Financial(snapshot.EnterpriseValue, snapshot.Currency)</strong></div>
+                <div><span>Total Debt</span><strong>@Financial(snapshot.TotalDebt, snapshot.Currency)</strong></div><div><span>Cash</span><strong>@Financial(snapshot.CashAndEquivalents, snapshot.Currency)</strong></div>
+                <div><span>TTM Revenue</span><strong>@Financial(snapshot.RevenueTtm, snapshot.Currency)</strong></div><div><span>TTM Net Income</span><strong>@Financial(snapshot.NetIncomeTtm, snapshot.Currency)</strong></div>
+                <div><span>TTM EBITDA</span><strong>@Financial(snapshot.EbitdaTtm, snapshot.Currency)</strong></div><div><span>TTM FCF</span><strong>@Financial(snapshot.FreeCashFlowTtm, snapshot.Currency)</strong></div>
+            </div>
+            <div class="fundamentals-tabs" role="tablist" aria-label="Разделы фундаментальных данных">
+                <button type="button" role="tab" aria-selected="@(_tab == "summary")" class="@(_tab == "summary" ? "active" : "")" @onclick="ShowSummary">Мультипликаторы</button>
+                <button type="button" role="tab" aria-selected="@(_tab == "annual")" class="@(_tab == "annual" ? "active" : "")" @onclick="ShowAnnual">Годовые</button>
+                <button type="button" role="tab" aria-selected="@(_tab == "quarterly")" class="@(_tab == "quarterly" ? "active" : "")" @onclick="ShowQuarterly">Квартальные</button>
+                <button type="button" role="tab" aria-selected="@(_tab == "earnings")" class="@(_tab == "earnings" ? "active" : "")" @onclick="ShowEarnings">Отчёты</button>
+            </div>
+            @if (_tab == "summary")
+            {
+                <div class="fundamentals-grid fundamentals-ratios">
+                    <div><span>P/E</span><strong>@Number(snapshot.PeRatio, 4)</strong></div><div><span>Forward P/E</span><strong>@Number(snapshot.ForwardPeRatio, 4)</strong></div>
+                    <div><span>P/B</span><strong>@Number(snapshot.PbRatio, 4)</strong></div><div><span>Dividend Yield</span><strong>@(snapshot.DividendYield is decimal y ? $"{(y * 100m).ToString("N2", CultureInfo.GetCultureInfo("ru-RU"))}%" : "—")</strong></div>
+                    <div><span>Total Assets</span><strong>@Financial(snapshot.TotalAssets, snapshot.Currency)</strong></div><div><span>Total Liabilities</span><strong>@Financial(snapshot.TotalLiabilities, snapshot.Currency)</strong></div>
+                </div>
+            }
+            else if (_tab is "annual" or "quarterly")
+            {
+                var type = _tab == "annual" ? "Annual" : "Quarterly";
+                var rows = _data.Periods.Where(p => p.PeriodType == type).OrderByDescending(p => p.PeriodEndDate).ToList();
+                @if (rows.Count == 0) { <div class="fundamentals-empty">Нет финансовых периодов</div> }
+                else
+                {
+                    <div class="fundamentals-table-wrap"><table class="fundamentals-table"><thead><tr><th>Период</th><th>Выручка</th><th>Опер. прибыль</th><th>Чистая прибыль</th><th>EBITDA</th><th>FCF</th></tr></thead><tbody>
+                    @foreach (var row in rows) { <tr><td>@(row.PeriodEndDate?.ToString("dd.MM.yyyy") ?? "—")</td><td>@Financial(row.Revenue, row.ReportedCurrency)</td><td>@Financial(row.OperatingIncome, row.ReportedCurrency)</td><td>@Financial(row.NetIncome, row.ReportedCurrency)</td><td>@Financial(row.Ebitda, row.ReportedCurrency)</td><td>@Financial(row.FreeCashFlow, row.ReportedCurrency)</td></tr> }
+                    </tbody></table></div>
+                }
+            }
+            else if (_data.EarningsEvents.Count == 0) { <div class="fundamentals-empty">Нет событий earnings</div> }
+            else
+            {
+                <div class="fundamentals-table-wrap"><table class="fundamentals-table"><thead><tr><th>Дата</th><th>Статус</th><th>Период</th><th>EPS est.</th><th>EPS rep.</th><th>Rev. est.</th><th>Rev. rep.</th></tr></thead><tbody>
+                @foreach (var item in _data.EarningsEvents.OrderByDescending(e => e.ReportDate)) { <tr><td>@(item.ReportDate?.ToString("dd.MM.yyyy") ?? "—")</td><td>@item.DateStatus</td><td>@(item.FiscalPeriod ?? "—")</td><td>@Number(item.EpsEstimate, 4)</td><td>@Number(item.EpsReported, 4)</td><td>@Financial(item.RevenueEstimate, null)</td><td>@Financial(item.RevenueReported, null)</td></tr> }
+                </tbody></table></div>
+            }
+        }
+        <div class="dialog-actions fundamentals-actions">
+            <button type="button" class="dialog-secondary-button" @onclick="Close">Закрыть</button>
+            <button type="button" class="login-submit fundamentals-refresh-button" @onclick="RefreshAsync" disabled="@_loading">@(_loading ? "Обновление…" : "Обновить данные")</button>
+        </div>
+    </section>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public int StockId { get; set; }
+    [Parameter, EditorRequired] public string Ticker { get; set; } = string.Empty;
+    [Parameter, EditorRequired] public string Name { get; set; } = string.Empty;
+    [Parameter] public EventCallback OnClose { get; set; }
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private FundamentalsData? _data;
+    private string? _error;
+    private string _tab = "summary";
+    private bool _loading;
+    private bool _initialized;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!_initialized) { _initialized = true; await LoadAsync(false); }
+    }
+
+    private async Task LoadAsync(bool refresh)
+    {
+        _loading = true; _error = null;
+        try
+        {
+            var module = await JS.InvokeAsync<IJSObjectReference>("import", "./portfolioApi.js");
+            string? token;
+            try { token = await module.InvokeAsync<string?>("getToken"); }
+            finally { await module.DisposeAsync(); }
+            if (string.IsNullOrWhiteSpace(token)) { _error = "Войдите в приложение и повторите попытку."; return; }
+            using var client = HttpClientFactory.CreateClient("FinanceApi");
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            using var response = refresh ? await client.PostAsync($"Stocks/{StockId}/fundamentals/refresh", null) : await client.GetAsync($"Stocks/{StockId}/fundamentals");
+            if (!response.IsSuccessStatusCode) { _error = $"Не удалось загрузить фундаментальные данные (HTTP {(int)response.StatusCode})."; return; }
+            _data = await response.Content.ReadFromJsonAsync<FundamentalsData>(JsonOptions);
+            if (_data is null) _error = "Сервер не вернул фундаментальные данные.";
+        }
+        catch { _error = "Не удалось связаться с API."; }
+        finally { _loading = false; }
+    }
+    private Task RefreshAsync() => LoadAsync(true);
+    private Task Close() => OnClose.InvokeAsync();
+    private void ShowSummary() => _tab = "summary";
+    private void ShowAnnual() => _tab = "annual";
+    private void ShowQuarterly() => _tab = "quarterly";
+    private void ShowEarnings() => _tab = "earnings";
+    private static string Financial(decimal? value, string? currency) => value is decimal amount ? $"{amount.ToString("N2", CultureInfo.GetCultureInfo("ru-RU"))} {currency}".Trim() : "—";
+    private static string Number(decimal? value, int decimals) => value is decimal number ? number.ToString($"N{decimals}", CultureInfo.GetCultureInfo("ru-RU")) : "—";
+
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    private sealed class FundamentalsData { public string State { get; set; } = ""; public string? WarningMessage { get; set; } public FundamentalsSnapshot? Snapshot { get; set; } public List<FinancialPeriod> Periods { get; set; } = []; public List<EarningsEvent> EarningsEvents { get; set; } = []; }
+    private sealed class FundamentalsSnapshot { public decimal? MarketCap { get; set; } public decimal? EnterpriseValue { get; set; } public decimal? TotalDebt { get; set; } public decimal? CashAndEquivalents { get; set; } public decimal? RevenueTtm { get; set; } public decimal? NetIncomeTtm { get; set; } public decimal? EbitdaTtm { get; set; } public decimal? FreeCashFlowTtm { get; set; } public decimal? TotalAssets { get; set; } public decimal? TotalLiabilities { get; set; } public decimal? PeRatio { get; set; } public decimal? ForwardPeRatio { get; set; } public decimal? PbRatio { get; set; } public decimal? DividendYield { get; set; } public string? Currency { get; set; } public string? Source { get; set; } }
+    private sealed class FinancialPeriod { public string PeriodType { get; set; } = ""; public DateTime? PeriodEndDate { get; set; } public string? ReportedCurrency { get; set; } public decimal? Revenue { get; set; } public decimal? OperatingIncome { get; set; } public decimal? NetIncome { get; set; } public decimal? Ebitda { get; set; } public decimal? FreeCashFlow { get; set; } }
+    private sealed class EarningsEvent { public DateTime? ReportDate { get; set; } public string DateStatus { get; set; } = ""; public decimal? EpsEstimate { get; set; } public decimal? EpsReported { get; set; } public decimal? RevenueEstimate { get; set; } public decimal? RevenueReported { get; set; } public string? FiscalPeriod { get; set; } }
+}

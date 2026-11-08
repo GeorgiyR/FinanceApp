@@ -1,0 +1,134 @@
+@page "/portfolios"
+@using System.Net.Http.Headers
+@using System.Net.Http.Json
+@using System.Text.Json
+@inject IJSRuntime JS
+@inject IHttpClientFactory HttpClientFactory
+
+<PageTitle>Портфели</PageTitle>
+
+<div class="portfolio-page">
+    <div class="portfolio-page-heading">
+        <div>
+            <h1>Портфели</h1>
+            <p class="portfolio-page-description">Ваши инвестиционные портфели</p>
+        </div>
+        <button class="portfolio-refresh-button" @onclick="LoadPortfoliosAsync" disabled="@_loading">
+            Обновить
+        </button>
+    </div>
+
+    @if (_loading)
+    {
+        <div class="portfolio-state">Загрузка портфелей…</div>
+    }
+    else if (!string.IsNullOrWhiteSpace(_error))
+    {
+        <div class="portfolio-state portfolio-state-error" role="alert">
+            <p>@_error</p>
+            @if (_requiresLogin)
+            {
+                <a class="portfolio-login-link" href="/login">Войти</a>
+            }
+            <button class="portfolio-refresh-button" @onclick="LoadPortfoliosAsync">Повторить</button>
+        </div>
+    }
+    else if (_portfolios.Count == 0)
+    {
+        <div class="portfolio-state">У вас пока нет портфелей.</div>
+    }
+    else
+    {
+        <div class="portfolio-list">
+            @foreach (var portfolio in _portfolios)
+            {
+                <a class="portfolio-card" href="@($"/portfolios/{portfolio.Id}")">
+                    <div class="portfolio-card-heading">
+                        <h2>@portfolio.Name</h2>
+                        <span class="portfolio-card-arrow" aria-hidden="true">→</span>
+                    </div>
+                    <div class="portfolio-card-meta">
+                        <span>Позиции: @(portfolio.Items?.Count ?? 0)</span>
+                        <span>Ордера: @(portfolio.Orders?.Count ?? 0)</span>
+                    </div>
+                </a>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private List<PortfolioSummary> _portfolios = [];
+    private bool _loading = true;
+    private string? _error;
+    private bool _requiresLogin;
+    private IJSObjectReference? _apiModule;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await LoadPortfoliosAsync();
+        }
+    }
+
+    private async Task LoadPortfoliosAsync()
+    {
+        _loading = true;
+        _error = null;
+        _requiresLogin = false;
+        StateHasChanged();
+
+        try
+        {
+            _apiModule ??= await JS.InvokeAsync<IJSObjectReference>("import", "./portfolioApi.js");
+            var token = await _apiModule.InvokeAsync<string?>("getToken");
+
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                _error = "Войдите в приложение, чтобы увидеть свои портфели.";
+                _requiresLogin = true;
+                return;
+            }
+
+            using var client = HttpClientFactory.CreateClient("FinanceApi");
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            using var response = await client.GetAsync("Portfolios");
+
+            if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+            {
+                _error = "Сессия истекла. Войдите в приложение и попробуйте снова.";
+                _requiresLogin = true;
+            }
+            else if (!response.IsSuccessStatusCode)
+            {
+                _error = $"Не удалось загрузить портфели (HTTP {(int)response.StatusCode}).";
+            }
+            else
+            {
+                _portfolios = await response.Content.ReadFromJsonAsync<List<PortfolioSummary>>(JsonOptions) ?? [];
+            }
+        }
+        catch (Exception)
+        {
+            _error = "Не удалось связаться с API. Проверьте его адрес в настройках и повторите попытку.";
+        }
+        finally
+        {
+            _loading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private sealed class PortfolioSummary
+    {
+        public PortfolioSummary() { }
+        public int Id { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public List<JsonElement>? Items { get; set; } = [];
+        public List<JsonElement>? Orders { get; set; } = [];
+    }
+}
+
+

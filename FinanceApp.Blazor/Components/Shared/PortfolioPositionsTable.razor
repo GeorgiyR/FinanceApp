@@ -1,0 +1,79 @@
+@using System.Globalization
+@using FinanceApp.Blazor.Components.Models
+
+<div class="positions-table-wrap">
+    <table class="positions-table">
+        <thead>
+            <tr>
+                <th>Тикер</th><th>Название</th><th class="numeric">Кол-во</th><th class="numeric">Цена покупки</th><th class="numeric">Тек. цена</th>
+                <th class="numeric daily-change-heading">Изм. за день<br />/ акция</th><th class="numeric daily-change-heading daily-change-percent-heading">Изм. за день<br />% / акция</th>
+                <th class="numeric daily-change-heading">Изм. за день<br />позиции</th><th class="numeric">Тек. стоимость</th><th class="numeric">P&amp;L (€)</th><th class="numeric">P&amp;L (%)</th><th class="actions-heading">Действия</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var item in Items.OrderBy(item => item.Stock?.Name, StringComparer.CurrentCultureIgnoreCase))
+            {
+                var currentPrice = item.Stock?.CurrentPrice ?? 0m;
+                var profitLoss = (currentPrice - item.BuyPrice) * item.Quantity;
+                var profitPercent = item.BuyPrice > 0m ? (currentPrice - item.BuyPrice) / item.BuyPrice * 100m : 0m;
+                <tr>
+                    <td class="ticker-cell">
+                        @if (!string.IsNullOrWhiteSpace(item.Stock?.Ticker))
+                        {
+                            <button type="button" class="ticker-chart-toggle" aria-expanded="@(_expandedPositionId == item.Id)" @onclick="() => ToggleChart(item.Id)">
+                                <span class="ticker-chart-caret @(_expandedPositionId == item.Id ? "expanded" : "")">›</span>@item.Stock.Ticker
+                            </button>
+                            @if (!string.IsNullOrWhiteSpace(item.Stock.Exchange))
+                            {
+                                <span class="ticker-exchange-abbreviation" title="@item.Stock.Exchange">@GetExchangeAbbreviation(item.Stock.Exchange)</span>
+                            }
+                        }
+                        else { <span>—</span> }
+                    </td>
+                    <td>@(item.Stock?.Name ?? "—")</td>
+                    <td class="numeric">@item.Quantity.ToString("N0", RussianCulture)</td>
+                    <td class="numeric">@FormatMoney(item.BuyPrice)</td>
+                    <td class="numeric">@FormatMoney(currentPrice)</td>
+                    <td class="numeric @ProfitClass(item.Stock?.CurrentPriceChange ?? 0m)">@(item.Stock?.CurrentPriceChange is decimal change ? FormatSignedMoney(change) : "—")</td>
+                    <td class="numeric @ProfitClass(item.Stock?.CurrentPriceChangePercent ?? 0m)">@(item.Stock?.CurrentPriceChangePercent is decimal percent ? FormatSignedPercent(percent) : "—")</td>
+                    <td class="numeric @ProfitClass(item.Stock?.CurrentPriceChange is decimal positionChange ? positionChange * item.Quantity : 0m)">
+                        @(item.Stock?.CurrentPriceAt?.Date == DateTime.UtcNow.Date && item.Stock.CurrentPriceChange is decimal dailyChange ? FormatSignedMoney(dailyChange * item.Quantity) : "—")
+                    </td>
+                    <td class="numeric">@FormatMoney(currentPrice * item.Quantity)</td>
+                    <td class="numeric @ProfitClass(profitLoss)">@FormatSignedMoney(profitLoss)</td>
+                    <td class="numeric @ProfitClass(profitPercent)">@FormatSignedPercent(profitPercent)</td>
+                    <td class="actions-cell"><div class="action-buttons">
+                        <button type="button" class="action-icon-button" title="Фундаментальные данные" aria-label="Фундаментальные данные для @item.Stock?.Ticker" @onclick="() => OnFundamentals.InvokeAsync(item.Stock)" disabled="@(item.Stock is null)">
+                            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.2a7.8 7.8 0 1 0 0 15.6 7.8 7.8 0 0 0 0-15.6Zm0 3.1v.1m0 2.4v5.1" /></svg>
+                        </button>
+                        <button type="button" class="action-icon-button" title="Изменить позицию" aria-label="Изменить позицию @item.Stock?.Ticker" @onclick="() => OnEdit.InvokeAsync(item)">
+                            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m3 14.8-.8 3 3-.8L16.8 5.4a1.8 1.8 0 0 0-2.6-2.6L3 14.8Zm9.9-9.9 2.6 2.6" /></svg>
+                        </button>
+                        <button type="button" class="action-icon-button action-delete-button" title="Удалить позицию" aria-label="Удалить позицию @item.Stock?.Ticker" @onclick="() => OnDelete.InvokeAsync(item)">
+                            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14m-9 0V3h4v2m3 0-.8 12H5.8L5 5m3 3v6m4-6v6" /></svg>
+                        </button>
+                    </div></td>
+                </tr>
+                @if (_expandedPositionId == item.Id && item.Stock is not null)
+                {
+                    <tr class="position-history-row"><td colspan="12"><StockHistoryPanel Stock="item.Stock" /></td></tr>
+                }
+            }
+        </tbody>
+    </table>
+</div>
+
+@code {
+    private static readonly CultureInfo RussianCulture = CultureInfo.GetCultureInfo("ru-RU");
+    [Parameter, EditorRequired] public IReadOnlyList<PortfolioPositionViewModel> Items { get; set; } = [];
+    [Parameter] public EventCallback<PortfolioStockViewModel?> OnFundamentals { get; set; }
+    [Parameter] public EventCallback<PortfolioPositionViewModel> OnEdit { get; set; }
+    [Parameter] public EventCallback<PortfolioPositionViewModel> OnDelete { get; set; }
+    private int? _expandedPositionId;
+    private void ToggleChart(int id) => _expandedPositionId = _expandedPositionId == id ? null : id;
+    private static string GetExchangeAbbreviation(string exchange) => exchange.Trim().ToUpperInvariant() switch { "FRANKFURT" => "F", "NASDAQ" or "NYSE" => "N", _ => exchange.Trim() };
+    private static string FormatMoney(decimal value) => $"{value.ToString("N2", RussianCulture)} €";
+    private static string FormatSignedMoney(decimal value) => $"{(value >= 0m ? "+" : "")}{FormatMoney(value)}";
+    private static string FormatSignedPercent(decimal value) => $"{(value >= 0m ? "+" : "")}{value.ToString("N2", RussianCulture)}%";
+    private static string ProfitClass(decimal value) => value > 0m ? "positive" : value < 0m ? "negative" : string.Empty;
+}

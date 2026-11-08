@@ -1,0 +1,129 @@
+@inject IHttpClientFactory HttpClientFactory
+@inject IJSRuntime JS
+
+<nav class="sidebar-nav" aria-label="Основная навигация">
+    <NavLink class="nav-link" href="/" Match="NavLinkMatch.All">Главная</NavLink>
+
+    <NavLink class="nav-link nav-link-section" href="/portfolios" Match="NavLinkMatch.All">Портфели</NavLink>
+    <div class="nav-portfolio-items" aria-label="Ваши портфели">
+        @if (_loading)
+        {
+            <span class="nav-placeholder">Загрузка…</span>
+        }
+        else if (_portfolios.Count == 0 && _isAuthenticated)
+        {
+            <span class="nav-placeholder">Нет портфелей</span>
+        }
+        else if (!_isAuthenticated)
+        {
+            <NavLink class="nav-link nav-portfolio-link" href="/login">Войти</NavLink>
+        }
+        @foreach (var portfolio in _portfolios)
+        {
+            <details class="nav-group nav-portfolio-group">
+                <summary>@portfolio.Name</summary>
+                <div class="nav-children">
+                    <NavLink class="nav-link" href="@($"/portfolios/{portfolio.Id}?section=positions")">Позиции</NavLink>
+                    <NavLink class="nav-link" href="@($"/portfolios/{portfolio.Id}?section=transactions")">Транзакции</NavLink>
+                </div>
+            </details>
+        }
+    </div>
+
+    <details class="nav-group" open><summary>Акции</summary>
+        <div class="nav-children">
+            <NavLink class="nav-link" href="/stocks" Match="NavLinkMatch.All">Отслеживаемые акции</NavLink>
+            <NavLink class="nav-link" href="/stocks/catalog">Список акций</NavLink>
+            <details class="nav-group nav-group-nested">
+                <summary>Мировые индексы</summary>
+                <div class="nav-children">
+                    <NavLink class="nav-link" href="/market-indices" Match="NavLinkMatch.All">Управление</NavLink>
+                </div>
+            </details>
+        </div>
+    </details>
+
+    <details class="nav-group">
+        <summary>Справочники</summary>
+        <div class="nav-children">
+            <NavLink class="nav-link" href="/sectors">Секторы и отрасли</NavLink>
+            <NavLink class="nav-link" href="/financial-metrics">Финансовые показатели</NavLink>
+            <NavLink class="nav-link" href="/help">Справка</NavLink>
+        </div>
+    </details>
+
+    <details class="nav-group">
+        <summary>Система</summary>
+        <div class="nav-children">
+            <NavLink class="nav-link" href="/system/processes">Журнал процессов</NavLink>
+        </div>
+    </details>
+
+    <div class="sidebar-bottom">
+        <NavLink class="nav-link" href="/profile">Профиль</NavLink>
+        <NavLink class="nav-link" href="/logout">Выйти</NavLink>
+    </div>
+</nav>
+
+@code {
+    private bool _loading = true;
+    private bool _isAuthenticated;
+    private List<PortfolioNavigationItem> _portfolios = [];
+    private IJSObjectReference? _apiModule;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await LoadPortfoliosAsync();
+        }
+    }
+
+    private async Task LoadPortfoliosAsync()
+    {
+        try
+        {
+            _apiModule ??= await JS.InvokeAsync<IJSObjectReference>("import", "./portfolioApi.js");
+            var token = await _apiModule.InvokeAsync<string?>("getToken");
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                return;
+            }
+
+            _isAuthenticated = true;
+            using var client = HttpClientFactory.CreateClient("FinanceApi");
+            client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+            using var response = await client.GetAsync("Portfolios");
+            if (response.IsSuccessStatusCode)
+            {
+                _portfolios = await response.Content.ReadFromJsonAsync<List<PortfolioNavigationItem>>() ?? [];
+            }
+            else if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+            {
+                _isAuthenticated = false;
+            }
+        }
+        catch
+        {
+            _portfolios = [];
+        }
+        finally
+        {
+            _loading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private sealed class PortfolioNavigationItem
+    {
+        public PortfolioNavigationItem() { }
+        public int Id { get; set; }
+        public string Name { get; set; } = string.Empty;
+    }
+}
+
+
+
+
+
+

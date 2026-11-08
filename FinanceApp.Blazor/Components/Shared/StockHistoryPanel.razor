@@ -1,0 +1,287 @@
+@using System.Globalization
+@using System.Net
+@using System.Net.Http.Headers
+@using System.Net.Http.Json
+@using System.Text.Json
+@using FinanceApp.Blazor.Components.Models
+@inject IHttpClientFactory HttpClientFactory
+@inject IJSRuntime JS
+
+<section class="position-history-panel" aria-label="История цены @Stock.Ticker">
+    <div class="position-history-toolbar">
+        <div><strong>История цены: @Stock.Ticker</strong><span>@Stock.Name</span></div>
+        <div class="history-range-buttons" role="group" aria-label="Период истории">
+            @foreach (var range in HistoryRanges)
+            {
+                <button type="button" class="@(_historyRange == range.Value ? "active" : "")" @onclick="() => LoadHistoryAsync(range.Value)">@range.Label</button>
+            }
+        </div>
+    </div>
+    @if (_historyLoading)
+    {
+        <div class="position-history-state">Загрузка истории…</div>
+    }
+    else if (!string.IsNullOrWhiteSpace(_historyError))
+    {
+        <div class="position-history-state position-history-error" role="alert">@_historyError <button type="button" @onclick="() => LoadHistoryAsync(_historyRange)">Повторить</button></div>
+    }
+    else if (_history?.Points.Count is null or 0)
+    {
+        <div class="position-history-state">Исторические данные отсутствуют.</div>
+    }
+    else
+    {
+        <div class="history-summary-grid">
+            <section class="history-summary-card">
+                <h3>Изменение за период (к текущей цене)</h3>
+                <div class="history-performance-metrics">
+                    <div><span>Тек. цена</span><strong>@FormatHistoryMoney(Stock.CurrentPrice)</strong></div>
+                    <div><span>Мин.–макс. за @GetHistoryRangeLabel(_historyRange)</span><strong>@FormatHistoryMoney(GetHistoryLow(_history)) → @FormatHistoryMoney(GetHistoryHigh(_history))</strong></div>
+                    <div><span>Цена в начале периода</span><strong>@FormatHistoryMoney(GetHistoryBaseline(_history))</strong></div>
+                    <div><span>@GetPeriodChangeHeading(_historyRange)</span><strong class="@ProfitClass(GetPeriodChange(_history, Stock)?.Value ?? 0m)">@FormatPeriodChange(_history, Stock)</strong></div>
+                </div>
+            </section>
+            <section class="history-summary-card history-volume-card">
+                <h3>Объём и активность торгов</h3>
+                <div class="history-volume-metrics">
+                    <div><span>Объём</span><strong>@FormatHistoryVolume(GetLatestHistoryVolume(_history))</strong></div>
+                    <div><span>Ø20</span><strong>@FormatHistoryDecimal(_history.VolumeMetrics.AverageVolume20)</strong></div>
+                    <div><span>Ø50</span><strong>@FormatHistoryDecimal(_history.VolumeMetrics.AverageVolume50)</strong></div>
+                    <div><span>RVOL</span><strong>@(_history.VolumeMetrics.RelativeVolume is decimal rvol ? $"{rvol.ToString("N2", RussianCulture)}x" : "—")</strong></div>
+                    <div><span>Оборот</span><strong>@FormatHistoryMoney(_history.VolumeMetrics.Turnover, _history.VolumeMetrics.TurnoverCurrency)</strong></div>
+                </div>
+            </section>
+        </div>
+        <div class="position-history-chart">
+            <svg viewBox="0 0 800 220" role="img" aria-label="График исторических цен @Stock.Ticker" preserveAspectRatio="none">
+                @foreach (var tick in GetHistoryAxisTicks(_history))
+                {
+                    <line class="history-grid-line" x1="70" y1="@tick.Y.ToString(CultureInfo.InvariantCulture)" x2="790" y2="@tick.Y.ToString(CultureInfo.InvariantCulture)" />
+                    @((MarkupString)$"<text class='history-price-label' x='62' y='{(tick.Y + 4).ToString(CultureInfo.InvariantCulture)}' text-anchor='end'>{tick.Label}</text>")
+                }
+                @foreach (var tick in GetHistoryDateTicks(_history, _historyRange))
+                {
+                    <line class="history-date-tick" x1="@tick.X.ToString(CultureInfo.InvariantCulture)" y1="180" x2="@tick.X.ToString(CultureInfo.InvariantCulture)" y2="184" />
+                    @((MarkupString)$"<text class='history-date-label' x='{tick.X.ToString(CultureInfo.InvariantCulture)}' y='205' text-anchor='{tick.Anchor}'>{tick.Label}</text>")
+                }
+                <line class="history-axis-line" x1="70" y1="24" x2="70" y2="180" />
+                <line class="history-axis-line" x1="70" y1="180" x2="790" y2="180" />
+                <polyline points="@GetHistoryPolyline(_history)" />
+            </svg>
+        </div>
+        @if (GetVolumeBars(_history, Stock.Exchange, _historyRange).Count == 0)
+        {
+            <div class="position-volume-empty">Поставщик не предоставил данные об объёме</div>
+        }
+        else
+        {
+            <div class="position-volume-chart">
+                <svg viewBox="0 0 800 160" role="img" aria-label="Объёмы торгов @Stock.Ticker" preserveAspectRatio="none">
+                    @foreach (var tick in GetVolumeAxisTicks(_history, Stock.Exchange, _historyRange))
+                    {
+                        <line class="history-grid-line" x1="70" y1="@tick.Y.ToString(CultureInfo.InvariantCulture)" x2="790" y2="@tick.Y.ToString(CultureInfo.InvariantCulture)" />
+                        @((MarkupString)$"<text class='history-price-label' x='62' y='{(tick.Y + 4).ToString(CultureInfo.InvariantCulture)}' text-anchor='end'>{tick.Label}</text>")
+                    }
+                    <line class="history-axis-line" x1="70" y1="10" x2="70" y2="140" />
+                    <line class="history-axis-line" x1="70" y1="140" x2="790" y2="140" />
+                    @foreach (var bar in GetVolumeBars(_history, Stock.Exchange, _historyRange))
+                    {
+                        <rect class="@(bar.IsCapped ? "volume-bar volume-bar-capped" : "volume-bar")" x="@bar.X.ToString("0.##", CultureInfo.InvariantCulture)" y="@bar.Y.ToString("0.##", CultureInfo.InvariantCulture)" width="@bar.Width.ToString("0.##", CultureInfo.InvariantCulture)" height="@bar.Height.ToString("0.##", CultureInfo.InvariantCulture)" rx="1">
+                            <title>@FormatHistoryDate(bar.Timestamp): @FormatHistoryVolume(bar.Volume) акций</title>
+                        </rect>
+                    }
+                </svg>
+            </div>
+        }
+        <TechnicalAnalysisPanel StockId="Stock.Id" />
+    }
+</section>
+
+@code {
+    private static readonly CultureInfo RussianCulture = CultureInfo.GetCultureInfo("ru-RU");
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly (string Label, string Value)[] HistoryRanges = [("Сегодня", "today"), ("24 ч.", "24h"), ("Неделя", "1w"), ("Месяц", "1m"), ("3 месяца", "3m"), ("6 месяцев", "6m"), ("1 год", "1y"), ("3 года", "3y"), ("5 лет", "5y")];
+
+    [Parameter, EditorRequired] public PortfolioStockViewModel Stock { get; set; } = new();
+
+    private bool _historyLoading = true;
+    private string? _historyError;
+    private string _historyRange = "1y";
+    private StockHistoryResponse? _history;
+    private int? _loadedStockId;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedStockId == Stock.Id) return;
+        _loadedStockId = Stock.Id;
+        _historyRange = "1y";
+        await LoadHistoryAsync(_historyRange);
+    }
+
+    private async Task LoadHistoryAsync(string range)
+    {
+        _historyRange = range;
+        _historyLoading = true;
+        _historyError = null;
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null)
+            {
+                _historyError = "Войдите в приложение, чтобы увидеть историю цены.";
+                return;
+            }
+
+            using var response = await client.GetAsync($"Stocks/{Stock.Id}/history?range={Uri.EscapeDataString(range)}");
+            if (!response.IsSuccessStatusCode)
+            {
+                _historyError = response.StatusCode == HttpStatusCode.Unauthorized
+                    ? "Войдите в приложение, чтобы увидеть историю цены."
+                    : $"Не удалось загрузить историю (HTTP {(int)response.StatusCode}).";
+                return;
+            }
+            _history = await response.Content.ReadFromJsonAsync<StockHistoryResponse>(JsonOptions);
+            await InvokeAsync(StateHasChanged);
+        }
+        catch
+        {
+            _historyError = "Не удалось загрузить историю цены.";
+        }
+        finally
+        {
+            _historyLoading = false;
+        }
+    }
+
+    private async Task<HttpClient?> CreateAuthenticatedClientAsync()
+    {
+        var module = await JS.InvokeAsync<IJSObjectReference>("import", "./portfolioApi.js");
+        string? token;
+        try { token = await module.InvokeAsync<string?>("getToken"); }
+        finally { await module.DisposeAsync(); }
+        if (string.IsNullOrWhiteSpace(token)) return null;
+        var client = HttpClientFactory.CreateClient("FinanceApi");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        return client;
+    }
+
+    private static string ProfitClass(decimal value) => value > 0m ? "positive" : value < 0m ? "negative" : string.Empty;
+    private static string FormatHistoryMoney(decimal? value, string? currency = "EUR")
+    {
+        if (value is null) return "—";
+        var suffix = currency?.ToUpperInvariant() switch { "EUR" => "€", "USD" => "$", "GBP" => "£", null or "" => "", var code => $" {code}" };
+        return $"{value.Value.ToString("N2", RussianCulture)}{(suffix.Length > 0 && suffix[0] != ' ' ? " " : "")}{suffix}";
+    }
+    private static string FormatHistoryDecimal(decimal? value) => value?.ToString("N2", RussianCulture) ?? "—";
+    private static string FormatHistoryVolume(decimal? value) => value?.ToString("N0", RussianCulture) ?? "—";
+    private static string FormatHistoryDate(DateTime timestamp) => timestamp.ToLocalTime().ToString("d MMM yyyy", RussianCulture);
+    private static string GetHistoryRangeLabel(string range) => range switch { "today" => "сегодня", "24h" => "24 ч.", "1w" => "неделю", "1m" => "1 месяц", "3m" => "3 месяца", "6m" => "6 месяцев", "1y" => "1 год", "3y" => "3 года", "5y" => "5 лет", _ => range };
+    private static string GetPeriodChangeHeading(string range) => range is "today" or "24h" ? "Изменение к предыдущему закрытию" : "Изменение от начала периода";
+    private string FormatPeriodChange(StockHistoryResponse history, PortfolioStockViewModel stock)
+    {
+        var baseline = history.Range is "today" or "24h" && stock.CurrentPriceChange is decimal dailyChange ? stock.CurrentPrice - dailyChange : GetHistoryBaseline(history);
+        if (baseline is null) return "—";
+        var change = stock.CurrentPrice - baseline.Value;
+        var percent = baseline.Value == 0m ? null : (decimal?)(change / baseline.Value * 100m);
+        return $"{FormatSignedMoney(change)} ({(percent is decimal value ? FormatSignedPercent(value) : "—")})";
+    }
+    private static (decimal Value, decimal? Percent)? GetPeriodChange(StockHistoryResponse history, PortfolioStockViewModel stock)
+    {
+        var baseline = (history.Range is "today" or "24h") && stock.CurrentPriceChange is decimal dailyChange ? stock.CurrentPrice - dailyChange : GetHistoryBaseline(history);
+        if (baseline is null) return null;
+        var change = stock.CurrentPrice - baseline.Value;
+        return (change, baseline.Value == 0m ? null : change / baseline.Value * 100m);
+    }
+    private static string FormatSignedMoney(decimal value) => $"{(value >= 0m ? "+" : "")}{FormatHistoryMoney(value)}";
+    private static string FormatSignedPercent(decimal value) => $"{(value >= 0m ? "+" : "")}{value.ToString("N2", RussianCulture)}%";
+
+    private static List<(DateTime Timestamp, decimal Price)> GetUsableHistoryPoints(StockHistoryResponse history) => history.Points
+        .Select(point => (point.Timestamp, Price: point.CloseEur ?? point.CloseNormalized)).Where(point => point.Price > 0m).OrderBy(point => point.Timestamp).ToList();
+    private static string GetHistoryPolyline(StockHistoryResponse history)
+    {
+        var points = GetUsableHistoryPoints(history);
+        if (points.Count == 0) return string.Empty;
+        var min = points.Min(point => point.Price);
+        var spread = points.Max(point => point.Price) - min;
+        if (spread == 0m) spread = Math.Max(min * 0.01m, 0.01m);
+        var start = points[0].Timestamp;
+        var end = points[^1].Timestamp;
+        var duration = (decimal)(end - start).Ticks;
+        return string.Join(" ", points.Select(point =>
+        {
+            var x = duration == 0m ? 430m : 70m + (decimal)(point.Timestamp - start).Ticks / duration * 720m;
+            var y = 180m - (point.Price - min) / spread * 156m;
+            return $"{x.ToString("0.##", CultureInfo.InvariantCulture)},{y.ToString("0.##", CultureInfo.InvariantCulture)}";
+        }));
+    }
+    private static IReadOnlyList<HistoryAxisTick> GetHistoryAxisTicks(StockHistoryResponse history)
+    {
+        var prices = history.Points.Select(point => point.CloseEur ?? point.CloseNormalized).Where(price => price > 0m).ToArray();
+        if (prices.Length == 0) return [];
+        var min = prices.Min(); var max = prices.Max();
+        if (min == max) { var padding = Math.Max(min * 0.01m, 0.01m); min -= padding; max += padding; }
+        return Enumerable.Range(0, 5).Select(index => { var ratio = index / 4m; return new HistoryAxisTick(24m + ratio * 156m, $"{(max - (max - min) * ratio).ToString("N2", RussianCulture)} €"); }).ToArray();
+    }
+    private static decimal GetVolumeDisplayMax(IEnumerable<long> sourceVolumes, string? exchange, string range)
+    {
+        var volumes = sourceVolumes.Where(volume => volume > 0).Select(volume => (decimal)volume).Order().ToArray();
+        if (volumes.Length == 0) return 0m;
+        var max = volumes[^1];
+        if (string.Equals(exchange, "Frankfurt", StringComparison.OrdinalIgnoreCase) && (range is "1y" or "3y" or "5y") && volumes.Length >= 20)
+        {
+            var p95 = volumes[(int)Math.Floor((volumes.Length - 1) * 0.95m)];
+            if (max > p95 * 2m) return Math.Min(max, p95 * 1.25m);
+        }
+        return max;
+    }
+    private static IReadOnlyList<HistoryVolumeBar> GetVolumeBars(StockHistoryResponse history, string? exchange, string range)
+    {
+        var points = history.Points.Where(point => point.Volume > 0).OrderBy(point => point.Timestamp).ToArray();
+        var max = GetVolumeDisplayMax(points.Select(point => point.Volume), exchange, range);
+        if (points.Length == 0 || max <= 0m) return [];
+        var start = points[0].Timestamp; var end = points[^1].Timestamp; var duration = (decimal)(end - start).Ticks;
+        var width = Math.Clamp(700m / points.Length * 0.72m, 1m, 12m);
+        return points.Select(point => { var x = duration == 0m ? 430m : 70m + (decimal)(point.Timestamp - start).Ticks / duration * 720m; var height = Math.Min((decimal)point.Volume, max) / max * 120m; return new HistoryVolumeBar(point.Timestamp, point.Volume, x - width / 2m, 140m - height, width, height, point.Volume > max); }).ToArray();
+    }
+    private static IReadOnlyList<HistoryAxisTick> GetVolumeAxisTicks(StockHistoryResponse history, string? exchange, string range)
+    {
+        var max = GetVolumeDisplayMax(history.Points.Select(point => point.Volume), exchange, range);
+        if (max <= 0m) return [];
+        return Enumerable.Range(0, 4).Select(index => { var ratio = index / 3m; return new HistoryAxisTick(140m - ratio * 120m, FormatCompactHistoryNumber(max * ratio)); }).ToArray();
+    }
+    private static string FormatCompactHistoryNumber(decimal value) => value >= 1_000_000m ? $"{(value / 1_000_000m).ToString("0.#", RussianCulture)}M" : value >= 1_000m ? $"{(value / 1_000m).ToString("0.#", RussianCulture)}K" : value.ToString("N0", RussianCulture);
+    private static decimal? GetHistoryLow(StockHistoryResponse history) { var values = history.Points.Select(point => point.LowEur ?? point.LowNormalized).Where(value => value > 0m).ToArray(); return values.Length == 0 ? null : values.Min(); }
+    private static decimal? GetHistoryHigh(StockHistoryResponse history) { var values = history.Points.Select(point => point.HighEur ?? point.HighNormalized).Where(value => value > 0m).ToArray(); return values.Length == 0 ? null : values.Max(); }
+    private static decimal? GetHistoryBaseline(StockHistoryResponse history) => GetUsableHistoryPoints(history).FirstOrDefault() is var first && first.Timestamp != default ? first.Price : null;
+    private static decimal? GetLatestHistoryVolume(StockHistoryResponse history) => history.Points.OrderByDescending(point => point.Timestamp).Select(point => (decimal?)point.Volume).FirstOrDefault();
+    private static IReadOnlyList<HistoryDateTick> GetHistoryDateTicks(StockHistoryResponse history, string range)
+    {
+        var points = GetUsableHistoryPoints(history); if (points.Count == 0) return [];
+        var start = points[0].Timestamp; var end = points[^1].Timestamp; var duration = (decimal)(end - start).Ticks;
+        Func<DateTime, DateTime> addStep = range switch { "today" => date => date.AddHours(2), "24h" => date => date.AddHours(4), "1w" => date => date.AddDays(1), "1m" => date => date.AddDays(7), "3m" or "6m" => date => date.AddDays(14), "1y" => date => date.AddMonths(1), "3y" => date => date.AddMonths(3), "5y" => date => date.AddMonths(6), _ => date => date.AddDays(14) };
+        var dates = new List<DateTime> { start };
+        for (var date = addStep(start); date < end && dates.Count < 20; date = addStep(date)) dates.Add(date);
+        if (end > start) dates.Add(end);
+        var format = range is "today" or "24h" ? "HH:mm" : range is "1y" or "3y" or "5y" ? "MM.yy" : "dd.MM";
+        if (dates.Count > 2)
+        {
+            var previous = dates[^2];
+            var previousX = duration == 0m ? 430m : 70m + (decimal)(previous - start).Ticks / duration * 720m;
+            var endX = duration == 0m ? 430m : 790m;
+            var previousLabel = previous.ToLocalTime().ToString(format, RussianCulture);
+            var endLabel = end.ToLocalTime().ToString(format, RussianCulture);
+            if (previousLabel == endLabel)
+                dates.RemoveAt(dates.Count - 1);
+            else if (endX - previousX < 40m)
+                dates.RemoveAt(dates.Count - 2);
+        }
+        return dates.Select((date, index) => new HistoryDateTick(duration == 0m ? 430m : 70m + (decimal)(date - start).Ticks / duration * 720m, date.ToLocalTime().ToString(format, RussianCulture), index == 0 ? "start" : index == dates.Count - 1 ? "end" : "middle")).ToArray();
+    }
+
+    private sealed class StockHistoryResponse { public List<StockHistoryPoint> Points { get; set; } = []; public StockHistoryVolumeMetrics VolumeMetrics { get; set; } = new(); public string? Range { get; set; } }
+    private sealed class StockHistoryVolumeMetrics { public decimal? AverageVolume20 { get; set; } public decimal? AverageVolume50 { get; set; } public decimal? RelativeVolume { get; set; } public decimal? Turnover { get; set; } public string? TurnoverCurrency { get; set; } }
+    private sealed class StockHistoryPoint { public DateTime Timestamp { get; set; } public decimal CloseNormalized { get; set; } public decimal? CloseEur { get; set; } public decimal HighNormalized { get; set; } public decimal LowNormalized { get; set; } public decimal? HighEur { get; set; } public decimal? LowEur { get; set; } public long Volume { get; set; } }
+    private sealed record HistoryAxisTick(decimal Y, string Label);
+    private sealed record HistoryDateTick(decimal X, string Label, string Anchor);
+    private sealed record HistoryVolumeBar(DateTime Timestamp, long Volume, decimal X, decimal Y, decimal Width, decimal Height, bool IsCapped);
+}

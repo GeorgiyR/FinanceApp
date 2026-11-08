@@ -1,0 +1,25 @@
+@page "/logout"
+@inject IJSRuntime JS
+@inject NavigationManager Navigation
+
+<PageTitle>Выход</PageTitle>
+<p>Выполняется выход…</p>
+
+@code {
+    private IJSObjectReference? _module;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        _module = await JS.InvokeAsync<IJSObjectReference>("import", "./portfolioApi.js");
+        await _module.InvokeVoidAsync("clearToken");
+        await _module.DisposeAsync();
+        Navigation.NavigateTo("/login", replace: true);
+    }
+}
+
+

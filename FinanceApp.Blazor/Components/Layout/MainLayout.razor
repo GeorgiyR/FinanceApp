@@ -1,0 +1,23 @@
+@inherits LayoutComponentBase
+
+<div class="app-shell">
+    <aside class="app-sidebar">
+        <a class="brand" href="/">FinanceApp</a>
+        <SidebarNav />
+    </aside>
+
+    <main class="app-main">
+        <header class="app-header">
+            <span>FinanceApp</span>
+        </header>
+        <section class="page-content">
+            @Body
+        </section>
+    </main>
+</div>
+
+<div id="blazor-error-ui" data-nosnippet>
+    Произошла ошибка.
+    <a href="." class="reload">Перезагрузить</a>
+    <span class="dismiss">🗙</span>
+</div>

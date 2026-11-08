@@ -1,0 +1,174 @@
+@using System.Globalization
+@using FinanceApp.Blazor.Components.Models
+
+<div class="tracked-stocks-table-list">
+    @foreach (var group in GetGroups())
+    {
+        <section class="tracked-stock-group">
+            <div class="tracked-stock-group-heading"><strong>@group.Title</strong><span>@group.Items.Count</span></div>
+            <div class="tracked-stocks-table-wrap">
+                <table class="tracked-stocks-table">
+                    <thead><tr><th>Тикер</th><th>Название</th>@if (SortMode != "name") { <th class="numeric">Рост за период</th> }<th class="numeric">Текущая цена</th><th class="numeric">Изменение (€)</th><th class="numeric">(%)</th><th class="numeric">Цена API</th><th>Время</th><th>Действия</th></tr></thead>
+                    <tbody>
+                        @foreach (var stock in group.Items)
+                        {
+                            var expanded = _expandedStockId == stock.Id;
+                            var isProtected = PortfolioStockIds.Contains(stock.Id);
+                            <tr class="@(isProtected ? "tracked-stock-in-portfolio" : "")">
+                                <td class="tracked-stock-ticker-cell">
+                                    <button type="button" class="ticker-chart-toggle" @onclick="() => ToggleHistory(stock.Id)" aria-expanded="@expanded" aria-controls="tracked-stock-history-@stock.Id">
+                                        <span class="ticker-chart-caret @(expanded ? "expanded" : "")">›</span>@stock.Ticker
+                                    </button>
+                                    <span class="ticker-exchange-abbreviation" title="@stock.Exchange">@ExchangeAbbreviation(stock.Exchange)</span>
+                                </td>
+                                <td>
+                                    <span class="tracked-stock-name">@stock.Name</span>
+                                    @if (!string.IsNullOrWhiteSpace(stock.CommonName) && stock.CommonName != stock.Name)
+                                    {
+                                        <span class="tracked-stock-common-name">@stock.CommonName</span>
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(stock.Industry?.Name ?? stock.Sector?.Name))
+                                    {
+                                        <span class="tracked-stock-classification">@(stock.Industry?.Name ?? stock.Sector?.Name)</span>
+                                    }
+                                </td>
+                                @if (SortMode != "name")
+                                {
+                                    <td class="numeric">
+                                        @if (PerformanceLoading) { <span class="tracked-stock-muted">…</span> }
+                                        else if (PerformanceByStockId.TryGetValue(stock.Id, out var changePercent) && changePercent is decimal performance) { <span class="@ProfitClass(performance)">@FormatSignedPercent(performance)</span> }
+                                        else { <span class="tracked-stock-muted" title="Недостаточно исторических данных">—</span> }
+                                    </td>
+                                }
+                                <td class="numeric">@FormatMoney(stock.CurrentPrice)</td>
+                                <td class="numeric @ProfitClass(stock.CurrentPriceChange)">@(stock.CurrentPriceChange is decimal change ? FormatSignedMoney(change) : "—")</td>
+                                <td class="numeric @ProfitClass(stock.CurrentPriceChangePercent)">@(stock.CurrentPriceChangePercent is decimal percent ? FormatSignedPercent(percent) : "—")</td>
+                                <td class="numeric" title="@stock.LiveQuote?.ConversionWarning">
+                                    @if (_refreshingStockId == stock.Id) { <span>…</span> }
+                                    else if (stock.LiveQuote is { } quote) { <span>@FormatApiPrice(quote)</span> }
+                                    else { <span>—</span> }
+                                    @if (stock.LiveQuote is { IsStale: true }) { <span class="tracked-stock-delayed" title="@(stock.LiveQuote.DelayWarning ?? "Задержанная котировка")">Задержано</span> }
+                                </td>
+                                <td class="tracked-stock-time">@(stock.CurrentPriceAt is DateTime priceAt ? priceAt.ToLocalTime().ToString("dd.MM.yy HH:mm", RussianCulture) : "—")</td>
+                                <td class="tracked-stock-actions @(isProtected ? "portfolio-stock-actions" : "")">
+                                    <div class="tracked-stock-action-buttons">
+                                        <button type="button" class="action-icon-button" title="Обновить цену" aria-label="Обновить цену @stock.Ticker" disabled="@(string.IsNullOrWhiteSpace(stock.Ticker) || _refreshingStockId == stock.Id)" @onclick="() => RefreshPriceAsync(stock)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M16.5 7.5A6.8 6.8 0 0 0 4.7 5.2L3 7m0 0V3.5M3 7h3.5M3.5 12.5a6.8 6.8 0 0 0 11.8 2.3l1.7-1.8m0 0v3.5m0-3.5h-3.5" /></svg></button>
+                                        <button type="button" class="action-icon-button" title="Фундаментальные данные" aria-label="Фундаментальные данные для @stock.Ticker" @onclick="() => OnFundamentals.InvokeAsync(stock)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.2a7.8 7.8 0 1 0 0 15.6 7.8 7.8 0 0 0 0-15.6Zm0 3.1v.1m0 2.4v5.1" /></svg></button>
+                                        <button type="button" class="action-icon-button" title="Редактировать акцию" aria-label="Редактировать акцию @stock.Ticker" @onclick="() => OnEdit.InvokeAsync(stock)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m3 14.8-.8 3 3-.8L16.8 5.4a1.8 1.8 0 0 0-2.6-2.6L3 14.8Zm9.9-9.9 2.6 2.6" /></svg></button>
+                                    @if (!isProtected)
+                                    {
+                                        var priority = stock.PurchaseCandidatePriority;
+                                        var priorityTitle = priority switch { 1 => "Повысить приоритет кандидата", 2 => "Снять отметку кандидата", _ => "Отметить кандидатом на покупку" };
+                                        <button type="button" class="action-icon-button candidate-priority-button priority-@priority" title="@priorityTitle" aria-label="@priorityTitle: @stock.Ticker" disabled="@(_prioritySavingStockId == stock.Id)" @onclick="() => CyclePriorityAsync(stock)"><span aria-hidden="true">@(priority == 2 ? "★" : priority == 1 ? "☆" : "☆")</span></button>
+                                    }
+                                    @if (!isProtected)
+                                    {
+                                        <button type="button" class="action-icon-button action-delete-button" title="Удалить из отслеживаемых" aria-label="Удалить @stock.Ticker из отслеживаемых" disabled="@(_untrackingStockId == stock.Id)" @onclick="() => UntrackAsync(stock)"><span aria-hidden="true">×</span></button>
+                                    }
+                                    </div>
+                                </td>
+                            </tr>
+                            @if (expanded)
+                            {
+                                <tr id="tracked-stock-history-@stock.Id" class="tracked-stock-history-row"><td colspan="@TableColumnCount"><StockHistoryPanel Stock="ToHistoryStock(stock)" /></td></tr>
+                            }
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    }
+</div>
+
+@code {
+    private static readonly CultureInfo RussianCulture = CultureInfo.GetCultureInfo("ru-RU");
+    private int? _expandedStockId;
+    private int? _refreshingStockId;
+    private int? _untrackingStockId;
+    private int? _prioritySavingStockId;
+
+    [Parameter, EditorRequired] public IReadOnlyList<TrackedStockViewModel> Items { get; set; } = [];
+    [Parameter] public IReadOnlySet<int> PortfolioStockIds { get; set; } = new HashSet<int>();
+    [Parameter] public TrackedStockFiltersViewModel AdvancedFilters { get; set; } = new();
+    [Parameter] public IReadOnlyDictionary<int, int> IndustrySectorMap { get; set; } = new Dictionary<int, int>();
+    [Parameter] public IReadOnlyDictionary<int, string> MarketIndexNameById { get; set; } = new Dictionary<int, string>();
+    [Parameter] public string SortMode { get; set; } = "name";
+    [Parameter] public string SortDirection { get; set; } = "desc";
+    [Parameter] public IReadOnlyDictionary<int, decimal?> PerformanceByStockId { get; set; } = new Dictionary<int, decimal?>();
+    [Parameter] public bool PerformanceLoading { get; set; }
+    [Parameter] public EventCallback<TrackedStockViewModel> OnRefreshPrice { get; set; }
+    [Parameter] public EventCallback<TrackedStockViewModel> OnEdit { get; set; }
+    [Parameter] public EventCallback<TrackedStockViewModel> OnFundamentals { get; set; }
+    [Parameter] public EventCallback<TrackedStockViewModel> OnUntrack { get; set; }
+    [Parameter] public EventCallback<TrackedStockViewModel> OnCyclePriority { get; set; }
+
+    private IEnumerable<(string Title, List<TrackedStockViewModel> Items)> GetGroups()
+    {
+        var matching = Items.Where(MatchesSearch).ToList();
+        List<TrackedStockViewModel> Sorted(IEnumerable<TrackedStockViewModel> source)
+        {
+            var items = source.ToList();
+            if (SortMode == "name") return items.OrderBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase).ThenBy(item => item.Ticker, StringComparer.CurrentCultureIgnoreCase).ToList();
+            var direction = SortDirection == "asc" ? 1 : -1;
+            return items.OrderByDescending(item => PerformanceByStockId.TryGetValue(item.Id, out var score) && score is not null)
+                .ThenBy(item => PerformanceByStockId.TryGetValue(item.Id, out var score) ? score * direction : decimal.MinValue)
+                .ThenBy(item => item.Id)
+                .ToList();
+        }
+        var inPortfolio = Sorted(matching.Where(item => PortfolioStockIds.Contains(item.Id)));
+        var frankfurt = Sorted(matching.Where(item => !PortfolioStockIds.Contains(item.Id) && item.Exchange.Equals("Frankfurt", StringComparison.OrdinalIgnoreCase)));
+        var other = Sorted(matching.Where(item => !PortfolioStockIds.Contains(item.Id) && !item.Exchange.Equals("Frankfurt", StringComparison.OrdinalIgnoreCase)));
+        return new[] { ("Портфель", inPortfolio), ("Цены на франкфуртской бирже", frankfurt), ("Цены на нью-йоркской бирже", other) }
+            .Where(group => group.Item2.Count > 0)
+            .Select(group => (group.Item1, group.Item2));
+    }
+    private bool MatchesSearch(TrackedStockViewModel stock)
+    {
+        if (!string.IsNullOrWhiteSpace(Search))
+        {
+            var query = Search.Trim();
+            if (!(stock.Ticker.Contains(query, StringComparison.CurrentCultureIgnoreCase)
+                || stock.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase)
+                || stock.CommonName.Contains(query, StringComparison.CurrentCultureIgnoreCase)
+                || stock.Exchange.Contains(query, StringComparison.CurrentCultureIgnoreCase)
+                || stock.MarketIndexIds.Any(id => MarketIndexNameById.TryGetValue(id, out var indexName) && indexName.Contains(query, StringComparison.CurrentCultureIgnoreCase))
+                || (stock.Sector?.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase) ?? false)
+                || (stock.Industry?.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase) ?? false))) return false;
+        }
+        if (AdvancedFilters.Exchanges.Count > 0)
+        {
+            var exchangeGroup = stock.Exchange.Equals("Frankfurt", StringComparison.OrdinalIgnoreCase) ? "fra"
+                : stock.Exchange.Equals("NYSE", StringComparison.OrdinalIgnoreCase) || stock.Exchange.Equals("NASDAQ", StringComparison.OrdinalIgnoreCase) ? "us" : null;
+            if (exchangeGroup is null || !AdvancedFilters.Exchanges.Contains(exchangeGroup)) return false;
+        }
+        var industryId = stock.IndustryId ?? stock.Industry?.Id;
+        var sectorId = stock.Industry?.Sector?.Id ?? stock.Industry?.SectorId ?? stock.SectorId ?? stock.Sector?.Id;
+        if (sectorId is null && industryId is int id && IndustrySectorMap.TryGetValue(id, out var resolvedSectorId)) sectorId = resolvedSectorId;
+        if (AdvancedFilters.SectorIds.Count > 0 && (sectorId is null || !AdvancedFilters.SectorIds.Contains(sectorId.Value))) return false;
+        if (AdvancedFilters.IndustryIds.Count > 0 && (industryId is null || !AdvancedFilters.IndustryIds.Contains(industryId.Value))) return false;
+        return true;
+    }
+    private int TableColumnCount => SortMode == "name" ? 8 : 9;
+
+    [Parameter] public string Search { get; set; } = string.Empty;
+    private void ToggleHistory(int id) => _expandedStockId = _expandedStockId == id ? null : id;
+    private async Task RefreshPriceAsync(TrackedStockViewModel stock) { _refreshingStockId = stock.Id; await OnRefreshPrice.InvokeAsync(stock); _refreshingStockId = null; }
+    private async Task UntrackAsync(TrackedStockViewModel stock) { _untrackingStockId = stock.Id; await OnUntrack.InvokeAsync(stock); _untrackingStockId = null; }
+    private async Task CyclePriorityAsync(TrackedStockViewModel stock) { _prioritySavingStockId = stock.Id; await OnCyclePriority.InvokeAsync(stock); _prioritySavingStockId = null; }
+    private static PortfolioStockViewModel ToHistoryStock(TrackedStockViewModel stock) => new()
+    {
+        Id = stock.Id, Ticker = stock.Ticker, Name = stock.Name, CommonName = stock.CommonName, Exchange = stock.Exchange, Isin = stock.Isin,
+        CurrentPrice = stock.CurrentPrice, CurrentPriceChange = stock.CurrentPriceChange, CurrentPriceChangePercent = stock.CurrentPriceChangePercent, CurrentPriceAt = stock.CurrentPriceAt
+    };
+    private static string ExchangeAbbreviation(string exchange) => exchange.Trim().ToUpperInvariant() switch { "FRANKFURT" => "F", "NASDAQ" or "NYSE" => "N", _ => exchange };
+    private static string FormatMoney(decimal value) => $"{value.ToString("N2", RussianCulture)} €";
+    private static string FormatSignedMoney(decimal value) => $"{(value >= 0m ? "+" : "−")}{FormatMoney(Math.Abs(value))}";
+    private static string FormatSignedPercent(decimal value) => $"{(value >= 0m ? "+" : "−")}{Math.Abs(value).ToString("N2", RussianCulture)}%";
+    private static string ProfitClass(decimal? value) => value > 0m ? "positive" : value < 0m ? "negative" : string.Empty;
+    private static string ProfitClass(decimal value) => value > 0m ? "positive" : value < 0m ? "negative" : string.Empty;
+    private static string FormatApiPrice(StockLiveQuoteViewModel quote)
+    {
+        var currency = quote.Currency ?? quote.NormalizedQuoteCurrency;
+        return currency is null ? "—" : $"{quote.RawCurrentPrice.ToString("N2", RussianCulture)} {currency}";
+    }
+}
