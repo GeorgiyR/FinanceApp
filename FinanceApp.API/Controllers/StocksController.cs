@@ -106,6 +106,41 @@ public class StocksController : ControllerBase
         return null;
     }
 
+    [HttpGet("search")]
+    public async Task<ActionResult<IReadOnlyList<StockSearchResultDto>>> Search(
+        [FromQuery] string? q,
+        [FromQuery] int limit = 15,
+        CancellationToken cancellationToken = default)
+    {
+        var term = q?.Trim();
+        if (string.IsNullOrWhiteSpace(term) || term.Length < 2)
+        {
+            return Ok(Array.Empty<StockSearchResultDto>());
+        }
+
+        var take = Math.Clamp(limit, 1, 30);
+        var results = await _context.Stocks
+            .AsNoTracking()
+            .Where(stock =>
+                stock.TrackingStatus == StockTrackingStatus.Tracked &&
+                (stock.Ticker.Contains(term) ||
+                 stock.Name.Contains(term) ||
+                 stock.CommonName.Contains(term)))
+            .OrderBy(stock => stock.Ticker == term ? 0 : stock.Ticker.StartsWith(term) ? 1 : 2)
+            .ThenBy(stock => stock.Ticker)
+            .ThenBy(stock => stock.Name)
+            .Take(take)
+            .Select(stock => new StockSearchResultDto(
+                stock.Id,
+                stock.Ticker,
+                stock.Name,
+                stock.Exchange,
+                stock.CurrentPrice))
+            .ToListAsync(cancellationToken);
+
+        return Ok(results);
+    }
+
     [HttpGet]
     public async Task<ActionResult<IEnumerable<Stock>>> GetAll([FromQuery] bool includeCatalog = false)
     {
@@ -1730,3 +1765,5 @@ public class StocksController : ControllerBase
         ActionResult<UpdateStockPurchaseCandidatePriorityResponse>? ActionResult = null,
         UpdateStockPurchaseCandidatePriorityResponse? Response = null);
 }
+
+
