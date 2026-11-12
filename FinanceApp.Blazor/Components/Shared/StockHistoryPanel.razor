@@ -10,13 +10,27 @@
 <section class="position-history-panel" aria-label="История цены @Stock.Ticker">
     <div class="position-history-toolbar">
         <div><strong>История цены: @Stock.Ticker</strong><span>@Stock.Name</span></div>
-        <div class="history-range-buttons" role="group" aria-label="Период истории">
-            @foreach (var range in HistoryRanges)
-            {
-                <button type="button" class="@(_historyRange == range.Value ? "active" : "")" @onclick="() => LoadHistoryAsync(range.Value)">@range.Label</button>
-            }
+        <div class="history-toolbar-actions">
+            <div class="history-action-buttons">
+                <button type="button" class="history-refresh-button" @onclick="ConfirmRefreshHistoryAsync" disabled="@(_historyRefreshing || _hardResetLoading)">
+                    @(_historyRefreshing ? "Перезагрузка…" : "Перезагрузить историю")
+                </button>
+                <button type="button" class="history-hard-reset-button" @onclick="OpenHardResetModalAsync" disabled="@(_historyRefreshing || _hardResetLoading || _validationLoading)">
+                    Полностью восстановить историю
+                </button>
+            </div>
+            <div class="history-range-buttons" role="group" aria-label="Период истории">
+                @foreach (var range in HistoryRanges)
+                {
+                    <button type="button" class="@(_historyRange == range.Value ? "active" : "")" @onclick="() => LoadHistoryAsync(range.Value)">@range.Label</button>
+                }
+            </div>
         </div>
     </div>
+    @if (!string.IsNullOrWhiteSpace(_historyNotice))
+    {
+        <div class="history-notice history-notice-@_historyNoticeLevel" role="status">@_historyNotice</div>
+    }
     @if (_historyLoading)
     {
         <div class="position-history-state">Загрузка истории…</div>
@@ -97,6 +111,57 @@
     }
 </section>
 
+@if (_hardResetModalOpen)
+{
+    <div class="dialog-backdrop" role="presentation" @onclick="CloseHardResetModal">
+        <section class="action-dialog hard-reset-dialog" role="dialog" aria-modal="true" aria-labelledby="hard-reset-title" @onclick:stopPropagation>
+            <h2 id="hard-reset-title">Сбросить и загрузить историю заново</h2>
+            <p class="action-dialog-subtitle">@Stock.Ticker — @Stock.Name</p>
+            <div class="hard-reset-warning">Операция разрушительная: старые исторические ряды будут удалены без сохранения.</div>
+            <div class="hard-reset-meta">StockId: <strong>@Stock.Id</strong> · @Stock.Ticker — @Stock.Name</div>
+            <div class="hard-reset-meta">ProviderSymbol: configured @(_repairDiagnostics?.ConfiguredProviderSymbol ?? "—") · effective @(_repairDiagnostics?.EffectiveProviderSymbol ?? "—")</div>
+            <div class="login-field">
+                <label for="hard-reset-provider-symbol">Кандидат ProviderSymbol</label>
+                <input id="hard-reset-provider-symbol" type="text" @bind="_providerSymbolCandidate" @bind:event="oninput" placeholder="Кандидат ProviderSymbol (например ENR.DE)" disabled="@(_validationLoading || _hardResetLoading)" />
+            </div>
+            <div class="hard-reset-validate">
+                <button type="button" class="dialog-secondary-button" @onclick="ValidateProviderSymbolAsync" disabled="@(_validationLoading || _hardResetLoading)">@(_validationLoading ? "Проверка…" : "Проверить символ")</button>
+            </div>
+            @if (_repairValidation is not null)
+            {
+                <div class="hard-reset-result">
+                    <div class="hard-reset-badge @GetResultBadgeClass(_repairValidation.ResultBucket)">Результат: @_repairValidation.ResultBucket</div>
+                    <div class="hard-reset-meta">Удалено: @_repairValidation.DeletedRows · Вставлено: @_repairValidation.InsertedRows · Финал: @_repairValidation.FinalRows</div>
+                    @foreach (var interval in _repairValidation.Intervals)
+                    {
+                        <div class="hard-reset-meta @(interval.IsUnavailable ? "warning" : "")">@interval.Interval: fetched=@interval.FetchedCount, accepted=@interval.AcceptedCount, rejected=@interval.RejectedCount</div>
+                    }
+                    @foreach (var warning in _repairValidation.Warnings)
+                    {
+                        <div class="hard-reset-message warning">@warning</div>
+                    }
+                    @foreach (var error in _repairValidation.Errors)
+                    {
+                        <div class="hard-reset-message error">@error</div>
+                    }
+                </div>
+            }
+            @if (!string.IsNullOrWhiteSpace(_hardResetError))
+            {
+                <div class="hard-reset-error" role="alert">@_hardResetError</div>
+            }
+            <div class="login-field">
+                <label for="hard-reset-confirmation">Подтверждение</label>
+                <input id="hard-reset-confirmation" type="text" @bind="_hardResetConfirmation" @bind:event="oninput" placeholder="Введите '@Stock.Ticker' или 'УДАЛИТЬ'" disabled="@_hardResetLoading" />
+            </div>
+            <div class="dialog-actions">
+                <button type="button" class="dialog-secondary-button" @onclick="CloseHardResetModal" disabled="@_hardResetLoading">Отмена</button>
+                <button type="button" class="dialog-danger-button" @onclick="HardResetHistoryAsync" disabled="@(!CanHardReset)">@(_hardResetLoading ? "Восстановление…" : "Полностью восстановить историю")</button>
+            </div>
+        </section>
+    </div>
+}
+
 @code {
     private static readonly CultureInfo RussianCulture = CultureInfo.GetCultureInfo("ru-RU");
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -109,12 +174,39 @@
     private string _historyRange = "1y";
     private StockHistoryResponse? _history;
     private int? _loadedStockId;
+    private bool _historyRefreshing;
+    private string? _historyNotice;
+    private string _historyNoticeLevel = "info";
+    private bool _hardResetModalOpen;
+    private bool _hardResetLoading;
+    private bool _validationLoading;
+    private string _providerSymbolCandidate = string.Empty;
+    private string _hardResetConfirmation = string.Empty;
+    private string? _hardResetError;
+    private StockHistoryRepairDiagnosticsResponse? _repairDiagnostics;
+    private StockHistoryRepairDiagnosticsResponse? _repairValidation;
+
+    private bool CanHardReset => !_hardResetLoading && !_validationLoading && HardResetValidationPassed && HardResetConfirmationValid;
+    private bool HardResetValidationPassed => _repairValidation is { ResultBucket: "success" or "partial" };
+    private bool HardResetConfirmationValid
+    {
+        get
+        {
+            var normalized = _hardResetConfirmation.Trim();
+            return string.Equals(normalized, "УДАЛИТЬ", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(normalized, Stock.Ticker?.Trim(), StringComparison.OrdinalIgnoreCase);
+        }
+    }
 
     protected override async Task OnParametersSetAsync()
     {
         if (_loadedStockId == Stock.Id) return;
         _loadedStockId = Stock.Id;
         _historyRange = "1y";
+        _historyNotice = null;
+        _hardResetModalOpen = false;
+        _repairDiagnostics = null;
+        _repairValidation = null;
         await LoadHistoryAsync(_historyRange);
     }
 
@@ -163,6 +255,224 @@
         var client = HttpClientFactory.CreateClient("FinanceApi");
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         return client;
+    }
+
+    private async Task ConfirmRefreshHistoryAsync()
+    {
+        if (_historyRefreshing) return;
+        var confirmed = await JS.InvokeAsync<bool>(
+            "confirm",
+            $"Перезагрузить историю?\n\nВсе сохранённые исторические данные по акции {Stock.Ticker} будут удалены и загружены заново по текущему тикеру и бирже.");
+        if (!confirmed) return;
+        await RefreshHistoryAsync();
+    }
+
+    private async Task RefreshHistoryAsync()
+    {
+        if (_historyRefreshing) return;
+        _historyRefreshing = true;
+        SetHistoryNotice(null, "info");
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null)
+            {
+                SetHistoryNotice("Войдите в приложение, чтобы перезагрузить историю.", "error");
+                return;
+            }
+
+            using var response = await client.PostAsync($"Stocks/{Stock.Id}/history/refresh", null);
+            if (!response.IsSuccessStatusCode)
+            {
+                SetHistoryNotice(await BuildApiErrorAsync(response, "Не удалось перезагрузить историю."), "error");
+                return;
+            }
+
+            var result = await response.Content.ReadFromJsonAsync<StockHistoryRefreshResponse>(JsonOptions);
+            await LoadHistoryAsync(_historyRange);
+
+            if (result?.RateLimited == true)
+                SetHistoryNotice("Перезагрузка истории ограничена поставщиком данных. Попробуйте позже.", "warning");
+            else if (result?.SkippedNotDue == true)
+                SetHistoryNotice("Перезагрузка истории сейчас не требуется.", "info");
+            else
+                SetHistoryNotice($"История перезагружена: удалено {result?.DeletedPoints ?? 0}, загружено {result?.ImportedPoints ?? 0}", "success");
+        }
+        catch
+        {
+            SetHistoryNotice("Не удалось перезагрузить историю.", "error");
+        }
+        finally
+        {
+            _historyRefreshing = false;
+        }
+    }
+
+    private async Task OpenHardResetModalAsync()
+    {
+        if (_hardResetModalOpen) return;
+        _hardResetModalOpen = true;
+        _repairValidation = null;
+        _providerSymbolCandidate = string.Empty;
+        _hardResetConfirmation = string.Empty;
+        _hardResetError = null;
+        _validationLoading = true;
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null)
+            {
+                _hardResetError = "Войдите в приложение, чтобы восстановить историю.";
+                return;
+            }
+
+            using var response = await client.GetAsync($"Stocks/{Stock.Id}/history/routing-diagnostics");
+            if (!response.IsSuccessStatusCode)
+            {
+                _hardResetError = await BuildApiErrorAsync(response, "Не удалось загрузить диагностику маршрутизации истории.");
+                return;
+            }
+
+            _repairDiagnostics = await response.Content.ReadFromJsonAsync<StockHistoryRepairDiagnosticsResponse>(JsonOptions);
+            _providerSymbolCandidate = _repairDiagnostics?.ConfiguredProviderSymbol ?? string.Empty;
+        }
+        catch
+        {
+            _hardResetError = "Не удалось загрузить диагностику маршрутизации истории.";
+        }
+        finally
+        {
+            _validationLoading = false;
+        }
+    }
+
+    private void CloseHardResetModal()
+    {
+        if (_hardResetLoading) return;
+        _hardResetModalOpen = false;
+        _hardResetError = null;
+    }
+
+    private async Task ValidateProviderSymbolAsync()
+    {
+        if (_validationLoading || _hardResetLoading) return;
+        _validationLoading = true;
+        _hardResetError = null;
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null)
+            {
+                _hardResetError = "Войдите в приложение, чтобы проверить символ поставщика.";
+                return;
+            }
+
+            using var response = await client.PostAsJsonAsync(
+                $"Stocks/{Stock.Id}/history/provider-symbol/validate",
+                new { candidateProviderSymbol = string.IsNullOrWhiteSpace(_providerSymbolCandidate) ? null : _providerSymbolCandidate });
+            if (!response.IsSuccessStatusCode)
+            {
+                _hardResetError = await BuildApiErrorAsync(response, "Не удалось проверить символ поставщика.");
+                return;
+            }
+
+            _repairValidation = await response.Content.ReadFromJsonAsync<StockHistoryRepairDiagnosticsResponse>(JsonOptions);
+            if (HardResetValidationPassed)
+                SetHistoryNotice("Символ поставщика успешно проверен.", "success");
+            else
+                SetHistoryNotice("Проверка завершилась с предупреждениями или ошибками. Сброс не будет выполнен.", "warning");
+        }
+        catch
+        {
+            _hardResetError = "Не удалось проверить символ поставщика.";
+        }
+        finally
+        {
+            _validationLoading = false;
+        }
+    }
+
+    private async Task HardResetHistoryAsync()
+    {
+        if (!CanHardReset) return;
+        _hardResetLoading = true;
+        _hardResetError = null;
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null)
+            {
+                _hardResetError = "Войдите в приложение, чтобы восстановить историю.";
+                return;
+            }
+
+            using var response = await client.PostAsJsonAsync(
+                $"Stocks/{Stock.Id}/history/hard-reset",
+                new
+                {
+                    candidateProviderSymbol = string.IsNullOrWhiteSpace(_providerSymbolCandidate) ? null : _providerSymbolCandidate,
+                    confirmationText = _hardResetConfirmation,
+                });
+            if (!response.IsSuccessStatusCode)
+            {
+                _hardResetError = await BuildApiErrorAsync(response, "Не удалось выполнить полный сброс истории.");
+                return;
+            }
+
+            var result = await response.Content.ReadFromJsonAsync<StockHistoryRepairDiagnosticsResponse>(JsonOptions);
+            _repairValidation = result;
+            if (result is null || !result.ResetPerformed)
+            {
+                _hardResetError = "Полный сброс не выполнен. Проверьте диагностику и повторите попытку.";
+                return;
+            }
+
+            _hardResetModalOpen = false;
+            SetHistoryNotice($"История полностью восстановлена: удалено {result.DeletedRows}, вставлено {result.InsertedRows}.", "success");
+            _history = null;
+            await LoadHistoryAsync(_historyRange);
+        }
+        catch
+        {
+            _hardResetError = "Не удалось выполнить полный сброс истории.";
+        }
+        finally
+        {
+            _hardResetLoading = false;
+        }
+    }
+
+    private void SetHistoryNotice(string? text, string level)
+    {
+        _historyNotice = text;
+        _historyNoticeLevel = level;
+    }
+
+    private static string GetResultBadgeClass(string? resultBucket) => resultBucket switch
+    {
+        "success" or "partial" => string.Empty,
+        "empty" or "rateLimited" => "warning",
+        _ => "error",
+    };
+
+    private static async Task<string> BuildApiErrorAsync(HttpResponseMessage response, string fallback)
+    {
+        try
+        {
+            var body = (await response.Content.ReadAsStringAsync()).Trim();
+            if (!string.IsNullOrWhiteSpace(body))
+            {
+                if (body.Length > 1 && body[0] == '"' && body[^1] == '"')
+                    body = JsonSerializer.Deserialize<string>(body) ?? body;
+                return $"{fallback} {body}";
+            }
+        }
+        catch
+        {
+            // Ignore malformed error bodies and fall through to the HTTP status.
+        }
+
+        return $"{fallback} (HTTP {(int)response.StatusCode}).";
     }
 
     private static string ProfitClass(decimal value) => value > 0m ? "positive" : value < 0m ? "negative" : string.Empty;
@@ -284,4 +594,45 @@
     private sealed record HistoryAxisTick(decimal Y, string Label);
     private sealed record HistoryDateTick(decimal X, string Label, string Anchor);
     private sealed record HistoryVolumeBar(DateTime Timestamp, long Volume, decimal X, decimal Y, decimal Width, decimal Height, bool IsCapped);
+
+    private sealed class StockHistoryRefreshResponse
+    {
+        public int DeletedPoints { get; set; }
+        public int ImportedPoints { get; set; }
+        public bool RateLimited { get; set; }
+        public bool SkippedNotDue { get; set; }
+    }
+
+    private sealed class StockHistoryRepairDiagnosticsResponse
+    {
+        public int StockId { get; set; }
+        public string Ticker { get; set; } = string.Empty;
+        public string Exchange { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public string? ConfiguredProviderSymbol { get; set; }
+        public string EffectiveProviderSymbol { get; set; } = string.Empty;
+        public string? CandidateOverrideSymbol { get; set; }
+        public string Provider { get; set; } = string.Empty;
+        public string ResultBucket { get; set; } = string.Empty;
+        public int DeletedRows { get; set; }
+        public int InsertedRows { get; set; }
+        public int FinalRows { get; set; }
+        public bool ResetPerformed { get; set; }
+        public List<StockHistoryRepairIntervalDiagnostics> Intervals { get; set; } = [];
+        public List<string> Warnings { get; set; } = [];
+        public List<string> Errors { get; set; } = [];
+    }
+
+    private sealed class StockHistoryRepairIntervalDiagnostics
+    {
+        public string Interval { get; set; } = string.Empty;
+        public int RequestedCount { get; set; }
+        public int FetchedCount { get; set; }
+        public int AcceptedCount { get; set; }
+        public int RejectedCount { get; set; }
+        public int InsertedCount { get; set; }
+        public int FinalCount { get; set; }
+        public bool IsUnavailable { get; set; }
+        public string? Message { get; set; }
+    }
 }

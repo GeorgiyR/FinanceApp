@@ -910,6 +910,4 @@
         public List<int> MarketIndexIds { get; set; } = [];
     }
     private sealed class PurchasePriorityResponse { public int Priority { get; set; } }
-    private sealed class StockPerformanceResponse { public List<StockPerformanceItem> Items { get; set; } = []; }
-    private sealed class StockPerformanceItem { public int StockId { get; set; } public decimal? ChangePercent { get; set; } }
 }

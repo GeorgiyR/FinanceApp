@@ -74,6 +74,17 @@ public sealed class TrackedMarketIndexDirectoryViewModel
     public bool IsArchived { get; set; }
 }
 
+public sealed class StockPerformanceResponse
+{
+    public List<StockPerformanceItem> Items { get; set; } = [];
+}
+
+public sealed class StockPerformanceItem
+{
+    public int StockId { get; set; }
+    public decimal? ChangePercent { get; set; }
+}
+
 public sealed class StockLiveQuoteViewModel
 {
     public decimal RawCurrentPrice { get; set; }
