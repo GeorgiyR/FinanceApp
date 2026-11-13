@@ -1,5 +1,7 @@
 @inject IHttpClientFactory HttpClientFactory
 @inject IJSRuntime JS
+@inject FinanceApp.Blazor.Components.Services.MarketIndexNavigationService MarketIndexNavigation
+@implements IDisposable
 
 <nav class="sidebar-nav" aria-label="Основная навигация">
     <NavLink class="nav-link" href="/" Match="NavLinkMatch.All">Главная</NavLink>
@@ -38,6 +40,11 @@
                 <summary>Мировые индексы</summary>
                 <div class="nav-children">
                     <NavLink class="nav-link" href="/market-indices" Match="NavLinkMatch.All">Управление</NavLink>
+                    @foreach (var index in _marketIndices)
+                    {
+                        var tooltip = index.Name == index.Code ? index.Name : $"{index.Name} ({index.Code})";
+                        <NavLink class="nav-link" href="@($"/market-indices/{index.Id}")" Match="NavLinkMatch.All" title="@tooltip">@index.Name</NavLink>
+                    }
                 </div>
             </details>
         </div>
@@ -47,6 +54,15 @@
         <summary>Справочники</summary>
         <div class="nav-children">
             <NavLink class="nav-link" href="/sectors">Секторы и отрасли</NavLink>
+            <details class="nav-group nav-group-nested">
+                <summary>Аналитика и показатели</summary>
+                <div class="nav-children">
+                    <NavLink class="nav-link" href="/help/analytical-signal">Аналитический сигнал: как читать</NavLink>
+                    <NavLink class="nav-link" href="/help/technical-indicators">Технические показатели в FinanceApp: краткий обзор</NavLink>
+                    <NavLink class="nav-link" href="/help/technical-indicator-formulas">Технические показатели: формулы, примеры и ограничения</NavLink>
+                    <NavLink class="nav-link" href="/help/fundamentals">Фундаментальные показатели и экраны</NavLink>
+                </div>
+            </details>
             <NavLink class="nav-link" href="/financial-metrics">Финансовые показатели</NavLink>
             <NavLink class="nav-link" href="/help">Справка</NavLink>
         </div>
@@ -69,17 +85,28 @@
     private bool _loading = true;
     private bool _isAuthenticated;
     private List<PortfolioNavigationItem> _portfolios = [];
+    private List<MarketIndexNavigationItem> _marketIndices = [];
     private IJSObjectReference? _apiModule;
+
+    protected override void OnInitialized()
+    {
+        MarketIndexNavigation.Changed += OnMarketIndexNavigationChanged;
+    }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (firstRender)
         {
-            await LoadPortfoliosAsync();
+            await LoadNavigationAsync();
         }
     }
 
-    private async Task LoadPortfoliosAsync()
+    private void OnMarketIndexNavigationChanged()
+    {
+        _ = InvokeAsync(LoadMarketIndicesAsync);
+    }
+
+    private async Task LoadNavigationAsync()
     {
         try
         {
@@ -91,8 +118,7 @@
             }
 
             _isAuthenticated = true;
-            using var client = HttpClientFactory.CreateClient("FinanceApi");
-            client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+            using var client = CreateClient(token);
             using var response = await client.GetAsync("Portfolios");
             if (response.IsSuccessStatusCode)
             {
@@ -102,10 +128,13 @@
             {
                 _isAuthenticated = false;
             }
+
+            _marketIndices = await FetchMarketIndicesAsync(client);
         }
         catch
         {
             _portfolios = [];
+            _marketIndices = [];
         }
         finally
         {
@@ -114,11 +143,57 @@
         }
     }
 
+    private async Task LoadMarketIndicesAsync()
+    {
+        if (!_isAuthenticated) return;
+        try
+        {
+            _apiModule ??= await JS.InvokeAsync<IJSObjectReference>("import", "./portfolioApi.js");
+            var token = await _apiModule.InvokeAsync<string?>("getToken");
+            if (string.IsNullOrWhiteSpace(token)) return;
+            using var client = CreateClient(token);
+            _marketIndices = await FetchMarketIndicesAsync(client);
+            await InvokeAsync(StateHasChanged);
+        }
+        catch
+        {
+        }
+    }
+
+    private static async Task<List<MarketIndexNavigationItem>> FetchMarketIndicesAsync(HttpClient client)
+    {
+        using var response = await client.GetAsync("market-indices?includeArchived=false");
+        if (!response.IsSuccessStatusCode) return [];
+        var indices = await response.Content.ReadFromJsonAsync<List<MarketIndexNavigationItem>>() ?? [];
+        return indices.Where(index => index.ShowInNavigation && !index.IsArchived).ToList();
+    }
+
+    private HttpClient CreateClient(string token)
+    {
+        var client = HttpClientFactory.CreateClient("FinanceApi");
+        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        return client;
+    }
+
     private sealed class PortfolioNavigationItem
     {
         public PortfolioNavigationItem() { }
         public int Id { get; set; }
         public string Name { get; set; } = string.Empty;
+    }
+
+    private sealed class MarketIndexNavigationItem
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public string Code { get; set; } = string.Empty;
+        public bool IsArchived { get; set; }
+        public bool ShowInNavigation { get; set; }
+    }
+
+    public void Dispose()
+    {
+        MarketIndexNavigation.Changed -= OnMarketIndexNavigationChanged;
     }
 }
 

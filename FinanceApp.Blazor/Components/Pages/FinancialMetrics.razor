@@ -1,3 +1,120 @@
 @page "/financial-metrics"
+@using System.Globalization
+@using FinanceApp.Blazor.Components.Models
+
 <PageTitle>Финансовые показатели</PageTitle>
-<h1>Финансовые показатели</h1>
+
+<div class="tracked-stocks-page financial-metrics-page">
+    <div class="tracked-stocks-heading">
+        <div><h1>Финансовые показатели</h1></div>
+    </div>
+
+    <div class="directories-typography financial-metrics-content">
+        <div class="tracked-stocks-toolbar">
+            <input type="search" placeholder="Поиск по названию, описанию, формуле, alias..." aria-label="Поиск финансовых показателей" value="@_search" @oninput="OnSearchChanged" />
+            <span>@CountText</span>
+        </div>
+
+        <div class="positions-table-wrap financial-metrics-table-wrap">
+            <table class="positions-table financial-metrics-table">
+                <thead>
+                    <tr><th class="financial-metrics-name-cell">Название</th><th>Описание</th></tr>
+                </thead>
+                <tbody>
+                    @if (!FilteredMetrics.Any())
+                    {
+                        <tr>
+                            <td colspan="2" class="financial-metrics-empty">
+                                <span>Показатели не найдены</span>
+                                <span>Попробуйте изменить поисковый запрос</span>
+                            </td>
+                        </tr>
+                    }
+                    else
+                    {
+                        @foreach (var metric in FilteredMetrics)
+                        {
+                            <tr>
+                                <td class="financial-metrics-name-cell">
+                                    <strong class="financial-metrics-name">@metric.Name</strong>
+                                    @if (FormatAliasesLine(metric) is string aliasesLine)
+                                    {
+                                        <span class="financial-metrics-aliases">@aliasesLine</span>
+                                    }
+                                </td>
+                                <td>
+                                    <div class="financial-metrics-description">
+                                        <p>@metric.Description</p>
+                                        @if (!string.IsNullOrWhiteSpace(metric.Unit))
+                                        {
+                                            <span class="financial-metrics-meta">Единица: @metric.Unit</span>
+                                        }
+                                        @if (!string.IsNullOrWhiteSpace(metric.Formula))
+                                        {
+                                            <div class="financial-metrics-formula">
+                                                <span class="financial-metrics-meta">Формула:</span>
+                                                <div><code>@metric.Formula</code></div>
+                                            </div>
+                                        }
+                                        @if (!string.IsNullOrWhiteSpace(metric.Example))
+                                        {
+                                            <div class="financial-metrics-example">
+                                                <span class="financial-metrics-meta">Пример:</span>
+                                                <span>@metric.Example</span>
+                                            </div>
+                                        }
+                                        @if (!string.IsNullOrWhiteSpace(metric.Interpretation))
+                                        {
+                                            <div class="financial-metrics-interpretation">⚠ @metric.Interpretation</div>
+                                        }
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+@code {
+    private static readonly IReadOnlyList<FinancialMetric> SortedMetrics = FinancialMetricsData.All
+        .OrderBy(metric => metric.Name, StringComparer.Create(CultureInfo.GetCultureInfo("ru-RU"), ignoreCase: true))
+        .ToList();
+
+    private string _search = string.Empty;
+
+    private IEnumerable<FinancialMetric> FilteredMetrics
+    {
+        get
+        {
+            var query = _search.Trim();
+            if (query.Length == 0) return SortedMetrics;
+            return SortedMetrics.Where(metric =>
+                metric.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase)
+                || metric.Description.Contains(query, StringComparison.CurrentCultureIgnoreCase)
+                || (metric.Formula is not null && metric.Formula.Contains(query, StringComparison.CurrentCultureIgnoreCase))
+                || (metric.Aliases is not null && metric.Aliases.Any(alias => alias.Contains(query, StringComparison.CurrentCultureIgnoreCase))));
+        }
+    }
+
+    private string CountText
+    {
+        get
+        {
+            var filteredCount = FilteredMetrics.Count();
+            return filteredCount == FinancialMetricsData.Count
+                ? $"{FinancialMetricsData.Count} показателей"
+                : $"{filteredCount} из {FinancialMetricsData.Count}";
+        }
+    }
+
+    private void OnSearchChanged(ChangeEventArgs args)
+    {
+        _search = args.Value?.ToString() ?? string.Empty;
+    }
+
+    private static string? FormatAliasesLine(FinancialMetric metric) =>
+        metric.Aliases is { Count: > 0 } aliases ? string.Join(", ", aliases) : null;
+}

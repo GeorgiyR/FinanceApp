@@ -9,6 +9,8 @@ builder.Services.AddHttpClient("FinanceApi", client =>
     client.BaseAddress = new Uri(apiBaseUrl.EndsWith("/") ? apiBaseUrl : apiBaseUrl + "/");
 });
 
+builder.Services.AddScoped<FinanceApp.Blazor.Components.Services.MarketIndexNavigationService>();
+
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents(options =>
     {

@@ -61,7 +61,7 @@
         @if (!string.IsNullOrWhiteSpace(_performanceError)) { <div class="tracked-stocks-performance-error">@_performanceError</div> }
         <div class="positions-table-wrap catalog-table-wrap">
             <table class="positions-table catalog-stocks-table">
-                <thead><tr><th>Тикер</th><th>Название</th>@if (_sortMode != "name") { <th class="numeric">Рост за период</th> }<th>Сектор / отрасль</th><th>Биржа</th><th class="numeric">Текущая цена</th><th>Индексы</th><th>Статус</th><th class="actions-heading">Действия</th></tr></thead>
+                <thead><tr><th>Тикер</th><th>Название</th><th>Индексы</th>@if (_sortMode != "name") { <th class="numeric">Рост за период</th> }<th class="numeric">Текущая цена</th><th class="numeric">Изменение (€)</th><th class="numeric">(%)</th><th class="numeric">Цена API</th><th>Время</th><th class="actions-heading">Действия</th></tr></thead>
                 <tbody>
                     @foreach (var stock in PagedStocks)
                     {
@@ -72,7 +72,14 @@
                                 <button type="button" class="ticker-chart-toggle" aria-expanded="@expanded" aria-controls="catalog-history-@stock.Id" @onclick="() => ToggleHistory(stock.Id)"><span class="ticker-chart-caret @(expanded ? "expanded" : "")">›</span>@stock.Ticker</button>
                                 <span class="ticker-exchange-abbreviation" title="@stock.Exchange">@ExchangeAbbreviation(stock.Exchange)</span>
                             </td>
-                            <td><div class="catalog-stock-name">@stock.Name@if (!string.IsNullOrWhiteSpace(stock.CommonName) && stock.CommonName != stock.Name) { <small>@stock.CommonName</small> }</div></td>
+                            <td>
+                                <div class="catalog-stock-name">@stock.Name@if (!string.IsNullOrWhiteSpace(stock.CommonName) && stock.CommonName != stock.Name) { <small>@stock.CommonName</small> }</div>
+                                @if (!string.IsNullOrWhiteSpace(stock.Industry?.Name ?? stock.Sector?.Name))
+                                {
+                                    <span class="tracked-stock-classification">@(stock.Industry?.Name ?? stock.Sector?.Name)</span>
+                                }
+                            </td>
+                            <td><div class="catalog-index-tags">@if (stock.MarketIndexIds.Count == 0) { <span>—</span> } else { @foreach (var id in stock.MarketIndexIds) { <span>@(_marketIndexNameById.TryGetValue(id, out var name) ? name : $"#{id}")</span> } }</div></td>
                             @if (_sortMode != "name")
                             {
                                 <td class="numeric">
@@ -81,12 +88,29 @@
                                     else { <span class="catalog-stock-status" title="Недостаточно исторических данных">—</span> }
                                 </td>
                             }
-                            <td>@(stock.Industry?.Name ?? stock.Sector?.Name ?? "—")</td>
-                            <td>@stock.Exchange</td>
                             <td class="numeric">@FormatMoney(stock.CurrentPrice)</td>
-                            <td><div class="catalog-index-tags">@if (stock.MarketIndexIds.Count == 0) { <span>—</span> } else { @foreach (var id in stock.MarketIndexIds) { <span>@(_marketIndexNameById.TryGetValue(id, out var name) ? name : $"#{id}")</span> } }</div></td>
-                            <td><span class="catalog-stock-status @(isTracked ? "is-tracked" : "")">@(isTracked ? "Отслеживается" : "В каталоге")</span></td>
+                            <td class="numeric @ProfitClass(stock.CurrentPriceChange)">@(stock.CurrentPriceChange is decimal change ? FormatSignedMoney(change) : "—")</td>
+                            <td class="numeric @ProfitClass(stock.CurrentPriceChangePercent)">@(stock.CurrentPriceChangePercent is decimal percent ? FormatSignedPercent(percent) : "—")</td>
+                            <td class="numeric" title="@FormatApiPriceTooltip(stock.LiveQuote)">
+                                @if (_refreshingStockId == stock.Id) { <span>…</span> }
+                                else if (stock.LiveQuote is { } quote) { <span>@FormatApiPrice(quote)</span> }
+                                else { <span>—</span> }
+                                @if (IsQuoteDelayed(stock.LiveQuote))
+                                {
+                                    <span class="tracked-stock-delayed" title="@(stock.LiveQuote?.DelayWarning ?? "Задержанная котировка")">Задержано</span>
+                                }
+                                else if (stock.LiveQuote is { MarketState: "REGULAR" })
+                                {
+                                    <span class="catalog-market-tag open">Open</span>
+                                }
+                                else if (stock.LiveQuote is not null)
+                                {
+                                    <span class="catalog-market-tag">Closed</span>
+                                }
+                            </td>
+                            <td class="tracked-stock-time">@(stock.CurrentPriceAt is DateTime priceAt ? priceAt.ToLocalTime().ToString("dd.MM.yy HH:mm", RussianCulture) : "—")</td>
                             <td class="catalog-stock-actions">
+                                @if (stock.LiveQuote?.ConversionWarning is not null) { <span class="catalog-no-eur" title="@stock.LiveQuote.ConversionWarning">Нет EUR</span> }
                                 <button type="button" class="action-icon-button" title="Обновить цену" aria-label="Обновить цену @stock.Ticker" disabled="@(_refreshingStockId == stock.Id)" @onclick="() => RefreshStockPriceAsync(stock)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M16.5 7.5A6.8 6.8 0 0 0 4.7 5.2L3 7m0 0V3.5M3 7h3.5M3.5 12.5a6.8 6.8 0 0 0 11.8 2.3l1.7-1.8m0 0v3.5m0-3.5h-3.5" /></svg></button>
                                 <button type="button" class="action-icon-button" title="Фундаментальные данные" aria-label="Фундаментальные данные для @stock.Ticker" @onclick="() => OpenFundamentals(stock)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.2a7.8 7.8 0 1 0 0 15.6 7.8 7.8 0 0 0 0-15.6Zm0 3.1v.1m0 2.4v5.1" /></svg></button>
                                 <button type="button" class="action-icon-button" title="Редактировать акцию" aria-label="Редактировать акцию @stock.Ticker" @onclick="() => OpenStockEdit(stock)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m3 14.8-.8 3 3-.8L16.8 5.4a1.8 1.8 0 0 0-2.6-2.6L3 14.8Zm9.9-9.9 2.6 2.6" /></svg></button>
@@ -101,7 +125,7 @@
                         </tr>
                         @if (expanded)
                         {
-                            <tr id="catalog-history-@stock.Id" class="position-history-row"><td colspan="@(_sortMode == "name" ? 8 : 9)"><StockHistoryPanel Stock="ToHistoryStock(stock)" /></td></tr>
+                            <tr id="catalog-history-@stock.Id" class="position-history-row"><td colspan="@(_sortMode == "name" ? 9 : 10)"><StockHistoryPanel Stock="ToHistoryStock(stock)" /></td></tr>
                         }
                     }
                 </tbody>
@@ -703,8 +727,19 @@
     private void CloseFundamentals() => _fundamentalsStock = null;
     private static string ExchangeAbbreviation(string exchange) => exchange.Trim().ToUpperInvariant() switch { "FRANKFURT" => "F", "NASDAQ" or "NYSE" => "N", _ => exchange };
     private static string FormatMoney(decimal value) => $"{value.ToString("N2", RussianCulture)} €";
+    private static string FormatSignedMoney(decimal value) => $"{(value >= 0m ? "+" : "−")}{FormatMoney(Math.Abs(value))}";
     private static string FormatSignedPercent(decimal value) => $"{(value >= 0m ? "+" : "−")}{Math.Abs(value).ToString("N2", RussianCulture)}%";
     private static string ProfitClass(decimal? value) => value > 0m ? "positive" : value < 0m ? "negative" : string.Empty;
+    private static bool IsQuoteDelayed(StockLiveQuoteViewModel? quote) => quote is not null && (quote.IsStale || !string.IsNullOrWhiteSpace(quote.DelayWarning));
+    private static string FormatApiPrice(StockLiveQuoteViewModel quote)
+    {
+        var currency = quote.Currency ?? quote.NormalizedQuoteCurrency;
+        return currency is null ? "—" : $"{quote.RawCurrentPrice.ToString("N2", RussianCulture)} {currency}";
+    }
+    private static string? FormatApiPriceTooltip(StockLiveQuoteViewModel? quote) =>
+        quote is not null && quote.QuoteUnitMultiplier != 1m && !string.IsNullOrWhiteSpace(quote.NormalizedQuoteCurrency)
+            ? $"Нормализовано: {quote.NormalizedCurrentPrice.ToString("N3", RussianCulture)} {quote.NormalizedQuoteCurrency}"
+            : null;
     private static PortfolioStockViewModel ToHistoryStock(TrackedStockViewModel stock) => new() { Id = stock.Id, Ticker = stock.Ticker, Name = stock.Name, CommonName = stock.CommonName, Exchange = stock.Exchange, Isin = stock.Isin, CurrentPrice = stock.CurrentPrice, CurrentPriceChange = stock.CurrentPriceChange, CurrentPriceChangePercent = stock.CurrentPriceChangePercent, CurrentPriceAt = stock.CurrentPriceAt };
     private sealed class CatalogStockEditModel
     {

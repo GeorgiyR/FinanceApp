@@ -1,3 +1,617 @@
 @page "/sectors"
+@using System.ComponentModel.DataAnnotations
+@using System.Net
+@using System.Net.Http.Headers
+@using System.Net.Http.Json
+@using System.Text.Json
+@inject IHttpClientFactory HttpClientFactory
+@inject IJSRuntime JS
+
 <PageTitle>Секторы и отрасли</PageTitle>
-<h1>Секторы и отрасли</h1>
+
+<div class="tracked-stocks-page directories-page">
+    <div class="tracked-stocks-heading">
+        <div><h1>Секторы и отрасли</h1><p>Управление справочником секторов и отраслей.</p></div>
+        <div class="catalog-heading-actions">
+            <button type="button" class="portfolio-refresh-button" @onclick="ToggleIncludeArchivedAsync" disabled="@_loading">@(_includeArchived ? "Скрыть архивные" : "Показать архивные")</button>
+            <button type="button" class="portfolio-primary-button" @onclick="OpenAddSector" disabled="@_loading">＋ Добавить сектор</button>
+        </div>
+    </div>
+
+    <div class="tracked-stocks-toolbar">
+        <input type="search" placeholder="Поиск по сектору или отрасли..." aria-label="Поиск по сектору или отрасли" value="@_search" @oninput="OnSearchChanged" />
+        <span>Найдено: @FilteredSectors.Count() из @_sectors.Count</span>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(_notice)) { <div class="tracked-stocks-notice" role="status">@_notice</div> }
+
+    @if (_loading)
+    {
+        <div class="portfolio-state">Загрузка справочника…</div>
+    }
+    else if (!string.IsNullOrWhiteSpace(_error))
+    {
+        <div class="portfolio-state portfolio-state-error" role="alert"><p>@_error</p><button type="button" class="portfolio-refresh-button" @onclick="LoadAsync">Повторить</button></div>
+    }
+    else if (!FilteredSectors.Any())
+    {
+        <div class="portfolio-state">Нет данных</div>
+    }
+    else
+    {
+        <div class="positions-table-wrap directories-table-wrap">
+            <table class="positions-table directories-table">
+                <thead><tr><th>Сектор</th><th class="numeric">Отраслей</th><th class="numeric">Акций</th><th class="actions-heading">Действия</th></tr></thead>
+                <tbody>
+                    @foreach (var entry in FilteredSectors)
+                    {
+                        var sector = entry.Sector;
+                        var expanded = _expandedSectorIds.Contains(sector.Id);
+                        <tr class="@(sector.IsArchived ? "directory-row-archived" : "")">
+                            <td>
+                                <button type="button" class="directory-expand-button" aria-expanded="@expanded" aria-controls="sector-industries-@sector.Id" @onclick="() => ToggleSector(sector.Id)">
+                                    <span class="ticker-chart-caret @(expanded ? "expanded" : "")">›</span>
+                                    <strong>@sector.Name</strong>
+                                </button>
+                                @if (sector.IsArchived) { <span class="directory-archive-tag">Архив</span> }
+                            </td>
+                            <td class="numeric"><span class="directory-count-badge">@sector.Industries.Count</span></td>
+                            <td class="numeric"><span class="directory-stock-count">@sector.StockCount</span></td>
+                            <td class="directory-actions">
+                                <div class="directory-action-buttons">
+                                    <button type="button" class="action-icon-button" title="Редактировать сектор" aria-label="Редактировать сектор @sector.Name" @onclick="() => OpenEditSector(sector)" disabled="@_actionSaving">
+                                        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m3 14.8-.8 3 3-.8L16.8 5.4a1.8 1.8 0 0 0-2.6-2.6L3 14.8Zm9.9-9.9 2.6 2.6" /></svg>
+                                    </button>
+                                    <button type="button" class="action-icon-button" title="Добавить отрасль" aria-label="Добавить отрасль в @sector.Name" @onclick="() => OpenAddIndustry(sector)" disabled="@(_actionSaving || sector.IsArchived)">
+                                        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3v14M3 10h14" /></svg>
+                                    </button>
+                                    @if (sector.IsArchived)
+                                    {
+                                        <button type="button" class="action-icon-button" title="Восстановить сектор" aria-label="Восстановить сектор @sector.Name" @onclick="() => RestoreSectorAsync(sector)" disabled="@_actionSaving">
+                                            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4.5 7.5a6.2 6.2 0 1 1-.4 4.4M4.5 7.5V3.7m0 3.8h3.8" /></svg>
+                                        </button>
+                                    }
+                                    else
+                                    {
+                                        <button type="button" class="action-icon-button" title="Архивировать сектор" aria-label="Архивировать сектор @sector.Name" @onclick="() => ArchiveSectorAsync(sector)" disabled="@_actionSaving">
+                                            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 4h14v4H3zM4 8v8h12V8M8 11h4" /></svg>
+                                        </button>
+                                    }
+                                    <button type="button" class="action-icon-button action-delete-button" title="@(sector.Industries.Count > 0 ? "Нельзя удалить: содержит отрасли" : "Удалить сектор")" aria-label="Удалить сектор @sector.Name" disabled="@(_actionSaving || sector.Industries.Count > 0)" @onclick="() => DeleteSectorAsync(sector)">
+                                        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6h12M8 6V4h4v2M6 6l1 10h6l1-10" /></svg>
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                        @if (expanded)
+                        {
+                            <tr id="sector-industries-@sector.Id" class="directory-industries-row">
+                                <td colspan="4">
+                                    @if (entry.Industries.Count == 0)
+                                    {
+                                        <div class="directory-empty">Нет отраслей</div>
+                                    }
+                                    else
+                                    {
+                                        <table class="positions-table directory-industries-table">
+                                            <thead><tr><th>Отрасль</th><th class="numeric">Акций</th><th class="actions-heading">Действия</th></tr></thead>
+                                            <tbody>
+                                                @foreach (var industry in entry.Industries)
+                                                {
+                                                    <tr class="@(industry.IsArchived ? "directory-row-archived" : "")">
+                                                        <td>
+                                                            <span>@industry.Name</span>
+                                                            @if (industry.IsArchived) { <span class="directory-archive-tag">Архив</span> }
+                                                        </td>
+                                                        <td class="numeric"><span class="directory-stock-count">@industry.StockCount</span></td>
+                                                        <td class="directory-actions">
+                                                            <div class="directory-action-buttons">
+                                                                <button type="button" class="action-icon-button" title="Редактировать" aria-label="Редактировать отрасль @industry.Name" @onclick="() => OpenEditIndustry(sector.Id, industry)" disabled="@_actionSaving">
+                                                                    <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m3 14.8-.8 3 3-.8L16.8 5.4a1.8 1.8 0 0 0-2.6-2.6L3 14.8Zm9.9-9.9 2.6 2.6" /></svg>
+                                                                </button>
+                                                                <button type="button" class="action-icon-button" title="Перенести в другой сектор" aria-label="Перенести отрасль @industry.Name" @onclick="() => OpenMoveIndustry(industry)" disabled="@_actionSaving">
+                                                                    <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 10h13M12 6l4 4-4 4" /></svg>
+                                                                </button>
+                                                                @if (industry.IsArchived)
+                                                                {
+                                                                    <button type="button" class="action-icon-button" title="Восстановить" aria-label="Восстановить отрасль @industry.Name" @onclick="() => RestoreIndustryAsync(industry)" disabled="@(_actionSaving || sector.IsArchived)">
+                                                                        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4.5 7.5a6.2 6.2 0 1 1-.4 4.4M4.5 7.5V3.7m0 3.8h3.8" /></svg>
+                                                                    </button>
+                                                                }
+                                                                else
+                                                                {
+                                                                    <button type="button" class="action-icon-button" title="Архивировать" aria-label="Архивировать отрасль @industry.Name" @onclick="() => ArchiveIndustryAsync(industry)" disabled="@_actionSaving">
+                                                                        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 4h14v4H3zM4 8v8h12V8M8 11h4" /></svg>
+                                                                    </button>
+                                                                }
+                                                                <button type="button" class="action-icon-button action-delete-button" title="@(industry.StockCount > 0 ? $"Нельзя удалить: используется в {industry.StockCount} акциях" : "Удалить")" aria-label="Удалить отрасль @industry.Name" disabled="@(_actionSaving || industry.StockCount > 0)" @onclick="() => DeleteIndustryAsync(industry)">
+                                                                    <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6h12M8 6V4h4v2M6 6l1 10h6l1-10" /></svg>
+                                                                </button>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                }
+                                            </tbody>
+                                        </table>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+@if (_sectorModalOpen)
+{
+    <div class="dialog-backdrop" role="presentation" @onclick="CloseSectorModal">
+        <section class="action-dialog directory-dialog" role="dialog" aria-modal="true" aria-labelledby="sector-modal-title" @onclick:stopPropagation>
+            <h2 id="sector-modal-title">@(_editingSector is null ? "Добавить сектор" : "Редактировать сектор")</h2>
+            <EditForm Model="@_sectorForm" OnValidSubmit="SaveSectorAsync" FormName="sector-edit-form">
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+                @if (!string.IsNullOrWhiteSpace(_modalError)) { <div class="directory-modal-error" role="alert">@_modalError</div> }
+                <label class="login-field">Название<InputText @bind-Value="_sectorForm.Name" maxlength="200" disabled="@_saving" /></label>
+                <label class="login-field">Порядок сортировки<InputNumber @bind-Value="_sectorForm.SortOrder" min="0" disabled="@_saving" /></label>
+                <footer class="dialog-actions">
+                    <button type="button" class="dialog-secondary-button" @onclick="CloseSectorModal" disabled="@_saving">Отмена</button>
+                    <button type="submit" class="portfolio-primary-button" disabled="@_saving">@(_saving ? "Сохранение…" : "Сохранить")</button>
+                </footer>
+            </EditForm>
+        </section>
+    </div>
+}
+
+@if (_industryModalOpen)
+{
+    <div class="dialog-backdrop" role="presentation" @onclick="CloseIndustryModal">
+        <section class="action-dialog directory-dialog" role="dialog" aria-modal="true" aria-labelledby="industry-modal-title" @onclick:stopPropagation>
+            <h2 id="industry-modal-title">@(_editingIndustry is null ? "Добавить отрасль" : "Редактировать отрасль")</h2>
+            <EditForm Model="@_industryForm" OnValidSubmit="SaveIndustryAsync" FormName="industry-edit-form">
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+                @if (!string.IsNullOrWhiteSpace(_modalError)) { <div class="directory-modal-error" role="alert">@_modalError</div> }
+                <label class="login-field">Название<InputText @bind-Value="_industryForm.Name" maxlength="200" disabled="@_saving" /></label>
+                <label class="login-field">Порядок сортировки<InputNumber @bind-Value="_industryForm.SortOrder" min="0" disabled="@_saving" /></label>
+                <footer class="dialog-actions">
+                    <button type="button" class="dialog-secondary-button" @onclick="CloseIndustryModal" disabled="@_saving">Отмена</button>
+                    <button type="submit" class="portfolio-primary-button" disabled="@_saving">@(_saving ? "Сохранение…" : "Сохранить")</button>
+                </footer>
+            </EditForm>
+        </section>
+    </div>
+}
+
+@if (_moveModalOpen)
+{
+    <div class="dialog-backdrop" role="presentation" @onclick="CloseMoveModal">
+        <section class="action-dialog directory-dialog" role="dialog" aria-modal="true" aria-labelledby="move-industry-title" @onclick:stopPropagation>
+            <h2 id="move-industry-title">Перенести отрасль</h2>
+            @if (_movingIndustry is not null) { <p class="action-dialog-subtitle">@_movingIndustry.Name</p> }
+            <EditForm Model="@_moveForm" OnValidSubmit="MoveIndustryAsync" FormName="move-industry-form">
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+                @if (!string.IsNullOrWhiteSpace(_modalError)) { <div class="directory-modal-error" role="alert">@_modalError</div> }
+                <label class="login-field">
+                    Целевой сектор
+                    <InputSelect TValue="int?" @bind-Value="_moveForm.TargetSectorId" disabled="@_saving">
+                        <option value="">Выберите сектор</option>
+                        @foreach (var sector in MoveTargetSectors)
+                        {
+                            <option value="@sector.Id">@sector.Name</option>
+                        }
+                    </InputSelect>
+                </label>
+                <footer class="dialog-actions">
+                    <button type="button" class="dialog-secondary-button" @onclick="CloseMoveModal" disabled="@_saving">Отмена</button>
+                    <button type="submit" class="portfolio-primary-button" disabled="@_saving">@(_saving ? "Перенос…" : "Перенести")</button>
+                </footer>
+            </EditForm>
+        </section>
+    </div>
+}
+
+@code {
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private readonly List<SectorDto> _sectors = [];
+    private readonly HashSet<int> _expandedSectorIds = [];
+    private string _search = string.Empty;
+    private bool _includeArchived = true;
+    private bool _loading = true;
+    private bool _actionSaving;
+    private bool _saving;
+    private string? _error;
+    private string? _notice;
+    private string? _modalError;
+
+    private bool _sectorModalOpen;
+    private bool _industryModalOpen;
+    private bool _moveModalOpen;
+    private SectorDto? _editingSector;
+    private IndustryDto? _editingIndustry;
+    private int? _industrySectorId;
+    private IndustryDto? _movingIndustry;
+    private SectorFormModel _sectorForm = new();
+    private IndustryFormModel _industryForm = new();
+    private MoveIndustryFormModel _moveForm = new();
+
+    private IEnumerable<SectorView> FilteredSectors
+    {
+        get
+        {
+            var query = _search.Trim();
+            if (query.Length == 0) return _sectors.Select(sector => new SectorView(sector, sector.Industries));
+            return _sectors
+                .Select(sector => new SectorView(
+                    sector,
+                    sector.Industries.Where(industry => industry.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase)).ToList()))
+                .Where(entry => entry.Sector.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase) || entry.Industries.Count > 0);
+        }
+    }
+
+    private IEnumerable<SectorDto> MoveTargetSectors => _sectors
+        .Where(sector => !sector.IsArchived && sector.Id != _movingIndustry?.SectorId)
+        .OrderBy(sector => sector.SortOrder)
+        .ThenBy(sector => sector.Name, StringComparer.CurrentCultureIgnoreCase);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender) await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = null;
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null) { _error = "Войдите в приложение, чтобы увидеть справочник."; return; }
+            using var response = await client.GetAsync($"Sectors?includeArchived={(_includeArchived ? "true" : "false")}");
+            if (response.StatusCode == HttpStatusCode.Unauthorized) { _error = "Войдите в приложение, чтобы увидеть справочник."; return; }
+            if (!response.IsSuccessStatusCode) { _error = $"Не удалось загрузить справочник (HTTP {(int)response.StatusCode})."; return; }
+            var sectors = await response.Content.ReadFromJsonAsync<List<SectorDto>>(JsonOptions) ?? [];
+            _sectors.Clear();
+            _sectors.AddRange(sectors
+                .OrderBy(sector => sector.SortOrder)
+                .ThenBy(sector => sector.Name, StringComparer.CurrentCultureIgnoreCase));
+            _expandedSectorIds.Clear();
+            foreach (var sector in FilteredSectors) _expandedSectorIds.Add(sector.Sector.Id);
+        }
+        catch { _error = "Не удалось связаться с API."; }
+        finally { _loading = false; await InvokeAsync(StateHasChanged); }
+    }
+
+    private async Task<HttpClient?> CreateAuthenticatedClientAsync()
+    {
+        var module = await JS.InvokeAsync<IJSObjectReference>("import", "./portfolioApi.js");
+        try
+        {
+            var token = await module.InvokeAsync<string?>("getToken");
+            if (string.IsNullOrWhiteSpace(token)) return null;
+            var client = HttpClientFactory.CreateClient("FinanceApi");
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            return client;
+        }
+        finally { await module.DisposeAsync(); }
+    }
+
+    private async Task ToggleIncludeArchivedAsync()
+    {
+        if (_loading) return;
+        _includeArchived = !_includeArchived;
+        await LoadAsync();
+    }
+
+    private void OnSearchChanged(ChangeEventArgs args)
+    {
+        _search = args.Value?.ToString() ?? string.Empty;
+        _expandedSectorIds.Clear();
+        foreach (var sector in FilteredSectors) _expandedSectorIds.Add(sector.Sector.Id);
+    }
+
+    private void ToggleSector(int sectorId)
+    {
+        if (!_expandedSectorIds.Remove(sectorId)) _expandedSectorIds.Add(sectorId);
+    }
+
+    private void OpenAddSector()
+    {
+        _editingSector = null;
+        _sectorForm = new SectorFormModel { SortOrder = (_sectors.Count + 1) * 10 };
+        _modalError = null;
+        _sectorModalOpen = true;
+    }
+
+    private void OpenEditSector(SectorDto sector)
+    {
+        _editingSector = sector;
+        _sectorForm = new SectorFormModel { Name = sector.Name, SortOrder = sector.SortOrder };
+        _modalError = null;
+        _sectorModalOpen = true;
+    }
+
+    private void CloseSectorModal()
+    {
+        if (_saving) return;
+        _sectorModalOpen = false;
+        _modalError = null;
+    }
+
+    private async Task SaveSectorAsync()
+    {
+        if (_saving) return;
+        _saving = true;
+        _modalError = null;
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null) { _modalError = "Войдите в приложение и повторите попытку."; return; }
+            var payload = new { name = _sectorForm.Name.Trim(), sortOrder = _sectorForm.SortOrder };
+            using var response = _editingSector is null
+                ? await client.PostAsJsonAsync("Sectors", payload)
+                : await client.PutAsJsonAsync($"Sectors/{_editingSector.Id}", payload);
+            if (!response.IsSuccessStatusCode) { _modalError = await GetApiErrorAsync(response, "Ошибка сохранения сектора."); return; }
+            _notice = _editingSector is null ? "Сектор создан" : "Сектор обновлён";
+            _sectorModalOpen = false;
+            await LoadAsync();
+        }
+        catch { _modalError = "Не удалось связаться с API."; }
+        finally { _saving = false; }
+    }
+
+    private async Task ArchiveSectorAsync(SectorDto sector) => await SetSectorArchivedAsync(sector, archive: true);
+    private async Task RestoreSectorAsync(SectorDto sector) => await SetSectorArchivedAsync(sector, archive: false);
+
+    private async Task SetSectorArchivedAsync(SectorDto sector, bool archive)
+    {
+        if (_actionSaving) return;
+        _actionSaving = true;
+        _notice = null;
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null) { _notice = "Войдите в приложение и повторите попытку."; return; }
+            var action = archive ? "archive" : "restore";
+            using var response = await client.PostAsync($"Sectors/{sector.Id}/{action}", null);
+            if (!response.IsSuccessStatusCode)
+            {
+                _notice = await GetApiErrorAsync(response, archive ? "Ошибка архивирования сектора." : "Ошибка восстановления сектора.");
+                return;
+            }
+            _notice = archive ? "Сектор архивирован" : "Сектор восстановлен";
+            await LoadAsync();
+        }
+        catch { _notice = "Не удалось связаться с API."; }
+        finally { _actionSaving = false; }
+    }
+
+    private async Task DeleteSectorAsync(SectorDto sector)
+    {
+        if (_actionSaving || sector.Industries.Count > 0) return;
+        if (!await JS.InvokeAsync<bool>("confirm", $"Удалить сектор «{sector.Name}»?")) return;
+        _actionSaving = true;
+        _notice = null;
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null) { _notice = "Войдите в приложение и повторите попытку."; return; }
+            using var response = await client.DeleteAsync($"Sectors/{sector.Id}");
+            if (!response.IsSuccessStatusCode) { _notice = await GetApiErrorAsync(response, "Невозможно удалить сектор."); return; }
+            _notice = "Сектор удалён";
+            await LoadAsync();
+        }
+        catch { _notice = "Не удалось связаться с API."; }
+        finally { _actionSaving = false; }
+    }
+
+    private void OpenAddIndustry(SectorDto sector)
+    {
+        _editingIndustry = null;
+        _industrySectorId = sector.Id;
+        _industryForm = new IndustryFormModel { SortOrder = (sector.Industries.Count + 1) * 10 };
+        _modalError = null;
+        _industryModalOpen = true;
+    }
+
+    private void OpenEditIndustry(int sectorId, IndustryDto industry)
+    {
+        _editingIndustry = industry;
+        _industrySectorId = sectorId;
+        _industryForm = new IndustryFormModel { Name = industry.Name, SortOrder = industry.SortOrder };
+        _modalError = null;
+        _industryModalOpen = true;
+    }
+
+    private void CloseIndustryModal()
+    {
+        if (_saving) return;
+        _industryModalOpen = false;
+        _modalError = null;
+    }
+
+    private async Task SaveIndustryAsync()
+    {
+        if (_saving || _industrySectorId is null) return;
+        _saving = true;
+        _modalError = null;
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null) { _modalError = "Войдите в приложение и повторите попытку."; return; }
+            var payload = new { name = _industryForm.Name.Trim(), sortOrder = _industryForm.SortOrder };
+            using var response = _editingIndustry is null
+                ? await client.PostAsJsonAsync($"Sectors/{_industrySectorId}/industries", payload)
+                : await client.PutAsJsonAsync($"Sectors/{_industrySectorId}/industries/{_editingIndustry.Id}", payload);
+            if (!response.IsSuccessStatusCode) { _modalError = await GetApiErrorAsync(response, "Ошибка сохранения отрасли."); return; }
+            _notice = _editingIndustry is null ? "Отрасль создана" : "Отрасль обновлена";
+            _industryModalOpen = false;
+            await LoadAsync();
+        }
+        catch { _modalError = "Не удалось связаться с API."; }
+        finally { _saving = false; }
+    }
+
+    private async Task ArchiveIndustryAsync(IndustryDto industry) => await SetIndustryArchivedAsync(industry, archive: true);
+    private async Task RestoreIndustryAsync(IndustryDto industry) => await SetIndustryArchivedAsync(industry, archive: false);
+
+    private async Task SetIndustryArchivedAsync(IndustryDto industry, bool archive)
+    {
+        if (_actionSaving) return;
+        _actionSaving = true;
+        _notice = null;
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null) { _notice = "Войдите в приложение и повторите попытку."; return; }
+            var action = archive ? "archive" : "restore";
+            using var response = await client.PostAsync($"Sectors/{industry.SectorId}/industries/{industry.Id}/{action}", null);
+            if (!response.IsSuccessStatusCode)
+            {
+                _notice = await GetApiErrorAsync(response, archive ? "Ошибка архивирования отрасли." : "Ошибка восстановления отрасли.");
+                return;
+            }
+            _notice = archive ? "Отрасль архивирована" : "Отрасль восстановлена";
+            await LoadAsync();
+        }
+        catch { _notice = "Не удалось связаться с API."; }
+        finally { _actionSaving = false; }
+    }
+
+    private async Task DeleteIndustryAsync(IndustryDto industry)
+    {
+        if (_actionSaving || industry.StockCount > 0) return;
+        if (!await JS.InvokeAsync<bool>("confirm", $"Удалить отрасль «{industry.Name}»?")) return;
+        _actionSaving = true;
+        _notice = null;
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null) { _notice = "Войдите в приложение и повторите попытку."; return; }
+            using var response = await client.DeleteAsync($"Sectors/{industry.SectorId}/industries/{industry.Id}");
+            if (!response.IsSuccessStatusCode) { _notice = await GetApiErrorAsync(response, "Невозможно удалить отрасль."); return; }
+            _notice = "Отрасль удалена";
+            await LoadAsync();
+        }
+        catch { _notice = "Не удалось связаться с API."; }
+        finally { _actionSaving = false; }
+    }
+
+    private void OpenMoveIndustry(IndustryDto industry)
+    {
+        _movingIndustry = industry;
+        _moveForm = new MoveIndustryFormModel();
+        _modalError = null;
+        _moveModalOpen = true;
+    }
+
+    private void CloseMoveModal()
+    {
+        if (_saving) return;
+        _moveModalOpen = false;
+        _modalError = null;
+    }
+
+    private async Task MoveIndustryAsync()
+    {
+        if (_saving || _movingIndustry is null || _moveForm.TargetSectorId is not int targetSectorId) return;
+        _saving = true;
+        _modalError = null;
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null) { _modalError = "Войдите в приложение и повторите попытку."; return; }
+            using var response = await client.PatchAsJsonAsync(
+                $"Sectors/{_movingIndustry.SectorId}/industries/{_movingIndustry.Id}/move",
+                new { targetSectorId });
+            if (!response.IsSuccessStatusCode) { _modalError = await GetApiErrorAsync(response, "Ошибка переноса отрасли."); return; }
+            _notice = "Отрасль перенесена";
+            _moveModalOpen = false;
+            await LoadAsync();
+        }
+        catch { _modalError = "Не удалось связаться с API."; }
+        finally { _saving = false; }
+    }
+
+    private static async Task<string> GetApiErrorAsync(HttpResponseMessage response, string fallback)
+    {
+        try
+        {
+            var body = (await response.Content.ReadAsStringAsync()).Trim();
+            if (!string.IsNullOrWhiteSpace(body))
+            {
+                try
+                {
+                    using var json = JsonDocument.Parse(body);
+                    foreach (var key in new[] { "message", "title", "detail" })
+                    {
+                        if (json.RootElement.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String)
+                        {
+                            var text = value.GetString();
+                            if (!string.IsNullOrWhiteSpace(text)) return text;
+                        }
+                    }
+                }
+                catch (JsonException) { }
+                if (body.Length > 1 && body[0] == '"' && body[^1] == '"')
+                    return JsonSerializer.Deserialize<string>(body) ?? body;
+                return body;
+            }
+        }
+        catch { }
+        return $"{fallback} (HTTP {(int)response.StatusCode}).";
+    }
+
+    private sealed record SectorView(SectorDto Sector, IReadOnlyList<IndustryDto> Industries);
+
+    private sealed class SectorDto
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public string NormalizedName { get; set; } = string.Empty;
+        public bool IsArchived { get; set; }
+        public int SortOrder { get; set; }
+        public int IndustryCount { get; set; }
+        public int StockCount { get; set; }
+        public List<IndustryDto> Industries { get; set; } = [];
+    }
+
+    private sealed class IndustryDto
+    {
+        public int Id { get; set; }
+        public int SectorId { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public string NormalizedName { get; set; } = string.Empty;
+        public bool IsArchived { get; set; }
+        public int SortOrder { get; set; }
+        public int StockCount { get; set; }
+    }
+
+    private sealed class SectorFormModel
+    {
+        [Required(ErrorMessage = "Введите название")]
+        [StringLength(200, ErrorMessage = "Название не должно превышать 200 символов.")]
+        public string Name { get; set; } = string.Empty;
+
+        [Range(0, int.MaxValue, ErrorMessage = "Порядок сортировки должен быть неотрицательным.")]
+        public int SortOrder { get; set; }
+    }
+
+    private sealed class IndustryFormModel
+    {
+        [Required(ErrorMessage = "Введите название")]
+        [StringLength(200, ErrorMessage = "Название не должно превышать 200 символов.")]
+        public string Name { get; set; } = string.Empty;
+
+        [Range(0, int.MaxValue, ErrorMessage = "Порядок сортировки должен быть неотрицательным.")]
+        public int SortOrder { get; set; }
+    }
+
+    private sealed class MoveIndustryFormModel
+    {
+        [Required(ErrorMessage = "Выберите сектор")]
+        public int? TargetSectorId { get; set; }
+    }
+}

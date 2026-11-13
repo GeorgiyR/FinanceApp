@@ -1,8 +1,297 @@
 @page "/help"
 @page "/help/{ArticleSlug}"
-<PageTitle>Справка</PageTitle>
-<h1>Справка</h1>
+@using FinanceApp.Blazor.Components.Models
+@inject IJSRuntime JS
+@inject NavigationManager Navigation
+
+<PageTitle>@(SelectedArticle is null ? "Справка" : SelectedArticle.Title)</PageTitle>
+
+<div class="tracked-stocks-page help-page-shell">
+    <div class="tracked-stocks-heading">
+        <div><h1>Справка FinanceApp</h1></div>
+    </div>
+
+    <div class="help-page directories-typography">
+        <aside class="help-page__sidebar" aria-label="Навигация по справке">
+            <div class="help-sidebar-stack">
+                <p class="help-page__sidebar-intro">Руководство по возможностям приложения, аналитике, качеству данных и типичным вопросам.</p>
+                <input type="search" placeholder="Поиск по разделам и тексту" aria-label="Поиск по справке" value="@_search" @oninput="OnSearchChanged" />
+
+                @if (string.IsNullOrWhiteSpace(_search))
+                {
+                    <p class="help-page__sidebar-hint">Откройте статью из разделов ниже.</p>
+                }
+                else if (!FilteredArticles.Any())
+                {
+                    <div class="help-page__empty-search">
+                        <span>Ничего не найдено.</span>
+                        <span>Попробуйте сократить запрос или использовать ключевые слова из заголовков.</span>
+                    </div>
+                }
+
+                @foreach (var entry in CategoriesWithArticles)
+                {
+                    <section class="help-page__card">
+                        <h2>@entry.Category.Title</h2>
+                        <ul class="help-page__article-list">
+                            @foreach (var article in entry.Articles)
+                            {
+                                <li><NavLink class="help-page__article-link" href="@($"/help/{article.Slug}")">@article.Title</NavLink></li>
+                            }
+                        </ul>
+                    </section>
+                }
+            </div>
+        </aside>
+
+        <section class="help-page__content" aria-label="Содержимое статьи">
+            @if (HasUnknownArticle)
+            {
+                <div class="help-page__alert" role="alert">
+                    <strong>Статья не найдена</strong>
+                    <span>Проверьте ссылку или выберите статью из списка слева.</span>
+                </div>
+            }
+
+            @if (SelectedArticle is null)
+            {
+                <div class="help-page__card help-page__intro-card">
+                    <h2>Центр справки FinanceApp</h2>
+                    <p>Выберите статью слева или начните с быстрого старта.</p>
+                    <ul class="help-page__article-list">
+                        @foreach (var article in HelpData.Articles.Take(3))
+                        {
+                            <li><NavLink class="help-page__article-link" href="@($"/help/{article.Slug}")">@article.Title</NavLink></li>
+                        }
+                    </ul>
+                </div>
+            }
+            else
+            {
+                var article = SelectedArticle;
+                <article class="help-page__article">
+                    <header class="help-page__article-header">
+                        <div class="help-page__article-heading">
+                            <h2>@article.Title</h2>
+                            <p>@article.Summary</p>
+                            <div class="help-page__tags">
+                                @foreach (var keyword in article.Keywords)
+                                {
+                                    <span class="help-page__tag">@keyword</span>
+                                }
+                            </div>
+                        </div>
+                        <button type="button" class="portfolio-refresh-button" @onclick="CopyCurrentLinkAsync">Копировать ссылку</button>
+                    </header>
+
+                    @if (article.Sections.Count > 2)
+                    {
+                        <nav class="help-page__card help-page__toc" aria-label="Содержание">
+                            <h2>Содержание</h2>
+                            <ol>
+                                @foreach (var section in article.Sections)
+                                {
+                                    <li><a href="#@section.Slug">@section.Title</a></li>
+                                }
+                            </ol>
+                        </nav>
+                    }
+
+                    <div class="help-page__live-status" aria-live="polite">@_copyStatus</div>
+
+                    @foreach (var section in article.Sections)
+                    {
+                        <section id="@section.Slug" class="help-page__section">
+                            <h3>@section.Title</h3>
+                            <div class="help-page__section-body">
+                                @foreach (var block in section.Blocks)
+                                {
+                                    @switch (block.Type)
+                                    {
+                                        case "paragraph":
+                                            <p>@block.Text</p>
+                                            break;
+                                        case "list":
+                                            if (block.Ordered)
+                                            {
+                                                <ol>
+                                                    @foreach (var item in block.Items ?? [])
+                                                    {
+                                                        <li>@item</li>
+                                                    }
+                                                </ol>
+                                            }
+                                            else
+                                            {
+                                                <ul>
+                                                    @foreach (var item in block.Items ?? [])
+                                                    {
+                                                        <li>@item</li>
+                                                    }
+                                                </ul>
+                                            }
+                                            break;
+                                        case "table":
+                                            <div class="help-page__table-wrap">
+                                                <table class="help-page__table">
+                                                    <thead>
+                                                        <tr>
+                                                            @foreach (var column in block.Columns ?? [])
+                                                            {
+                                                                <th>@column</th>
+                                                            }
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        @foreach (var row in block.Rows ?? [])
+                                                        {
+                                                            <tr>
+                                                                @foreach (var cell in row)
+                                                                {
+                                                                    <td>@cell</td>
+                                                                }
+                                                            </tr>
+                                                        }
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                            break;
+                                        case "callout":
+                                            <div class="help-callout @(block.CalloutType == "warning" ? "help-callout--warning" : "help-callout--info")" role="note">
+                                                @if (!string.IsNullOrWhiteSpace(block.Title))
+                                                {
+                                                    <strong>@block.Title</strong>
+                                                }
+                                                <ul>
+                                                    @foreach (var line in block.Body ?? [])
+                                                    {
+                                                        <li>@line</li>
+                                                    }
+                                                </ul>
+                                            </div>
+                                            break;
+                                        case "qa":
+                                            <div class="help-page__qa-block">
+                                                <strong class="help-page__qa-question">@block.Question</strong>
+                                                <p class="help-page__qa-answer">@block.Answer</p>
+                                            </div>
+                                            break;
+                                        default:
+                                            <p class="help-page__muted">Содержимое этого блока пока не поддерживается текущей версией справки.</p>
+                                            break;
+                                    }
+                                }
+                            </div>
+                        </section>
+                    }
+
+                    @if (article.Related.Count > 0)
+                    {
+                        <section class="help-page__card">
+                            <h2>Связанные статьи</h2>
+                            <ul class="help-page__article-list">
+                                @foreach (var link in article.Related)
+                                {
+                                    <li>
+                                        <NavLink class="help-page__article-link" href="@RelatedHref(link)">@link.Label</NavLink>
+                                    </li>
+                                }
+                            </ul>
+                        </section>
+                    }
+                </article>
+            }
+        </section>
+    </div>
+</div>
 
 @code {
+    private static readonly StringComparer RussianComparer =
+        StringComparer.Create(System.Globalization.CultureInfo.GetCultureInfo("ru-RU"), ignoreCase: true);
+
     [Parameter] public string? ArticleSlug { get; set; }
+
+    private string _search = string.Empty;
+    private string _copyStatus = string.Empty;
+
+    private HelpArticle? SelectedArticle => string.IsNullOrWhiteSpace(ArticleSlug)
+        ? null
+        : HelpData.Articles.FirstOrDefault(article => string.Equals(article.Slug, ArticleSlug, StringComparison.OrdinalIgnoreCase));
+
+    private bool HasUnknownArticle => !string.IsNullOrWhiteSpace(ArticleSlug) && SelectedArticle is null;
+
+    private IEnumerable<HelpArticle> FilteredArticles
+    {
+        get
+        {
+            var ordered = HelpData.Articles
+                .OrderBy(article => article.Order)
+                .ThenBy(article => article.Title, RussianComparer);
+            var query = _search.Trim();
+            if (query.Length == 0) return ordered;
+            return ordered.Where(article => MatchesQuery(article, query));
+        }
+    }
+
+    private IEnumerable<HelpCategoryView> CategoriesWithArticles
+    {
+        get
+        {
+            var articles = FilteredArticles.ToList();
+            return HelpData.Categories
+                .OrderBy(category => category.Order)
+                .Select(category => new HelpCategoryView(
+                    category,
+                    articles.Where(article => article.CategorySlug == category.Slug)
+                        .OrderBy(article => article.Order)
+                        .ThenBy(article => article.Title, RussianComparer)
+                        .ToList()))
+                .Where(view => view.Articles.Count > 0);
+        }
+    }
+
+    private void OnSearchChanged(ChangeEventArgs args)
+    {
+        _search = args.Value?.ToString() ?? string.Empty;
+    }
+
+    private static bool MatchesQuery(HelpArticle article, string query)
+    {
+        bool Contains(string? value) =>
+            value is not null && value.Contains(query, StringComparison.CurrentCultureIgnoreCase);
+
+        if (Contains(article.Title) || Contains(article.Summary) || article.Keywords.Any(Contains)) return true;
+        return article.Sections.Any(section =>
+            Contains(section.Title) || section.Blocks.Any(block => Contains(BlockText(block))));
+    }
+
+    private static string RelatedHref(HelpRelatedLink link) =>
+        string.IsNullOrWhiteSpace(link.SectionSlug)
+            ? $"/help/{link.ArticleSlug}"
+            : $"/help/{link.ArticleSlug}#{link.SectionSlug}";
+
+    private static string BlockText(HelpBlock block) => block.Type switch
+    {
+        "paragraph" => block.Text ?? string.Empty,
+        "list" => string.Join(" ", block.Items ?? []),
+        "table" => $"{string.Join(" ", block.Columns ?? [])} {string.Join(" ", (block.Rows ?? []).Select(row => string.Join(" ", row)))}",
+        "callout" => $"{block.Title} {string.Join(" ", block.Body ?? [])}",
+        "qa" => $"{block.Question} {block.Answer}",
+        _ => string.Empty,
+    };
+
+    private async Task CopyCurrentLinkAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", Navigation.Uri);
+            _copyStatus = "Ссылка скопирована.";
+        }
+        catch
+        {
+            _copyStatus = "Не удалось скопировать ссылку. Скопируйте адрес вручную.";
+        }
+    }
+
+    private sealed record HelpCategoryView(HelpCategory Category, IReadOnlyList<HelpArticle> Articles);
 }

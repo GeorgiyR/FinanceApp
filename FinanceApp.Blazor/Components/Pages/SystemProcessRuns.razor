@@ -1,3 +1,683 @@
 @page "/system/processes"
+@using System.Globalization
+@using System.Net
+@using System.Net.Http.Headers
+@using System.Net.Http.Json
+@using System.Text.Json
+@implements IDisposable
+@inject IHttpClientFactory HttpClientFactory
+@inject IJSRuntime JS
+
 <PageTitle>Журнал процессов</PageTitle>
-<h1>Журнал процессов</h1>
+
+<div class="tracked-stocks-page system-runs-page">
+    <div class="tracked-stocks-heading">
+        <div><h1>Журнал процессов</h1></div>
+        <div class="catalog-heading-actions">
+            <button type="button" class="portfolio-refresh-button" @onclick="RefreshAsync" disabled="@_loading">Обновить</button>
+        </div>
+    </div>
+
+    @if (_activeCount > 0)
+    {
+        <div class="system-runs-alert system-runs-alert--info" role="status">
+            Активных процессов: @_activeCount. Автообновление включено.
+        </div>
+    }
+
+    <div class="system-runs-toolbar">
+        <details class="system-runs-status-filter">
+            <summary>@StatusFilterSummary</summary>
+            <div class="system-runs-status-menu">
+                @foreach (var status in StatusOptions)
+                {
+                    <label>
+                        <input type="checkbox" checked="@_statuses.Contains(status)" @onchange="args => ToggleStatusAsync(status, args)" />
+                        <span>@StatusMeta[status].Label</span>
+                    </label>
+                }
+                @if (_statuses.Count > 0)
+                {
+                    <button type="button" class="system-runs-clear-statuses" @onclick="ClearStatusesAsync">Очистить статусы</button>
+                }
+            </div>
+        </details>
+
+        <select value="@_processType" @onchange="OnProcessTypeChanged" aria-label="Процесс">
+            <option value="">Процесс</option>
+            @foreach (var option in ProcessTypeOptions)
+            {
+                <option value="@option">@option</option>
+            }
+        </select>
+
+        <select value="@_trigger" @onchange="OnTriggerChanged" aria-label="Источник">
+            <option value="">Источник</option>
+            @foreach (var trigger in TriggerOptions)
+            {
+                <option value="@trigger">@TriggerLabels[trigger]</option>
+            }
+        </select>
+
+        <label class="system-runs-date-label">
+            С
+            <input type="datetime-local" value="@_fromLocal" @onchange="OnFromChanged" aria-label="Начало периода" />
+        </label>
+        <label class="system-runs-date-label">
+            По
+            <input type="datetime-local" value="@_toLocal" @onchange="OnToChanged" aria-label="Конец периода" />
+        </label>
+
+        <input type="search" class="system-runs-search" placeholder="Поиск" aria-label="Поиск по журналу процессов" value="@_searchDraft" @oninput="OnSearchInput" @onkeydown="OnSearchKeyDown" />
+        <button type="button" class="stocks-toolbar-button" @onclick="ApplySearchAsync" disabled="@_loading">Найти</button>
+
+        <label class="system-runs-active-filter">
+            <input type="checkbox" checked="@_activeOnly" @onchange="OnActiveOnlyChanged" />
+            <span>Только активные</span>
+        </label>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(_error))
+    {
+        <div class="system-runs-alert system-runs-alert--error" role="alert">@_error</div>
+    }
+
+    <div class="system-runs-table-wrap">
+        <table class="system-runs-table">
+            <thead>
+                <tr>
+                    <th>Дата</th>
+                    <th>Запуск</th>
+                    <th>Заверш.</th>
+                    <th>Длит.</th>
+                    <th>Процесс</th>
+                    <th>Источник</th>
+                    <th>Прогресс</th>
+                    <th>Результат</th>
+                    <th>Статус</th>
+                    <th class="actions-heading">Действия</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (_runs.Count == 0)
+                {
+                    <tr><td colspan="10" class="system-runs-empty">@(_loading ? "Загрузка..." : "Нет данных для выбранных фильтров")</td></tr>
+                }
+                else
+                {
+                    @foreach (var run in _runs)
+                    {
+                        var timestamp = run.StartedAtUtc ?? run.QueuedAtUtc;
+                        var status = GetStatusMeta(run.Status);
+                        <tr>
+                            <td title="@FormatDate(timestamp)"><span class="nowrap">@FormatDateOnly(timestamp)</span></td>
+                            <td title="@FormatDate(timestamp)"><span class="nowrap">@FormatTimeOnly(timestamp)</span></td>
+                            <td title="@FormatDate(run.CompletedAtUtc)"><span class="nowrap">@FormatTimeOnly(run.CompletedAtUtc)</span></td>
+                            <td class="nowrap">@FormatRowDuration(run)</td>
+                            <td>
+                                @{ var displayName = string.IsNullOrWhiteSpace(run.DisplayName) ? "—" : run.DisplayName; }
+                                <strong title="@(string.IsNullOrWhiteSpace(run.ProcessType) ? displayName : $"{displayName} ({run.ProcessType})")">@displayName</strong>
+                            </td>
+                            <td>@GetTriggerLabel(run.Trigger)</td>
+                            <td title="@ProgressText(run)"><span class="system-runs-ellipsis">@ProgressText(run)</span></td>
+                            <td title="@ResultText(run)"><span class="system-runs-ellipsis">@ResultText(run)</span></td>
+                            <td><span class="system-status-tag system-status-tag--@status.Color">@status.Label</span></td>
+                            <td class="system-runs-actions">
+                                <button type="button" class="stocks-toolbar-button" @onclick="() => OpenDetailsAsync(run.Id)">Детали</button>
+                            </td>
+                        </tr>
+                    }
+                }
+            </tbody>
+        </table>
+    </div>
+
+    <div class="catalog-pagination system-runs-pagination">
+        <button type="button" class="stocks-toolbar-button" @onclick="PreviousPageAsync" disabled="@(_page <= 1 || _loading)">← Назад</button>
+        <span>Страница @_page из @PageCount</span>
+        <button type="button" class="stocks-toolbar-button" @onclick="NextPageAsync" disabled="@(_page >= PageCount || _loading)">Вперёд →</button>
+        <label class="system-runs-page-size">
+            На странице:
+            <select value="@_pageSize" @onchange="OnPageSizeChanged">
+                @foreach (var size in PageSizeOptions)
+                {
+                    <option value="@size">@size</option>
+                }
+            </select>
+        </label>
+        <span>Всего: @_totalCount</span>
+    </div>
+</div>
+
+@if (_detailsOpen)
+{
+    <div class="system-runs-details-backdrop" role="presentation" @onclick="CloseDetails">
+        <section class="system-runs-details-drawer" role="dialog" aria-modal="true" aria-labelledby="process-details-title" @onclick:stopPropagation>
+            <header>
+                <h2 id="process-details-title">Детали процесса</h2>
+                <button type="button" class="dialog-close-button" aria-label="Закрыть" @onclick="CloseDetails">×</button>
+            </header>
+            <div class="system-runs-details-body">
+                @if (_detailsLoading)
+                {
+                    <p>Загрузка...</p>
+                }
+                else
+                {
+                    @if (!string.IsNullOrWhiteSpace(_detailsError))
+                    {
+                        <div class="system-runs-alert system-runs-alert--error" role="alert">@_detailsError</div>
+                    }
+                    @if (_details is null)
+                    {
+                        <p class="system-runs-muted">Данные недоступны.</p>
+                    }
+                    else
+                    {
+                        <div class="system-detail-row"><span>ID:</span><strong>@_details.Id</strong></div>
+                    <div class="system-detail-row"><span>Correlation ID:</span><strong>@(_details.CorrelationId ?? "—")</strong></div>
+                    <div class="system-detail-row"><span>Процесс:</span><strong>@_details.DisplayName</strong></div>
+                    <div class="system-detail-row"><span>Тип:</span><strong>@_details.ProcessType</strong></div>
+                    <div class="system-detail-row"><span>Источник:</span><strong>@GetTriggerLabel(_details.Trigger)</strong></div>
+                    <div class="system-detail-row"><span>Инициатор:</span><strong>@(_details.InitiatedByUserId ?? "—")</strong></div>
+                    <div class="system-detail-row"><span>Постановка:</span><strong>@FormatDate(_details.QueuedAtUtc)</strong></div>
+                    <div class="system-detail-row"><span>Запуск:</span><strong>@FormatDate(_details.StartedAtUtc)</strong></div>
+                    <div class="system-detail-row"><span>Завершение:</span><strong>@FormatDate(_details.CompletedAtUtc)</strong></div>
+                    <div class="system-detail-row"><span>Обновление:</span><strong>@FormatDate(_details.UpdatedAtUtc)</strong></div>
+                    <div class="system-detail-row"><span>Длительность:</span><strong>@FormatDuration(_details.DurationSeconds)</strong></div>
+                    <div class="system-detail-row"><span>Прогресс:</span><strong>@_details.ProcessedItems / @(_details.TotalItems?.ToString() ?? "—")</strong></div>
+                    <div class="system-detail-row"><span>Результат:</span><strong>@(_details.ResultSummary ?? "—")</strong></div>
+                    <div class="system-detail-row"><span>Ошибка:</span><strong>@(_details.ErrorSummary ?? "—")</strong></div>
+                    <div class="system-detail-row"><span>Последняя сущность:</span><strong>@(_details.LastProcessedEntity ?? "—")</strong></div>
+                    <div class="system-detail-row system-detail-row--stacked"><span>Детали JSON:</span><pre>@(_details.DetailsJson ?? "—")</pre></div>
+                    }
+                }
+            </div>
+        </section>
+    </div>
+}
+
+@code {
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly CultureInfo RussianCulture = CultureInfo.GetCultureInfo("ru-RU");
+
+    private static readonly string[] StatusOptions =
+    [
+        "Pending", "Running", "Succeeded", "CompletedWithErrors", "Failed", "Cancelled", "Interrupted", "Deferred",
+    ];
+
+    private static readonly Dictionary<string, (string Label, string Color)> StatusMeta = new()
+    {
+        ["Pending"] = ("Ожидает", "default"),
+        ["Running"] = ("Выполняется", "processing"),
+        ["Succeeded"] = ("Успешно", "success"),
+        ["CompletedWithErrors"] = ("Завершено с ошибками", "warning"),
+        ["Failed"] = ("Ошибка", "error"),
+        ["Cancelled"] = ("Отменено", "default"),
+        ["Interrupted"] = ("Прервано", "volcano"),
+        ["Deferred"] = ("Отложено", "gold"),
+    };
+
+    private static readonly string[] TriggerOptions =
+    [
+        "Scheduled", "StartupCatchUp", "Automatic", "Manual", "ApiRepair", "SystemRecovery",
+    ];
+
+    private static readonly Dictionary<string, string> TriggerLabels = new()
+    {
+        ["Scheduled"] = "По расписанию",
+        ["StartupCatchUp"] = "Startup catch-up",
+        ["Automatic"] = "Авто.",
+        ["Manual"] = "Вручную",
+        ["ApiRepair"] = "API/восстановление",
+        ["SystemRecovery"] = "Системное восстановление",
+    };
+
+    private static readonly int[] PageSizeOptions = [10, 25, 50, 100];
+
+    private readonly List<ProcessRunListItem> _runs = [];
+    private readonly HashSet<string> _statuses = [];
+
+    private bool _loading;
+    private bool _fetching;
+    private bool _activeOnly;
+    private int _page = 1;
+    private int _pageSize = 50;
+    private int _totalCount;
+    private int _activeCount;
+    private string? _serverNowUtc;
+    private string? _error;
+    private string _processType = string.Empty;
+    private string _trigger = string.Empty;
+    private string _search = string.Empty;
+    private string _searchDraft = string.Empty;
+    private string _fromLocal = string.Empty;
+    private string _toLocal = string.Empty;
+    private string? _fromUtc;
+    private string? _toUtc;
+
+    private bool _detailsOpen;
+    private bool _detailsLoading;
+    private string? _detailsError;
+    private ProcessRunDetails? _details;
+
+    private Timer? _timer;
+    private bool _disposed;
+    private DateTime _lastRefreshUtc = DateTime.UtcNow;
+
+    private int PageCount => Math.Max(1, (int)Math.Ceiling(_totalCount / (double)_pageSize));
+
+    private string StatusFilterSummary => _statuses.Count switch
+    {
+        0 => "Статусы",
+        1 => StatusMeta[_statuses.First()].Label,
+        _ => $"Статусы ({_statuses.Count})",
+    };
+
+    private IEnumerable<string> ProcessTypeOptions
+    {
+        get
+        {
+            var options = _runs
+                .Select(run => run.ProcessType)
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Distinct(StringComparer.CurrentCultureIgnoreCase)
+                .OrderBy(value => value, StringComparer.CurrentCultureIgnoreCase)
+                .ToList();
+            if (!string.IsNullOrWhiteSpace(_processType) && !options.Contains(_processType, StringComparer.CurrentCultureIgnoreCase))
+            {
+                options.Insert(0, _processType);
+            }
+            return options;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        _timer ??= new Timer(OnTimerTick, null, 1000, 1000);
+        await LoadAsync();
+    }
+
+    private void OnTimerTick(object? state)
+    {
+        if (_disposed) return;
+        _ = InvokeAsync(HandleTimerTickAsync);
+    }
+
+    private async Task HandleTimerTickAsync()
+    {
+        if (_disposed) return;
+        if (_activeCount > 0 && !_fetching && (DateTime.UtcNow - _lastRefreshUtc).TotalSeconds >= 7)
+        {
+            await LoadAsync();
+        }
+        else
+        {
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        if (_fetching) return;
+        _fetching = true;
+        _loading = true;
+        _error = null;
+        _lastRefreshUtc = DateTime.UtcNow;
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null)
+            {
+                _error = "Войдите в приложение, чтобы увидеть журнал процессов.";
+                return;
+            }
+
+            var parameters = new List<string>
+            {
+                $"page={_page}",
+                $"pageSize={_pageSize}",
+                $"activeOnly={(_activeOnly ? "true" : "false")}",
+            };
+            if (_statuses.Count > 0) parameters.Add($"statuses={Uri.EscapeDataString(string.Join(",", StatusOptions.Where(_statuses.Contains)))}");
+            if (!string.IsNullOrWhiteSpace(_processType)) parameters.Add($"processType={Uri.EscapeDataString(_processType)}");
+            if (!string.IsNullOrWhiteSpace(_trigger)) parameters.Add($"trigger={Uri.EscapeDataString(_trigger)}");
+            if (!string.IsNullOrWhiteSpace(_search)) parameters.Add($"search={Uri.EscapeDataString(_search)}");
+            if (!string.IsNullOrWhiteSpace(_fromUtc)) parameters.Add($"fromUtc={Uri.EscapeDataString(_fromUtc)}");
+            if (!string.IsNullOrWhiteSpace(_toUtc)) parameters.Add($"toUtc={Uri.EscapeDataString(_toUtc)}");
+
+            var query = string.Join("&", parameters);
+            using var listResponse = await client.GetAsync($"system/process-runs?{query}");
+            using var summaryResponse = await client.GetAsync("system/process-runs/summary");
+
+            if (listResponse.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                _error = "Войдите в приложение, чтобы увидеть журнал процессов.";
+                return;
+            }
+            if (!listResponse.IsSuccessStatusCode)
+            {
+                _error = "Не удалось загрузить журнал процессов.";
+                return;
+            }
+
+            var list = await listResponse.Content.ReadFromJsonAsync<ProcessRunListResponse>(JsonOptions);
+            _runs.Clear();
+            if (list?.Items is not null) _runs.AddRange(list.Items);
+            _totalCount = list?.TotalCount ?? 0;
+            _serverNowUtc = list?.ServerNowUtc;
+
+            if (summaryResponse.IsSuccessStatusCode)
+            {
+                var summary = await summaryResponse.Content.ReadFromJsonAsync<ProcessRunSummary>(JsonOptions);
+                _activeCount = summary?.ActiveCount ?? 0;
+            }
+            else
+            {
+                _activeCount = 0;
+            }
+
+            if (_page > PageCount) _page = PageCount;
+        }
+        catch
+        {
+            _error = "Не удалось загрузить журнал процессов.";
+        }
+        finally
+        {
+            _loading = false;
+            _fetching = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task<HttpClient?> CreateAuthenticatedClientAsync()
+    {
+        var module = await JS.InvokeAsync<IJSObjectReference>("import", "./portfolioApi.js");
+        try
+        {
+            var token = await module.InvokeAsync<string?>("getToken");
+            if (string.IsNullOrWhiteSpace(token)) return null;
+            var client = HttpClientFactory.CreateClient("FinanceApi");
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            return client;
+        }
+        finally
+        {
+            await module.DisposeAsync();
+        }
+    }
+
+    private async Task RefreshAsync()
+    {
+        if (_fetching) return;
+        await LoadAsync();
+    }
+
+    private async Task ToggleStatusAsync(string status, ChangeEventArgs args)
+    {
+        if (args.Value is true) _statuses.Add(status); else _statuses.Remove(status);
+        _page = 1;
+        await LoadAsync();
+    }
+
+    private async Task ClearStatusesAsync()
+    {
+        if (_statuses.Count == 0) return;
+        _statuses.Clear();
+        _page = 1;
+        await LoadAsync();
+    }
+
+    private async Task OnProcessTypeChanged(ChangeEventArgs args)
+    {
+        _processType = args.Value?.ToString() ?? string.Empty;
+        _page = 1;
+        await LoadAsync();
+    }
+
+    private async Task OnTriggerChanged(ChangeEventArgs args)
+    {
+        _trigger = args.Value?.ToString() ?? string.Empty;
+        _page = 1;
+        await LoadAsync();
+    }
+
+    private async Task OnFromChanged(ChangeEventArgs args)
+    {
+        _fromLocal = args.Value?.ToString() ?? string.Empty;
+        _fromUtc = ToIsoUtc(_fromLocal);
+        _page = 1;
+        await LoadAsync();
+    }
+
+    private async Task OnToChanged(ChangeEventArgs args)
+    {
+        _toLocal = args.Value?.ToString() ?? string.Empty;
+        _toUtc = ToIsoUtc(_toLocal);
+        _page = 1;
+        await LoadAsync();
+    }
+
+    private void OnSearchInput(ChangeEventArgs args)
+    {
+        _searchDraft = args.Value?.ToString() ?? string.Empty;
+    }
+
+    private async Task OnSearchKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter") await ApplySearchAsync();
+    }
+
+    private async Task ApplySearchAsync()
+    {
+        _search = _searchDraft.Trim();
+        _page = 1;
+        await LoadAsync();
+    }
+
+    private async Task OnActiveOnlyChanged(ChangeEventArgs args)
+    {
+        _activeOnly = args.Value is true;
+        _page = 1;
+        await LoadAsync();
+    }
+
+    private async Task OnPageSizeChanged(ChangeEventArgs args)
+    {
+        if (!int.TryParse(args.Value?.ToString(), out var size)) return;
+        _pageSize = size;
+        _page = 1;
+        await LoadAsync();
+    }
+
+    private async Task PreviousPageAsync()
+    {
+        if (_page <= 1) return;
+        _page--;
+        await LoadAsync();
+    }
+
+    private async Task NextPageAsync()
+    {
+        if (_page >= PageCount) return;
+        _page++;
+        await LoadAsync();
+    }
+
+    private async Task OpenDetailsAsync(long id)
+    {
+        _detailsOpen = true;
+        _detailsLoading = true;
+        _detailsError = null;
+        _details = null;
+        StateHasChanged();
+
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null)
+            {
+                _detailsError = "Войдите в приложение и повторите попытку.";
+                return;
+            }
+            using var response = await client.GetAsync($"system/process-runs/{id}");
+            if (!response.IsSuccessStatusCode)
+            {
+                _detailsError = "Не удалось загрузить детали процесса.";
+                return;
+            }
+            _details = await response.Content.ReadFromJsonAsync<ProcessRunDetails>(JsonOptions);
+            if (_details is null) _detailsError = "Не удалось загрузить детали процесса.";
+        }
+        catch
+        {
+            _detailsError = "Не удалось загрузить детали процесса.";
+        }
+        finally
+        {
+            _detailsLoading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void CloseDetails()
+    {
+        _detailsOpen = false;
+        _details = null;
+        _detailsError = null;
+    }
+
+    private string FormatRowDuration(ProcessRunListItem run)
+    {
+        var baseSeconds = run.DurationSeconds;
+        if (run.CompletedAtUtc is null
+            && baseSeconds is double value
+            && !string.IsNullOrWhiteSpace(_serverNowUtc)
+            && DateTimeOffset.TryParse(_serverNowUtc, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var serverNow))
+        {
+            var driftSeconds = (DateTimeOffset.UtcNow - serverNow).TotalSeconds;
+            return FormatDuration(value + Math.Max(0, driftSeconds));
+        }
+        return FormatDuration(baseSeconds);
+    }
+
+    private static string ProgressText(ProcessRunListItem run)
+    {
+        var total = run.TotalItems;
+        var processed = run.ProcessedItems;
+        var progress = run.ProgressPercent ?? 0;
+        if (total is > 0)
+        {
+            return $"{processed} / {total} ({Math.Round(progress)}%)";
+        }
+        return processed > 0 ? processed.ToString(RussianCulture) : "—";
+    }
+
+    private static string ResultText(ProcessRunListItem run)
+    {
+        if (!string.IsNullOrWhiteSpace(run.ResultSummary)) return run.ResultSummary;
+        var processed = run.ProcessedItems;
+        var succeeded = run.SucceededItems;
+        var failed = run.FailedItems;
+        return $"Обработано {processed}; успешно {succeeded}; ошибок {failed}";
+    }
+
+    private static string FormatDate(string? value) =>
+        TryParseDate(value, out var parsed) ? parsed.ToLocalTime().ToString("dd.MM.yyyy HH:mm:ss", RussianCulture) : "—";
+
+    private static string FormatDateOnly(string? value) =>
+        TryParseDate(value, out var parsed) ? parsed.ToLocalTime().ToString("dd.MM.yyyy", RussianCulture) : "—";
+
+    private static string FormatTimeOnly(string? value) =>
+        TryParseDate(value, out var parsed) ? parsed.ToLocalTime().ToString("HH:mm:ss", RussianCulture) : "—";
+
+    private static bool TryParseDate(string? value, out DateTimeOffset parsed) =>
+        DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out parsed);
+
+    private static string FormatDuration(double? seconds)
+    {
+        if (seconds is null || double.IsNaN(seconds.Value) || seconds < 0) return "—";
+        var total = (long)Math.Floor(seconds.Value);
+        var hours = total / 3600;
+        var minutes = total % 3600 / 60;
+        var secs = total % 60;
+        if (hours > 0) return $"{hours}ч {minutes}м {secs}с";
+        if (minutes > 0) return $"{minutes}м {secs}с";
+        return $"{secs}с";
+    }
+
+    private static (string Label, string Color) GetStatusMeta(string? status) =>
+        status is not null && StatusMeta.TryGetValue(status, out var meta)
+            ? meta
+            : (string.IsNullOrWhiteSpace(status) ? "Неизвестно" : status, "default");
+
+    private static string GetTriggerLabel(string? trigger) =>
+        trigger is not null && TriggerLabels.TryGetValue(trigger, out var label)
+            ? label
+            : string.IsNullOrWhiteSpace(trigger) ? "Неизвестно" : trigger;
+
+    private static string? ToIsoUtc(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        if (!DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var local)) return null;
+        return local.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture);
+    }
+
+    public void Dispose()
+    {
+        _disposed = true;
+        _timer?.Dispose();
+        _timer = null;
+    }
+
+    private sealed class ProcessRunListResponse
+    {
+        public int Page { get; set; }
+        public int PageSize { get; set; }
+        public int TotalCount { get; set; }
+        public string? ServerNowUtc { get; set; }
+        public List<ProcessRunListItem> Items { get; set; } = [];
+    }
+
+    private sealed class ProcessRunSummary
+    {
+        public string? GeneratedAtUtc { get; set; }
+        public int ActiveCount { get; set; }
+        public int FailedLast24Hours { get; set; }
+        public int CompletedLast24Hours { get; set; }
+        public int TotalLast24Hours { get; set; }
+    }
+
+    private class ProcessRunListItem
+    {
+        public long Id { get; set; }
+        public string ProcessType { get; set; } = string.Empty;
+        public string DisplayName { get; set; } = string.Empty;
+        public string? Status { get; set; }
+        public string? Trigger { get; set; }
+        public string? QueuedAtUtc { get; set; }
+        public string? StartedAtUtc { get; set; }
+        public string? CompletedAtUtc { get; set; }
+        public string? UpdatedAtUtc { get; set; }
+        public string? CorrelationId { get; set; }
+        public int? TotalItems { get; set; }
+        public int ProcessedItems { get; set; }
+        public int SucceededItems { get; set; }
+        public int FailedItems { get; set; }
+        public int SkippedItems { get; set; }
+        public string? ResultSummary { get; set; }
+        public string? ErrorSummary { get; set; }
+        public double? DurationSeconds { get; set; }
+        public double? ProgressPercent { get; set; }
+    }
+
+    private sealed class ProcessRunDetails : ProcessRunListItem
+    {
+        public string? ExternalRunKey { get; set; }
+        public string? InitiatedByUserId { get; set; }
+        public string? LastProcessedEntity { get; set; }
+        public string? DetailsJson { get; set; }
+    }
+}
