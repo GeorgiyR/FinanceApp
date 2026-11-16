@@ -1,3 +1,346 @@
 @page "/profile"
+@using System.ComponentModel.DataAnnotations
+@using System.Net
+@using System.Net.Http.Headers
+@using System.Net.Http.Json
+@using System.Text.Json
+@inject IHttpClientFactory HttpClientFactory
+@inject IJSRuntime JS
+@inject NavigationManager Navigation
+
 <PageTitle>Профиль</PageTitle>
-<h1>Профиль</h1>
+
+<div class="profile-page">
+    <div class="profile-page-heading">
+        <h1>Профиль</h1>
+    </div>
+
+    @if (_loading)
+    {
+        <div class="portfolio-state">Загрузка профиля…</div>
+    }
+    else if (!string.IsNullOrWhiteSpace(_loadError))
+    {
+        <div class="portfolio-state portfolio-state-error" role="alert">
+            <p>@_loadError</p>
+            @if (_requiresLogin)
+            {
+                <a class="portfolio-login-link" href="/login">Войти</a>
+            }
+            else
+            {
+                <button class="portfolio-refresh-button" @onclick="LoadProfileAsync">Повторить</button>
+            }
+        </div>
+    }
+    else
+    {
+        <div class="profile-grid">
+            <section class="profile-card">
+                <h2>Данные учётной записи</h2>
+                <p class="profile-email">Email: @(_user?.Email ?? "—")</p>
+
+                @if (!string.IsNullOrWhiteSpace(_profileSuccess))
+                {
+                    <div class="profile-alert profile-alert-success" role="status">@_profileSuccess</div>
+                }
+                @if (!string.IsNullOrWhiteSpace(_profileError))
+                {
+                    <div class="profile-alert profile-alert-error" role="alert">@_profileError</div>
+                }
+
+                <EditForm Model="_profileModel" OnValidSubmit="SaveProfileAsync" FormName="profile-form" autocomplete="off">
+                    <DataAnnotationsValidator />
+                    <div class="profile-field">
+                        <label for="profile-username">Логин</label>
+                        <InputText id="profile-username" @bind-Value="_profileModel.Username" maxlength="32" autocomplete="username" />
+                        <ValidationMessage For="@(() => _profileModel.Username)" />
+                    </div>
+                    <div class="profile-field">
+                        <label for="profile-current-password">Текущий пароль</label>
+                        <InputText id="profile-current-password" type="password" @bind-Value="_profileModel.CurrentPassword" autocomplete="current-password" />
+                        <ValidationMessage For="@(() => _profileModel.CurrentPassword)" />
+                    </div>
+                    <button class="profile-submit" type="submit" disabled="@_savingProfile">
+                        @(_savingProfile ? "Сохранение…" : "Сохранить логин")
+                    </button>
+                </EditForm>
+            </section>
+
+            <section class="profile-card">
+                <h2>Смена пароля</h2>
+
+                <div class="profile-alert profile-alert-info">
+                    После смены пароля вы будете автоматически разлогинены.
+                </div>
+
+                @if (!string.IsNullOrWhiteSpace(_passwordSuccess))
+                {
+                    <div class="profile-alert profile-alert-success" role="status">@_passwordSuccess</div>
+                }
+                @if (!string.IsNullOrWhiteSpace(_passwordError))
+                {
+                    <div class="profile-alert profile-alert-error" role="alert">@_passwordError</div>
+                }
+
+                <EditForm Model="_passwordModel" OnValidSubmit="ChangePasswordAsync" FormName="password-form" autocomplete="off">
+                    <DataAnnotationsValidator />
+                    <div class="profile-field">
+                        <label for="password-current">Текущий пароль</label>
+                        <InputText id="password-current" type="password" @bind-Value="_passwordModel.CurrentPassword" autocomplete="current-password" />
+                        <ValidationMessage For="@(() => _passwordModel.CurrentPassword)" />
+                    </div>
+                    <div class="profile-field">
+                        <label for="password-new">Новый пароль</label>
+                        <InputText id="password-new" type="password" @bind-Value="_passwordModel.NewPassword" autocomplete="new-password" />
+                        <ValidationMessage For="@(() => _passwordModel.NewPassword)" />
+                    </div>
+                    <div class="profile-field">
+                        <label for="password-confirm">Подтверждение нового пароля</label>
+                        <InputText id="password-confirm" type="password" @bind-Value="_passwordModel.ConfirmPassword" autocomplete="new-password" />
+                        <ValidationMessage For="@(() => _passwordModel.ConfirmPassword)" />
+                    </div>
+                    <button class="profile-submit" type="submit" disabled="@_savingPassword">
+                        @(_savingPassword ? "Смена пароля…" : "Сменить пароль")
+                    </button>
+                </EditForm>
+            </section>
+        </div>
+    }
+</div>
+
+@code {
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
+    private readonly ProfileModel _profileModel = new();
+    private readonly PasswordModel _passwordModel = new();
+    private MeUser? _user;
+    private bool _loading = true;
+    private bool _requiresLogin;
+    private string? _loadError;
+    private string? _profileError;
+    private string? _profileSuccess;
+    private string? _passwordError;
+    private string? _passwordSuccess;
+    private bool _savingProfile;
+    private bool _savingPassword;
+    private IJSObjectReference? _apiModule;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await LoadProfileAsync();
+        }
+    }
+
+    private async Task LoadProfileAsync()
+    {
+        _loading = true;
+        _loadError = null;
+        _requiresLogin = false;
+        StateHasChanged();
+
+        try
+        {
+            using var client = await CreateAuthorizedClientAsync();
+            if (client == null)
+            {
+                _loadError = "Войдите в приложение, чтобы открыть профиль.";
+                _requiresLogin = true;
+                return;
+            }
+
+            using var response = await client.GetAsync("Users/me");
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                _loadError = "Сессия истекла. Войдите в приложение и попробуйте снова.";
+                _requiresLogin = true;
+                return;
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _loadError = $"Не удалось загрузить профиль (HTTP {(int)response.StatusCode}).";
+                return;
+            }
+
+            _user = await response.Content.ReadFromJsonAsync<MeUser>(JsonOptions);
+            if (_user == null)
+            {
+                _loadError = "Сервер вернул пустые данные профиля.";
+                return;
+            }
+
+            _profileModel.Username = _user.Username;
+        }
+        catch (Exception)
+        {
+            _loadError = "Не удалось связаться с API. Проверьте подключение и попробуйте ещё раз.";
+        }
+        finally
+        {
+            _loading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task SaveProfileAsync()
+    {
+        _savingProfile = true;
+        _profileError = null;
+        _profileSuccess = null;
+
+        try
+        {
+            using var client = await CreateAuthorizedClientAsync();
+            if (client == null)
+            {
+                _profileError = "Сессия истекла. Войдите в приложение и попробуйте снова.";
+                return;
+            }
+
+            using var response = await client.PatchAsJsonAsync(
+                "Users/me/profile",
+                new UpdateProfileRequest(_profileModel.Username.Trim(), _profileModel.CurrentPassword));
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _profileError = await ReadErrorMessageAsync(response, "Не удалось обновить профиль");
+                return;
+            }
+
+            _user = await response.Content.ReadFromJsonAsync<MeUser>(JsonOptions);
+            _profileModel.Username = _user?.Username ?? _profileModel.Username.Trim();
+            _profileModel.CurrentPassword = string.Empty;
+            _profileSuccess = "Логин обновлён";
+        }
+        catch (Exception)
+        {
+            _profileError = "Не удалось связаться с API. Проверьте подключение и попробуйте ещё раз.";
+        }
+        finally
+        {
+            _savingProfile = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task ChangePasswordAsync()
+    {
+        _savingPassword = true;
+        _passwordError = null;
+        _passwordSuccess = null;
+
+        try
+        {
+            using var client = await CreateAuthorizedClientAsync();
+            if (client == null)
+            {
+                _passwordError = "Сессия истекла. Войдите в приложение и попробуйте снова.";
+                return;
+            }
+
+            using var response = await client.PostAsJsonAsync(
+                "Users/me/change-password",
+                new ChangePasswordRequest(
+                    _passwordModel.CurrentPassword,
+                    _passwordModel.NewPassword,
+                    _passwordModel.ConfirmPassword));
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _passwordError = await ReadErrorMessageAsync(response, "Не удалось изменить пароль");
+                return;
+            }
+
+            _passwordSuccess = "Пароль изменён. Выполните вход снова.";
+            await InvokeAsync(StateHasChanged);
+            await Task.Delay(1500);
+            Navigation.NavigateTo("/logout");
+        }
+        catch (Exception)
+        {
+            _passwordError = "Не удалось связаться с API. Проверьте подключение и попробуйте ещё раз.";
+        }
+        finally
+        {
+            _savingPassword = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task<HttpClient?> CreateAuthorizedClientAsync()
+    {
+        _apiModule ??= await JS.InvokeAsync<IJSObjectReference>("import", "./portfolioApi.js");
+        var token = await _apiModule.InvokeAsync<string?>("getToken");
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return null;
+        }
+
+        var client = HttpClientFactory.CreateClient("FinanceApi");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        return client;
+    }
+
+    private static async Task<string> ReadErrorMessageAsync(HttpResponseMessage response, string fallback)
+    {
+        try
+        {
+            var content = await response.Content.ReadAsStringAsync();
+            if (string.IsNullOrWhiteSpace(content))
+            {
+                return fallback;
+            }
+
+            var message = JsonSerializer.Deserialize<string>(content, JsonOptions);
+            return string.IsNullOrWhiteSpace(message) ? content.Trim('"') : message;
+        }
+        catch
+        {
+            return fallback;
+        }
+    }
+
+    private sealed class MeUser
+    {
+        public MeUser() { }
+        public int Id { get; set; }
+        public string Username { get; set; } = string.Empty;
+        public string Email { get; set; } = string.Empty;
+    }
+
+    private sealed record UpdateProfileRequest(string Username, string CurrentPassword);
+
+    private sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword, string ConfirmPassword);
+
+    private sealed class ProfileModel
+    {
+        public ProfileModel() { }
+
+        [Required(ErrorMessage = "Введите логин")]
+        [StringLength(32, MinimumLength = 3, ErrorMessage = "Логин должен содержать от 3 до 32 символов")]
+        [RegularExpression(@"^[A-Za-z0-9._-]+$", ErrorMessage = "Допустимы буквы, цифры и символы . _ -")]
+        public string Username { get; set; } = string.Empty;
+
+        [Required(ErrorMessage = "Введите текущий пароль")]
+        public string CurrentPassword { get; set; } = string.Empty;
+    }
+
+    private sealed class PasswordModel
+    {
+        public PasswordModel() { }
+
+        [Required(ErrorMessage = "Введите текущий пароль")]
+        public string CurrentPassword { get; set; } = string.Empty;
+
+        [Required(ErrorMessage = "Введите новый пароль")]
+        [MinLength(8, ErrorMessage = "Минимум 8 символов")]
+        public string NewPassword { get; set; } = string.Empty;
+
+        [Required(ErrorMessage = "Подтвердите новый пароль")]
+        [Compare(nameof(NewPassword), ErrorMessage = "Пароли не совпадают")]
+        public string ConfirmPassword { get; set; } = string.Empty;
+    }
+}

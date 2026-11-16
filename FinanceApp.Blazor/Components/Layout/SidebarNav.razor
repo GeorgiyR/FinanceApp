@@ -76,14 +76,15 @@
     </details>
 
     <div class="sidebar-bottom">
-        <NavLink class="nav-link" href="/profile">Профиль</NavLink>
-        <NavLink class="nav-link" href="/logout">Выйти</NavLink>
+        <NavLink class="nav-link" href="/profile">@(_userName ?? "Профиль")</NavLink>
+        <NavLink class="nav-link nav-link-logout" href="/logout">Выйти</NavLink>
     </div>
 </nav>
 
 @code {
     private bool _loading = true;
     private bool _isAuthenticated;
+    private string? _userName;
     private List<PortfolioNavigationItem> _portfolios = [];
     private List<MarketIndexNavigationItem> _marketIndices = [];
     private IJSObjectReference? _apiModule;
@@ -114,6 +115,7 @@
             var token = await _apiModule.InvokeAsync<string?>("getToken");
             if (string.IsNullOrWhiteSpace(token))
             {
+                _userName = null;
                 return;
             }
 
@@ -130,11 +132,13 @@
             }
 
             _marketIndices = await FetchMarketIndicesAsync(client);
+            _userName = await FetchUserNameAsync(client);
         }
         catch
         {
             _portfolios = [];
             _marketIndices = [];
+            _userName = null;
         }
         finally
         {
@@ -168,6 +172,14 @@
         return indices.Where(index => index.ShowInNavigation && !index.IsArchived).ToList();
     }
 
+    private static async Task<string?> FetchUserNameAsync(HttpClient client)
+    {
+        using var response = await client.GetAsync("Users/me");
+        if (!response.IsSuccessStatusCode) return null;
+        var user = await response.Content.ReadFromJsonAsync<UserNavigationItem>();
+        return string.IsNullOrWhiteSpace(user?.Username) ? null : user.Username;
+    }
+
     private HttpClient CreateClient(string token)
     {
         var client = HttpClientFactory.CreateClient("FinanceApi");
@@ -189,6 +201,12 @@
         public string Code { get; set; } = string.Empty;
         public bool IsArchived { get; set; }
         public bool ShowInNavigation { get; set; }
+    }
+
+    private sealed class UserNavigationItem
+    {
+        public UserNavigationItem() { }
+        public string Username { get; set; } = string.Empty;
     }
 
     public void Dispose()
