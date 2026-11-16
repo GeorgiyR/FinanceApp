@@ -44,4 +44,4 @@ jobs:
             -o IdentitiesOnly=yes \
             -o BatchMode=yes \
             deploy@"$DEPLOY_HOST" \
-            'sudo -n /var/FinanceApp/scripts/deploy.sh'
+            'sudo -n /usr/local/sbin/financeapp-deploy.sh'
