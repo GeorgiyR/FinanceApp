@@ -18,7 +18,7 @@
         _module = await JS.InvokeAsync<IJSObjectReference>("import", "./portfolioApi.js");
         await _module.InvokeVoidAsync("clearToken");
         await _module.DisposeAsync();
-        Navigation.NavigateTo("/login", replace: true);
+        Navigation.NavigateTo("/stockpilot/login", replace: true);
     }
 }
 

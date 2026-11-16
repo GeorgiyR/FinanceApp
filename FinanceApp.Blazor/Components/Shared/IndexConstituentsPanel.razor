@@ -1,0 +1,1090 @@
+@using System.Globalization
+@using System.Net
+@using System.Net.Http.Headers
+@using System.Net.Http.Json
+@using System.Text.Json
+@using FinanceApp.Blazor.Components.Models
+@inject IHttpClientFactory HttpClientFactory
+@inject IJSRuntime JS
+
+<div class="index-constituents-panel">
+    @if (!string.IsNullOrWhiteSpace(_infoNotice))
+    {
+        <div class="constituents-alert constituents-alert--@_infoNoticeLevel" role="status">@_infoNotice</div>
+    }
+    @if (!string.IsNullOrWhiteSpace(_quoteSummary))
+    {
+        <div class="constituents-alert constituents-alert--info" role="status">@_quoteSummary</div>
+    }
+    @if (!string.IsNullOrWhiteSpace(_performanceError))
+    {
+        <div class="constituents-alert constituents-alert--warning" role="alert">@_performanceError</div>
+    }
+
+    <div class="constituents-toolbar">
+        <input type="search" class="constituents-search" placeholder="Поиск по тикеру, названию, WKN, ISIN…" aria-label="Поиск по составу индекса" value="@_search" @oninput="OnSearchInput" />
+        <label class="constituents-sort-label">
+            Сортировка:
+            <select value="@_sortMode" @onchange="OnSortModeChanged" aria-label="Сортировка">
+                <option value="name">По названию</option>
+                @foreach (var range in PerformanceRanges)
+                {
+                    <option value="@range.Value">@range.Label</option>
+                }
+            </select>
+        </label>
+        @if (!IsArchived)
+        {
+            <button type="button" class="stocks-toolbar-button" @onclick="RefreshConstituentsAsync" disabled="@(_refreshing || _batchHistoryRefreshing || _batchQuoteRefreshing)">@(_refreshing ? "Обновление…" : "Обновить состав")</button>
+        }
+        <button type="button" class="stocks-toolbar-button" @onclick="OpenCreateAsync" disabled="@(IsArchived || _editLoading)">＋ Добавить акцию</button>
+        <button type="button" class="stocks-toolbar-button" @onclick="ConfirmBatchHistoryRefreshAsync" disabled="@(IsArchived || _constituents.Count == 0 || _refreshing || _batchHistoryRefreshing || _batchQuoteRefreshing)">@(_batchHistoryRefreshing ? "Обновление истории…" : "Обновить историю акций")</button>
+        <button type="button" class="stocks-toolbar-button" @onclick="BatchRefreshQuotesAsync" disabled="@(IsArchived || _constituents.Count == 0 || _batchQuoteRefreshing)">
+            @(_batchQuoteRefreshing && !string.IsNullOrWhiteSpace(_batchQuoteProgress) ? _batchQuoteProgress : "Обновить текущие цены")
+        </button>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(_source) || _asOfDate is not null)
+    {
+        <div class="constituents-source-alert @(_sourceIsStale ? "constituents-alert--warning" : "constituents-alert--info")">
+            <span>Источник: @(string.IsNullOrWhiteSpace(_source) ? "—" : _source)@(_isCuratedSnapshot ? " (Проверенный снимок)" : "")</span>
+            @if (_asOfDate is DateTime asOf)
+            {
+                <span>As of: @asOf.ToLocalTime().ToString("dd.MM.yyyy", RussianCulture)</span>
+            }
+        </div>
+    }
+
+    @if (_loading)
+    {
+        <div class="position-history-state">Загрузка состава…</div>
+    }
+    else if (!string.IsNullOrWhiteSpace(_error))
+    {
+        <div class="constituents-alert constituents-alert--error" role="alert">
+            @_error
+            <button type="button" class="stocks-toolbar-button" @onclick="LoadConstituentsAsync">Повторить</button>
+        </div>
+    }
+    else if (_constituents.Count == 0)
+    {
+        <div class="position-history-state">Состав этого индекса не загружен. Нажмите «Обновить состав» для импорта.</div>
+    }
+    else if (FilteredConstituents.Count == 0)
+    {
+        <div class="position-history-state">Нет компонентов, соответствующих поиску</div>
+    }
+    else
+    {
+        <div class="positions-table-wrap index-constituents-table-wrap">
+            <table class="positions-table index-constituents-table">
+                <thead>
+                    <tr>
+                        <th>Тикер</th>
+                        <th>Название</th>
+                        <th class="numeric">Текущая цена</th>
+                        <th class="numeric">Изменение (€)</th>
+                        <th class="numeric">(%)</th>
+                        <th class="numeric">Рост за период</th>
+                        <th>Цена API</th>
+                        <th>Время</th>
+                        <th class="actions-heading">Действия</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var constituent in PagedConstituents)
+                    {
+                        var snapshot = GetDisplaySnapshot(constituent);
+                        var change = snapshot.Change;
+                        var percent = snapshot.Percent;
+                        var expanded = _expandedStockId == constituent.StockId;
+                        <tr>
+                            <td>
+                                <button type="button" class="ticker-chart-toggle" @onclick="() => ToggleHistory(constituent.StockId)" aria-expanded="@expanded" aria-controls="index-constituent-history-@constituent.StockId">
+                                    <span class="ticker-chart-caret @(expanded ? "expanded" : "")">›</span>@constituent.Ticker
+                                </button>
+                                <span class="ticker-exchange-abbreviation">@constituent.Exchange</span>
+                            </td>
+                            <td>
+                                <div class="index-constituent-name">
+                                    <strong title="@constituent.Name">@constituent.Name</strong>
+                                    @if (!string.IsNullOrWhiteSpace(constituent.CommonName) && constituent.CommonName != constituent.Name)
+                                    {
+                                        <span class="tracked-stock-common-name">@constituent.CommonName</span>
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(constituent.Isin))
+                                    {
+                                        <span class="tracked-stock-common-name">@constituent.Isin</span>
+                                    }
+                                    <span class="index-constituent-classification">@(string.Join(" · ", new[] { constituent.Sector, constituent.Industry }.Where(value => !string.IsNullOrWhiteSpace(value))))</span>
+                                </div>
+                            </td>
+                            <td class="numeric">@FormatMoney(snapshot.Price)</td>
+                            <td class="numeric"><span class="@(change is null ? "" : change >= 0 ? "positive" : "negative")">@FormatMoney(change, signed: true)</span></td>
+                            <td class="numeric"><span class="@(percent is null ? "" : percent >= 0 ? "positive" : "negative")">@FormatPercent(percent)</span></td>
+                            <td class="numeric">
+                                @if (_performanceLoading)
+                                {
+                                    <span class="index-constituent-muted">…</span>
+                                }
+                                else if (_performanceByStockId.TryGetValue(constituent.StockId, out var performance) && performance is decimal)
+                                {
+                                    <span class="@(performance >= 0 ? "positive" : "negative")">@FormatPerformance(performance)</span>
+                                }
+                                else
+                                {
+                                    <span class="index-constituent-muted" title="Недостаточно исторических данных">—</span>
+                                }
+                            </td>
+                            <td>
+                                @if (_liveQuotes.TryGetValue(constituent.StockId, out var live) && live.CurrentPriceEur is decimal livePrice)
+                                {
+                                    <span class="index-constituent-api-price">
+                                        @livePrice.ToString("N2", RussianCulture)
+                                        @if (live.IsStale || !string.IsNullOrWhiteSpace(live.DelayWarning))
+                                        {
+                                            <span class="index-constituent-delay-tag" title="@live.DelayWarning">Задержано</span>
+                                        }
+                                        else if (live.CurrentPriceEur is null)
+                                        {
+                                            <span class="index-constituent-delay-tag">Нет EUR</span>
+                                        }
+                                    </span>
+                                }
+                                else if (constituent.CurrentPriceIsDelayed)
+                                {
+                                    <span class="index-constituent-api-price">
+                                        @FormatMoney(constituent.CurrentPrice)
+                                        <span class="index-constituent-delay-tag" title="@constituent.CurrentPriceDelayWarning">Задержано</span>
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span>—</span>
+                                }
+                            </td>
+                            <td>@FormatDateTime(snapshot.Timestamp)</td>
+                            <td>
+                                <div class="index-constituent-actions">
+                                    <button type="button" class="action-icon-button" title="Обновить цену" aria-label="Обновить цену @constituent.Ticker" @onclick="() => RefreshLivePriceAsync(constituent)" disabled="@(_quoteLoadingId is not null || _batchHistoryRefreshing)">⟳</button>
+                                    <button type="button" class="action-icon-button" title="Редактировать акцию" aria-label="Редактировать акцию @constituent.Ticker" @onclick="() => OpenEditAsync(constituent)" disabled="@_editLoading">✎</button>
+                                    @if (string.Equals(constituent.TrackingStatus, "Tracked", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        <span class="index-constituent-tracked" title="Уже в списке акций">✓</span>
+                                    }
+                                    else
+                                    {
+                                        <button type="button" class="action-icon-button" title="Добавить в список акций" aria-label="Добавить @constituent.Ticker в список акций" @onclick="() => TrackAsync(constituent)" disabled="@(_trackingStockId is not null)">＋</button>
+                                    }
+                                </div>
+                            </td>
+                        </tr>
+                        @if (expanded)
+                        {
+                            <tr id="index-constituent-history-@constituent.StockId" class="position-history-row"><td colspan="9"><StockHistoryPanel Stock="ToHistoryStock(constituent)" /></td></tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        @if (PageCount > 1)
+        {
+            <div class="catalog-pagination index-constituents-pagination">
+                <button type="button" class="stocks-toolbar-button" @onclick="PreviousPage" disabled="@(_page <= 1)">← Назад</button>
+                <span>Страница @_page из @PageCount</span>
+                <button type="button" class="stocks-toolbar-button" @onclick="NextPage" disabled="@(_page >= PageCount)">Вперёд →</button>
+                <span>Всего: @FilteredConstituents.Count</span>
+            </div>
+        }
+    }
+</div>
+
+@if (_editing is not null || _createModalOpen)
+{
+    <div class="dialog-backdrop" role="presentation" @onclick="CloseEdit">
+        <section class="action-dialog stock-edit-dialog" role="dialog" aria-modal="true" aria-labelledby="constituent-edit-title" @onclick:stopPropagation>
+            <h2 id="constituent-edit-title">@(_createModalOpen ? "Добавить акцию" : "Редактировать акцию")</h2>
+            @if (_editing is not null)
+            {
+                <p class="action-dialog-subtitle">@_editing.Ticker · @_editing.Name</p>
+            }
+            @if (_editLoading)
+            {
+                <div class="position-history-state">Загрузка…</div>
+            }
+            else
+            {
+                <EditForm Model="@_editForm" OnValidSubmit="SaveEditAsync" FormName="constituent-stock-edit-form">
+                    <DataAnnotationsValidator />
+                    @if (!string.IsNullOrWhiteSpace(_editError))
+                    {
+                        <div class="portfolio-state-error" role="alert">@_editError</div>
+                    }
+                    <div class="stock-edit-grid">
+                        <label class="login-field">Тикер<InputText @bind-Value="_editForm.Ticker" disabled="@(!_createModalOpen)" /></label>
+                        <label class="login-field">Биржа<InputText @bind-Value="_editForm.Exchange" disabled="@(!_createModalOpen)" /></label>
+                        <label class="login-field">Название<InputText @bind-Value="_editForm.Name" /></label>
+                        <label class="login-field">Общее название<InputText @bind-Value="_editForm.CommonName" /></label>
+                        <label class="login-field">ISIN<InputText @bind-Value="_editForm.Isin" /></label>
+                        <label class="login-field">WKN<InputText @bind-Value="_editForm.Wkn" /></label>
+                        <label class="login-field">Сектор<InputSelect TValue="int?" Value="@_editForm.SectorId" ValueChanged="OnEditSectorChanged" ValueExpression="@(() => _editForm.SectorId)"><option value="">Без сектора</option>@foreach (var sector in Sectors) { <option value="@sector.Id">@sector.Name@(sector.IsArchived ? " (архив)" : "")</option> }</InputSelect></label>
+                        <label class="login-field">Отрасль<InputSelect @bind-Value="_editForm.IndustryId"><option value="">Без отрасли</option>@foreach (var industry in EditIndustries) { <option value="@industry.Id">@industry.Name@(industry.IsArchived ? " (архив)" : "")</option> }</InputSelect></label>
+                        <label class="login-field">Текущая цена (€)<InputNumber @bind-Value="_editForm.CurrentPrice" step="0.01" /></label>
+                        <label class="login-field">Finanzen.net slug<InputText @bind-Value="_editForm.FinanzenNetSlug" /></label>
+                    </div>
+                    <fieldset class="stock-edit-indices">
+                        <legend>Биржевые индексы</legend>
+                        @foreach (var index in MarketIndices)
+                        {
+                            <label><input type="checkbox" checked="@_editForm.MarketIndexIds.Contains(index.Id)" @onchange="args => ToggleEditMarketIndex(index.Id, args)" /> @index.Name@(index.IsArchived ? " (архив)" : "")</label>
+                        }
+                    </fieldset>
+                    <footer class="stock-edit-footer">
+                        <button type="button" class="dialog-secondary-button" @onclick="CloseEdit" disabled="@_editSaving">Отмена</button>
+                        <button type="submit" class="portfolio-primary-button" disabled="@_editSaving">@(_editSaving ? "Сохранение…" : _createModalOpen ? "Добавить" : "Сохранить")</button>
+                    </footer>
+                </EditForm>
+            }
+        </section>
+    </div>
+}
+
+@code {
+    private static readonly CultureInfo RussianCulture = CultureInfo.GetCultureInfo("ru-RU");
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly (string Label, string Value)[] PerformanceRanges =
+    [
+        ("Сегодня", "today"), ("24 ч.", "24h"), ("1 нед.", "1w"), ("1 мес.", "1m"), ("3 мес.", "3m"),
+        ("6 мес.", "6m"), ("1 год", "1y"), ("3 года", "3y"), ("5 лет", "5y"),
+    ];
+    private static readonly string[] TerminalJobStates = ["Succeeded", "RateLimited", "Failed", "Interrupted"];
+
+    [Parameter, EditorRequired] public int IndexId { get; set; }
+    [Parameter] public bool IsArchived { get; set; }
+
+    private readonly List<IndexConstituentDto> _constituents = [];
+    private readonly Dictionary<int, decimal?> _performanceByStockId = [];
+    private readonly Dictionary<int, StockLiveQuoteViewModel> _liveQuotes = [];
+    private readonly List<TrackedSectorDirectoryViewModel> _sectors = [];
+    private readonly List<TrackedMarketIndexDirectoryViewModel> _marketIndices = [];
+
+    private bool _loading;
+    private bool _refreshing;
+    private bool _performanceLoading;
+    private string? _performanceError;
+    private string? _error;
+    private string? _infoNotice;
+    private string _infoNoticeLevel = "info";
+    private string? _search = string.Empty;
+    private string _sortMode = "name";
+    private int _page = 1;
+    private int? _loadedIndexId;
+    private int? _trackingStockId;
+    private int? _quoteLoadingId;
+    private int? _expandedStockId;
+    private string? _source;
+    private DateTime? _asOfDate;
+    private bool _isCuratedSnapshot;
+    private bool _sourceIsStale;
+
+    private bool _batchHistoryRefreshing;
+    private bool _batchQuoteRefreshing;
+    private string? _batchQuoteProgress;
+    private string? _quoteSummary;
+
+    private IndexConstituentDto? _editing;
+    private bool _createModalOpen;
+    private ConstituentEditModel _editForm = new();
+    private bool _editLoading;
+    private bool _editSaving;
+    private string? _editError;
+
+    private IEnumerable<TrackedIndustryDirectoryViewModel> EditIndustries =>
+        Sectors.Where(sector => sector.Id == _editForm.SectorId)
+            .SelectMany(sector => sector.Industries.Where(industry => !industry.IsArchived || industry.Id == _editForm.IndustryId))
+            .OrderBy(industry => industry.Name, StringComparer.CurrentCultureIgnoreCase);
+    private IEnumerable<TrackedSectorDirectoryViewModel> Sectors => _sectors.Where(sector => !sector.IsArchived || sector.Id == _editForm.SectorId);
+    private IEnumerable<TrackedMarketIndexDirectoryViewModel> MarketIndices => _marketIndices.Where(index => !index.IsArchived || _editForm.MarketIndexIds.Contains(index.Id));
+
+    private List<IndexConstituentDto> FilteredConstituents
+    {
+        get
+        {
+            var sorted = _sortMode == "name"
+                ? _constituents.OrderBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase)
+                    .ThenBy(item => item.Ticker, StringComparer.CurrentCultureIgnoreCase)
+                    .ThenBy(item => item.StockId)
+                : _constituents.OrderByDescending(item => _performanceByStockId.TryGetValue(item.StockId, out var value) && value is not null ? value.Value : (decimal?)null)
+                    .ThenBy(item => item.StockId);
+
+            var query = (_search ?? string.Empty).Trim();
+            if (query.Length == 0) return sorted.ToList();
+
+            return sorted.Where(item =>
+                Contains(item.Ticker, query)
+                || Contains(item.Name, query)
+                || Contains(item.CommonName, query)
+                || Contains(item.Wkn, query)
+                || Contains(item.Isin, query)
+                || Contains(item.ProviderSymbol, query)).ToList();
+        }
+    }
+
+    private List<IndexConstituentDto> PagedConstituents => FilteredConstituents.Skip((_page - 1) * 20).Take(20).ToList();
+    private int PageCount => Math.Max(1, (int)Math.Ceiling(FilteredConstituents.Count / 20.0));
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedIndexId == IndexId) return;
+        _loadedIndexId = IndexId;
+        _page = 1;
+        _search = string.Empty;
+        _expandedStockId = null;
+        _liveQuotes.Clear();
+        _performanceError = null;
+        _performanceByStockId.Clear();
+        await LoadConstituentsAsync();
+        if (_sortMode != "name") await LoadPerformanceAsync(_sortMode);
+    }
+
+    private async Task LoadConstituentsAsync()
+    {
+        _loading = true;
+        _error = null;
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null)
+            {
+                _error = "Войдите в приложение, чтобы увидеть состав индекса.";
+                return;
+            }
+
+            using var response = await client.GetAsync($"market-indices/{IndexId}/constituents?includeFormer=false");
+            if (!response.IsSuccessStatusCode)
+            {
+                _error = response.StatusCode == HttpStatusCode.Unauthorized
+                    ? "Войдите в приложение, чтобы увидеть состав индекса."
+                    : $"Не удалось загрузить состав индекса (HTTP {(int)response.StatusCode}).";
+                return;
+            }
+
+            var data = await response.Content.ReadFromJsonAsync<IndexConstituentsResponse>(JsonOptions);
+            _constituents.Clear();
+            if (data?.Constituents is not null) _constituents.AddRange(data.Constituents);
+            _source = data?.Source;
+            _asOfDate = data?.AsOfDate;
+            _isCuratedSnapshot = data?.IsCuratedSnapshot == true;
+            _sourceIsStale = data?.IsStale == true;
+            if (_page > PageCount) _page = PageCount;
+        }
+        catch
+        {
+            _error = "Не удалось загрузить состав индекса.";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task LoadPerformanceAsync(string range)
+    {
+        _performanceLoading = true;
+        _performanceError = null;
+        _performanceByStockId.Clear();
+        var requested = range;
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null) return;
+            using var response = await client.GetAsync($"market-indices/{IndexId}/constituents/performance?range={Uri.EscapeDataString(range)}");
+            if (!response.IsSuccessStatusCode)
+            {
+                if (_sortMode == requested) _performanceError = "Ошибка загрузки данных о росте";
+                return;
+            }
+            var data = await response.Content.ReadFromJsonAsync<IndexConstituentPerformanceResponse>(JsonOptions);
+            if (_sortMode != requested) return;
+            foreach (var item in data?.Items ?? [])
+            {
+                _performanceByStockId[item.StockId] = item.ChangePercent;
+            }
+        }
+        catch
+        {
+            if (_sortMode == requested) _performanceError = "Ошибка загрузки данных о росте";
+        }
+        finally
+        {
+            if (_sortMode == requested) _performanceLoading = false;
+        }
+    }
+
+    private async Task OnSortModeChanged(ChangeEventArgs args)
+    {
+        var next = args.Value?.ToString() ?? "name";
+        _sortMode = PerformanceRanges.Any(range => range.Value == next) ? next : "name";
+        _page = 1;
+        if (_sortMode == "name")
+        {
+            _performanceByStockId.Clear();
+            _performanceError = null;
+            _performanceLoading = false;
+            return;
+        }
+        await LoadPerformanceAsync(_sortMode);
+    }
+
+    private void OnSearchInput(ChangeEventArgs args)
+    {
+        _search = args.Value?.ToString() ?? string.Empty;
+        _page = 1;
+    }
+
+    private void PreviousPage() { if (_page > 1) _page--; }
+    private void NextPage() { if (_page < PageCount) _page++; }
+
+    private async Task RefreshConstituentsAsync()
+    {
+        if (_refreshing) return;
+        _refreshing = true;
+        _infoNotice = null;
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null)
+            {
+                _infoNotice = "Войдите в приложение и повторите попытку.";
+                return;
+            }
+            using var response = await client.PostAsync($"market-indices/{IndexId}/constituents/refresh", null);
+            var body = await response.Content.ReadAsStringAsync();
+            var result = TryDeserialize<IndexConstituentsRefreshResponse>(body);
+            if (result is null)
+            {
+                _infoNotice = $"Ошибка обновления состава (HTTP {(int)response.StatusCode}).";
+                return;
+            }
+
+            _source = string.IsNullOrWhiteSpace(result.ProviderName) ? _source : result.ProviderName;
+            _asOfDate = result.AsOfDate ?? _asOfDate;
+            _isCuratedSnapshot = result.IsCuratedSnapshot || _isCuratedSnapshot;
+            _sourceIsStale = result.IsStale;
+
+            var providerStatus = result.ProviderStatus ?? string.Empty;
+            var details = $"добавлено {result.Added}, обновлено {result.Updated}, без изменений {result.Unchanged}, закрыто {result.Closed}";
+            if (result.Conflicts is int conflicts && conflicts > 0) details += $", конфликтов {conflicts}";
+            _infoNotice = string.IsNullOrWhiteSpace(result.ProviderMessage)
+                ? $"Состав обновлён: {details}."
+                : $"Состав обновлён: {details}. {result.ProviderMessage}";
+            _infoNoticeLevel = string.Equals(providerStatus, "Success", StringComparison.OrdinalIgnoreCase) && (result.Conflicts ?? 0) == 0
+                ? "info"
+                : "warning";
+
+            if (string.Equals(providerStatus, "Success", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(providerStatus, "Partial", StringComparison.OrdinalIgnoreCase))
+            {
+                await LoadConstituentsAsync();
+                if (_sortMode != "name") await LoadPerformanceAsync(_sortMode);
+            }
+        }
+        catch
+        {
+            _infoNotice = "Ошибка обновления состава";
+        }
+        finally
+        {
+            _refreshing = false;
+        }
+    }
+
+    private async Task ConfirmBatchHistoryRefreshAsync()
+    {
+        if (_batchHistoryRefreshing || IsArchived || _constituents.Count == 0) return;
+        var confirmed = await JS.InvokeAsync<bool>("confirm", "Обновить историю всех акций текущего состава? Запросы выполняются последовательно и могут занять время.");
+        if (!confirmed) return;
+
+        _batchHistoryRefreshing = true;
+        _infoNotice = null;
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null)
+            {
+                _infoNotice = "Войдите в приложение и повторите попытку.";
+                return;
+            }
+            using var response = await client.PostAsync($"market-indices/{IndexId}/constituents/history/refresh", null);
+            var body = await response.Content.ReadAsStringAsync();
+            var data = TryDeserialize<BatchHistoryRefreshResponse>(body);
+            if (!response.IsSuccessStatusCode || data is null)
+            {
+                _infoNotice = ExtractApiErrorMessage(body) ?? $"Ошибка пакетного обновления исторических данных (HTTP {(int)response.StatusCode}).";
+                return;
+            }
+
+            _infoNotice = $"Обновление истории: всего {data.Total}, попыток {data.Attempted}, успешно {data.Succeeded}, ошибок {data.Failed}, лимит {data.RateLimited}, пропущено {data.SkippedRateLimited}.";
+            _infoNoticeLevel = data.Failed > 0 || data.RateLimited > 0 || data.SkippedRateLimited > 0 ? "warning" : "info";
+            if (_sortMode != "name") await LoadPerformanceAsync(_sortMode);
+        }
+        catch
+        {
+            _infoNotice = "Ошибка пакетного обновления исторических данных";
+        }
+        finally
+        {
+            _batchHistoryRefreshing = false;
+        }
+    }
+
+    private async Task BatchRefreshQuotesAsync()
+    {
+        if (_batchQuoteRefreshing || IsArchived || _constituents.Count == 0) return;
+        _batchQuoteRefreshing = true;
+        _quoteSummary = null;
+        _batchQuoteProgress = "Обновление цен…";
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null)
+            {
+                _quoteSummary = "Войдите в приложение и повторите попытку.";
+                return;
+            }
+
+            using var startResponse = await client.PostAsync($"market-indices/{IndexId}/constituents/quotes/refresh", null);
+            var startBody = await startResponse.Content.ReadAsStringAsync();
+            var job = TryDeserialize<BatchQuoteJobResponse>(startBody);
+            if (!startResponse.IsSuccessStatusCode || job is null)
+            {
+                _quoteSummary = ExtractApiErrorMessage(startBody) ?? $"Ошибка обновления цен (HTTP {(int)startResponse.StatusCode}).";
+                return;
+            }
+
+            var startedAt = DateTime.UtcNow;
+            while (!TerminalJobStates.Contains(job.State ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                   && (DateTime.UtcNow - startedAt).TotalMinutes < 10)
+            {
+                _batchQuoteProgress = job.Total > 0 ? $"Обновление цен: {job.Processed} из {job.Total}" : "Обновление цен…";
+                await InvokeAsync(StateHasChanged);
+                await Task.Delay(2000);
+                using var pollResponse = await client.GetAsync($"market-indices/{IndexId}/constituents/quotes/refresh-jobs/{Uri.EscapeDataString(job.JobId ?? string.Empty)}");
+                var pollBody = await pollResponse.Content.ReadAsStringAsync();
+                if (!pollResponse.IsSuccessStatusCode) break;
+                var polled = TryDeserialize<BatchQuoteJobResponse>(pollBody);
+                if (polled is null) break;
+                job = polled;
+            }
+
+            _quoteSummary = $"Обновление цен: обработано {job.Processed} из {job.Total}, успешно {job.Succeeded}, задержано {job.Delayed}, без EUR {job.NoEurConversion}, ошибок {job.ProviderFailed + job.PersistFailed}.";
+            await LoadConstituentsAsync();
+        }
+        catch
+        {
+            _quoteSummary = "Ошибка пакетного обновления цен";
+        }
+        finally
+        {
+            _batchQuoteRefreshing = false;
+            _batchQuoteProgress = null;
+        }
+    }
+
+    private async Task RefreshLivePriceAsync(IndexConstituentDto constituent)
+    {
+        if (_quoteLoadingId is not null || string.IsNullOrWhiteSpace(constituent.Ticker)) return;
+        _quoteLoadingId = constituent.StockId;
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null) return;
+            var slug = string.IsNullOrWhiteSpace(constituent.FinanzenNetSlug)
+                ? string.Empty
+                : $"&finanzenNetSlug={Uri.EscapeDataString(constituent.FinanzenNetSlug)}";
+            using var quoteResponse = await client.GetAsync($"StockPrice/{Uri.EscapeDataString(constituent.Ticker)}?exchange={Uri.EscapeDataString(constituent.Exchange)}{slug}");
+            if (!quoteResponse.IsSuccessStatusCode)
+            {
+                _infoNotice = $"Ошибка получения цены для {constituent.Ticker}";
+                _infoNoticeLevel = "error";
+                return;
+            }
+            var quote = await quoteResponse.Content.ReadFromJsonAsync<StockLiveQuoteViewModel>(JsonOptions);
+            if (quote is null) return;
+            _liveQuotes[constituent.StockId] = quote;
+
+            if (quote.CurrentPriceEur is decimal price)
+            {
+                var update = new
+                {
+                    currentPrice = Math.Round(price, 2, MidpointRounding.AwayFromZero),
+                    currentPriceChange = quote.ChangeEur is decimal change ? Math.Round(change, 4, MidpointRounding.AwayFromZero) : (decimal?)null,
+                    currentPriceChangePercent = quote.PercentChange is decimal percent ? Math.Round(percent, 4, MidpointRounding.AwayFromZero) : (decimal?)null,
+                    currentPriceAt = quote.PriceTimestampUtc,
+                    currentPriceIsDelayed = quote.IsStale || !string.IsNullOrWhiteSpace(quote.DelayWarning),
+                    currentPriceDelayWarning = string.IsNullOrWhiteSpace(quote.DelayWarning) ? null : quote.DelayWarning.Trim()
+                };
+                using var updateResponse = await client.PatchAsJsonAsync($"Stocks/{constituent.StockId}/quote", update);
+                if (updateResponse.IsSuccessStatusCode)
+                {
+                    constituent.CurrentPrice = update.currentPrice;
+                    constituent.CurrentPriceChange = update.currentPriceChange;
+                    constituent.CurrentPriceChangePercent = update.currentPriceChangePercent;
+                    constituent.CurrentPriceAt = quote.PriceTimestampUtc;
+                    constituent.CurrentPriceIsDelayed = update.currentPriceIsDelayed;
+                    constituent.CurrentPriceDelayWarning = update.currentPriceDelayWarning;
+                }
+            }
+        }
+        catch
+        {
+            _infoNotice = $"Ошибка получения цены для {constituent.Ticker}";
+            _infoNoticeLevel = "error";
+        }
+        finally
+        {
+            _quoteLoadingId = null;
+        }
+    }
+
+    private async Task TrackAsync(IndexConstituentDto constituent)
+    {
+        if (_trackingStockId is not null) return;
+        _trackingStockId = constituent.StockId;
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null) return;
+            using var response = await client.PostAsync($"Stocks/{constituent.StockId}/track", null);
+            if (!response.IsSuccessStatusCode)
+            {
+                _infoNotice = $"Не удалось добавить «{constituent.Name}» в отслеживаемые акции.";
+                _infoNoticeLevel = "error";
+                return;
+            }
+            constituent.TrackingStatus = "Tracked";
+            _infoNotice = $"«{constituent.Name}» добавлена в отслеживаемые акции";
+            _infoNoticeLevel = "info";
+        }
+        catch
+        {
+            _infoNotice = "Ошибка добавления в отслеживаемые";
+            _infoNoticeLevel = "error";
+        }
+        finally
+        {
+            _trackingStockId = null;
+        }
+    }
+
+    private async Task OpenCreateAsync()
+    {
+        _editing = null;
+        _createModalOpen = true;
+        _editError = null;
+        _editForm = new ConstituentEditModel { Exchange = "NYSE", MarketIndexIds = [IndexId] };
+        _editLoading = true;
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null) return;
+            if (_sectors.Count == 0)
+            {
+                using var sectorsResponse = await client.GetAsync("Sectors?includeArchived=true");
+                if (sectorsResponse.IsSuccessStatusCode)
+                {
+                    var sectors = await sectorsResponse.Content
+                        .ReadFromJsonAsync<List<TrackedSectorDirectoryViewModel>>(JsonOptions)
+                        ?? new List<TrackedSectorDirectoryViewModel>();
+
+                    _sectors.AddRange(sectors);
+                }
+            }
+
+            if (_marketIndices.Count == 0)
+            {
+                using var indicesResponse = await client.GetAsync("market-indices?includeArchived=true");
+                if (indicesResponse.IsSuccessStatusCode)
+                {
+                    var indices = await indicesResponse.Content
+                        .ReadFromJsonAsync<List<TrackedMarketIndexDirectoryViewModel>>(JsonOptions)
+                        ?? new List<TrackedMarketIndexDirectoryViewModel>();
+
+                    _marketIndices.AddRange(indices);
+                }
+            }
+        }
+        catch
+        {
+            _editError = "Ошибка загрузки справочников";
+        }
+        finally
+        {
+            _editLoading = false;
+        }
+    }
+
+    private async Task OpenEditAsync(IndexConstituentDto constituent)
+    {
+        _editing = constituent;
+        _editLoading = true;
+        _editError = null;
+        _editForm = new ConstituentEditModel();
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null) return;
+            using var stockResponse = await client.GetAsync($"Stocks/{constituent.StockId}");
+            if (!stockResponse.IsSuccessStatusCode)
+            {
+                _editError = "Ошибка загрузки акции";
+                return;
+            }
+            var stock = await stockResponse.Content.ReadFromJsonAsync<EditSourceStock>(JsonOptions);
+            if (stock is not null)
+            {
+                _editForm = new ConstituentEditModel
+                {
+                    Ticker = stock.Ticker,
+                    Exchange = stock.Exchange,
+                    Name = stock.Name,
+                    CommonName = stock.CommonName ?? string.Empty,
+                    Wkn = stock.Wkn ?? string.Empty,
+                    Isin = stock.Isin ?? string.Empty,
+                    FinanzenNetSlug = stock.FinanzenNetSlug ?? string.Empty,
+                    CurrentPrice = stock.CurrentPrice,
+                    SectorId = stock.SectorId,
+                    IndustryId = stock.IndustryId,
+                    MarketIndexIds = [.. stock.MarketIndexIds],
+                };
+            }
+
+            if (_sectors.Count == 0)
+            {
+                using var sectorsResponse = await client.GetAsync("Sectors?includeArchived=true");
+                if (sectorsResponse.IsSuccessStatusCode)
+                {
+                    _sectors.Clear();
+                    _sectors.AddRange(await sectorsResponse.Content.ReadFromJsonAsync<List<TrackedSectorDirectoryViewModel>>(JsonOptions) ?? []);
+                }
+            }
+            if (_marketIndices.Count == 0)
+            {
+                using var indicesResponse = await client.GetAsync("market-indices?includeArchived=true");
+                if (indicesResponse.IsSuccessStatusCode)
+                {
+                    _marketIndices.Clear();
+                    _marketIndices.AddRange(await indicesResponse.Content.ReadFromJsonAsync<List<TrackedMarketIndexDirectoryViewModel>>(JsonOptions) ?? []);
+                }
+            }
+        }
+        catch
+        {
+            _editError = "Ошибка загрузки акции";
+        }
+        finally
+        {
+            _editLoading = false;
+        }
+    }
+
+    private void CloseEdit()
+    {
+        if (_editSaving) return;
+        _editing = null;
+        _editError = null;
+    }
+
+    private void OnEditSectorChanged(int? sectorId)
+    {
+        _editForm.SectorId = sectorId;
+        if (_editForm.IndustryId is int industryId
+            && !_sectors.Any(sector => sector.Id == sectorId && sector.Industries.Any(industry => industry.Id == industryId)))
+        {
+            _editForm.IndustryId = null;
+        }
+    }
+
+    private void ToggleEditMarketIndex(int indexId, ChangeEventArgs args)
+    {
+        var selected = string.Equals(args.Value?.ToString(), "true", StringComparison.OrdinalIgnoreCase);
+        if (selected && !_editForm.MarketIndexIds.Contains(indexId)) _editForm.MarketIndexIds.Add(indexId);
+        else if (!selected) _editForm.MarketIndexIds.Remove(indexId);
+    }
+
+    private async Task SaveEditAsync()
+    {
+        if (_editing is null || _editSaving) return;
+        _editSaving = true;
+        _editError = null;
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null)
+            {
+                _editError = "Войдите в приложение и повторите попытку.";
+                return;
+            }
+            var payload = new
+            {
+                ticker = _editForm.Ticker,
+                exchange = _editForm.Exchange,
+                name = _editForm.Name.Trim(),
+                commonName = string.IsNullOrWhiteSpace(_editForm.CommonName) ? _editForm.Name.Trim() : _editForm.CommonName.Trim(),
+                wkn = NullIfEmpty(_editForm.Wkn?.Trim().ToUpperInvariant()),
+                isin = NullIfEmpty(_editForm.Isin?.Trim().ToUpperInvariant()),
+                finanzenNetSlug = NullIfEmpty(_editForm.FinanzenNetSlug?.Trim().ToLowerInvariant()),
+                currentPrice = _editForm.CurrentPrice,
+                sectorId = _editForm.SectorId,
+                industryId = _editForm.IndustryId,
+                marketIndexIds = _editForm.MarketIndexIds.Distinct().ToList(),
+                confirmationText = string.Empty,
+                identityEditingEnabled = false,
+                retainProviderSymbol = false
+            };
+            using var response = await client.PutAsJsonAsync($"Stocks/{_editing.StockId}/edit", payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                var body = await response.Content.ReadAsStringAsync();
+                _editError = ExtractApiErrorMessage(body) ?? $"Ошибка сохранения акции (HTTP {(int)response.StatusCode}).";
+                return;
+            }
+            _editing = null;
+            _infoNotice = "Акция обновлена";
+            _infoNoticeLevel = "info";
+            await LoadConstituentsAsync();
+            if (_sortMode != "name") await LoadPerformanceAsync(_sortMode);
+        }
+        catch
+        {
+            _editError = "Ошибка сохранения акции";
+        }
+        finally
+        {
+            _editSaving = false;
+        }
+    }
+
+    private void ToggleHistory(int stockId) => _expandedStockId = _expandedStockId == stockId ? null : stockId;
+
+    private static PortfolioStockViewModel ToHistoryStock(IndexConstituentDto constituent) => new()
+    {
+        Id = constituent.StockId, Ticker = constituent.Ticker, Name = constituent.Name, CommonName = constituent.CommonName, Exchange = constituent.Exchange, Isin = constituent.Isin,
+        CurrentPrice = constituent.CurrentPrice ?? 0m, CurrentPriceChange = constituent.CurrentPriceChange, CurrentPriceChangePercent = constituent.CurrentPriceChangePercent, CurrentPriceAt = constituent.CurrentPriceAt
+    };
+
+    private (decimal? Price, decimal? Change, decimal? Percent, DateTime? Timestamp) GetDisplaySnapshot(IndexConstituentDto constituent)
+    {
+        if (_liveQuotes.TryGetValue(constituent.StockId, out var quote)
+            && quote.CurrentPriceEur is decimal price
+            && quote.PriceTimestampUtc is DateTime liveAt
+            && (constituent.CurrentPriceAt is not DateTime storedAt || liveAt >= storedAt))
+        {
+            return (price, quote.ChangeEur, quote.PercentChange, liveAt);
+        }
+        return (constituent.CurrentPrice, constituent.CurrentPriceChange, constituent.CurrentPriceChangePercent, constituent.CurrentPriceAt);
+    }
+
+    private async Task<HttpClient?> CreateAuthenticatedClientAsync()
+    {
+        var module = await JS.InvokeAsync<IJSObjectReference>("import", "./portfolioApi.js");
+        try
+        {
+            var token = await module.InvokeAsync<string?>("getToken");
+            if (string.IsNullOrWhiteSpace(token)) return null;
+            var client = HttpClientFactory.CreateClient("FinanceApi");
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            return client;
+        }
+        finally
+        {
+            await module.DisposeAsync();
+        }
+    }
+
+    private static T? TryDeserialize<T>(string body) where T : class
+    {
+        if (string.IsNullOrWhiteSpace(body)) return null;
+        try { return JsonSerializer.Deserialize<T>(body, JsonOptions); }
+        catch (JsonException) { return null; }
+    }
+
+    private static string? ExtractApiErrorMessage(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return null;
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            if (document.RootElement.ValueKind == JsonValueKind.String) return document.RootElement.GetString();
+            foreach (var key in new[] { "message", "detail", "title" })
+            {
+                if (document.RootElement.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String)
+                {
+                    var text = value.GetString();
+                    if (!string.IsNullOrWhiteSpace(text)) return text;
+                }
+            }
+        }
+        catch (JsonException)
+        {
+        }
+        return body.TrimStart().StartsWith('<') ? null : body;
+    }
+
+    private static string? NullIfEmpty(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
+    private static bool Contains(string? value, string query) => value?.Contains(query, StringComparison.CurrentCultureIgnoreCase) == true;
+    private static string FormatMoney(decimal? value, bool signed = false)
+    {
+        if (value is null) return "—";
+        var number = value.Value.ToString("N2", RussianCulture);
+        return signed && value.Value > 0m ? $"+{number} €" : $"{number} €";
+    }
+
+    private static string FormatPercent(decimal? value) =>
+        value is null ? "—" : $"{(value.Value > 0m ? "+" : string.Empty)}{value.Value.ToString("N2", RussianCulture)} %";
+
+    private static string FormatPerformance(decimal? value) =>
+        value is null ? "—" : $"{(value.Value > 0m ? "+" : string.Empty)}{value.Value.ToString("N2", RussianCulture)} %";
+
+    private static string FormatDateTime(DateTime? value) =>
+        value is null ? "—" : value.Value.ToLocalTime().ToString("dd.MM.yyyy HH:mm", RussianCulture);
+
+    private sealed class ConstituentEditModel
+    {
+        [System.ComponentModel.DataAnnotations.Required(ErrorMessage = "Укажите тикер.")]
+        [System.ComponentModel.DataAnnotations.RegularExpression(@"^[A-Za-z0-9.^_-]+$", ErrorMessage = "Тикер содержит недопустимые символы.")]
+        public string Ticker { get; set; } = string.Empty;
+        [System.ComponentModel.DataAnnotations.Required(ErrorMessage = "Укажите биржу.")]
+        public string Exchange { get; set; } = "NYSE";
+        [System.ComponentModel.DataAnnotations.Required(ErrorMessage = "Укажите название.")]
+        public string Name { get; set; } = string.Empty;
+        public string CommonName { get; set; } = string.Empty;
+        [System.ComponentModel.DataAnnotations.Range(typeof(decimal), "0", "1000000000000000", ParseLimitsInInvariantCulture = true, ErrorMessage = "Цена должна быть неотрицательной.")]
+        public decimal CurrentPrice { get; set; }
+        [System.ComponentModel.DataAnnotations.RegularExpression(@"^$|^[A-Za-z0-9]{6}$", ErrorMessage = "WKN должен содержать 6 букв или цифр.")]
+        public string Wkn { get; set; } = string.Empty;
+        [System.ComponentModel.DataAnnotations.RegularExpression(@"^$|^[A-Za-z]{2}[A-Za-z0-9]{10}$", ErrorMessage = "ISIN должен содержать 2 буквы и 10 букв или цифр.")]
+        public string Isin { get; set; } = string.Empty;
+        [System.ComponentModel.DataAnnotations.RegularExpression(@"^$|^[a-z0-9][a-z0-9_-]*$", ErrorMessage = "Некорректный Finanzen.net slug.")]
+        public string FinanzenNetSlug { get; set; } = string.Empty;
+        public int? SectorId { get; set; }
+        public int? IndustryId { get; set; }
+        public List<int> MarketIndexIds { get; set; } = [];
+    }
+
+    private sealed class EditSourceStock
+    {
+        public int Id { get; set; }
+        public string Ticker { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public string? CommonName { get; set; }
+        public string Exchange { get; set; } = string.Empty;
+        public decimal CurrentPrice { get; set; }
+        public string? Wkn { get; set; }
+        public string? Isin { get; set; }
+        public string? FinanzenNetSlug { get; set; }
+        public int? SectorId { get; set; }
+        public int? IndustryId { get; set; }
+        public List<int> MarketIndexIds { get; set; } = [];
+    }
+
+    private sealed class IndexConstituentsResponse
+    {
+        public int MarketIndexId { get; set; }
+        public string? IndexName { get; set; }
+        public int TotalCount { get; set; }
+        public string? Source { get; set; }
+        public DateTime? AsOfDate { get; set; }
+        public bool IsCuratedSnapshot { get; set; }
+        public bool IsStale { get; set; }
+        public string? StaleReason { get; set; }
+        public List<IndexConstituentDto> Constituents { get; set; } = [];
+    }
+
+    private sealed class IndexConstituentDto
+    {
+        public int StockId { get; set; }
+        public string Ticker { get; set; } = string.Empty;
+        public string? ProviderSymbol { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public string? CommonName { get; set; }
+        public int? SectorId { get; set; }
+        public string? Sector { get; set; }
+        public int? IndustryId { get; set; }
+        public string? Industry { get; set; }
+        public string Exchange { get; set; } = string.Empty;
+        public string? Isin { get; set; }
+        public string? Wkn { get; set; }
+        public string? FinanzenNetSlug { get; set; }
+        public decimal? CurrentPrice { get; set; }
+        public decimal? CurrentPriceChange { get; set; }
+        public decimal? CurrentPriceChangePercent { get; set; }
+        public DateTime? CurrentPriceAt { get; set; }
+        public bool CurrentPriceIsDelayed { get; set; }
+        public string? CurrentPriceDelayWarning { get; set; }
+        public string TrackingStatus { get; set; } = string.Empty;
+        public bool IsArchived { get; set; }
+    }
+
+    private sealed class IndexConstituentsRefreshResponse
+    {
+        public int MarketIndexId { get; set; }
+        public string? ProviderStatus { get; set; }
+        public string? ProviderName { get; set; }
+        public string? ProviderMessage { get; set; }
+        public DateTime? FetchedAt { get; set; }
+        public DateTime? AsOfDate { get; set; }
+        public bool IsCuratedSnapshot { get; set; }
+        public bool IsStale { get; set; }
+        public int Added { get; set; }
+        public int Updated { get; set; }
+        public int Unchanged { get; set; }
+        public int Closed { get; set; }
+        public int? Conflicts { get; set; }
+    }
+
+    private sealed class IndexConstituentPerformanceResponse
+    {
+        public int MarketIndexId { get; set; }
+        public string? Range { get; set; }
+        public List<IndexConstituentPerformanceItem> Items { get; set; } = [];
+    }
+
+    private sealed class IndexConstituentPerformanceItem
+    {
+        public int StockId { get; set; }
+        public decimal? ChangePercent { get; set; }
+        public string? DataStatus { get; set; }
+    }
+
+    private sealed class BatchHistoryRefreshResponse
+    {
+        public int MarketIndexId { get; set; }
+        public int Total { get; set; }
+        public int Attempted { get; set; }
+        public int Succeeded { get; set; }
+        public int Failed { get; set; }
+        public int RateLimited { get; set; }
+        public int SkippedRateLimited { get; set; }
+        public bool StoppedDueToRateLimit { get; set; }
+    }
+
+    private sealed class BatchQuoteJobResponse
+    {
+        public string? JobId { get; set; }
+        public int MarketIndexId { get; set; }
+        public string? State { get; set; }
+        public int Total { get; set; }
+        public int Processed { get; set; }
+        public int Remaining { get; set; }
+        public int Succeeded { get; set; }
+        public int Delayed { get; set; }
+        public int NoEurConversion { get; set; }
+        public int StaleRejected { get; set; }
+        public int ProviderFailed { get; set; }
+        public int PersistFailed { get; set; }
+        public int RateLimited { get; set; }
+        public string? Error { get; set; }
+    }
+}

@@ -4,9 +4,9 @@
 @implements IDisposable
 
 <nav class="sidebar-nav" aria-label="Основная навигация">
-    <NavLink class="nav-link" href="/" Match="NavLinkMatch.All">Главная</NavLink>
+    <NavLink class="nav-link" href="/stockpilot/" Match="NavLinkMatch.All">Главная</NavLink>
 
-    <NavLink class="nav-link nav-link-section" href="/portfolios" Match="NavLinkMatch.All">Портфели</NavLink>
+    <NavLink class="nav-link nav-link-section" href="/stockpilot/portfolios" Match="NavLinkMatch.All">Портфели</NavLink>
     <div class="nav-portfolio-items" aria-label="Ваши портфели">
         @if (_loading)
         {
@@ -18,15 +18,15 @@
         }
         else if (!_isAuthenticated)
         {
-            <NavLink class="nav-link nav-portfolio-link" href="/login">Войти</NavLink>
+            <NavLink class="nav-link nav-portfolio-link" href="/stockpilot/login">Войти</NavLink>
         }
         @foreach (var portfolio in _portfolios)
         {
             <details class="nav-group nav-portfolio-group">
                 <summary>@portfolio.Name</summary>
                 <div class="nav-children">
-                    <NavLink class="nav-link" href="@($"/portfolios/{portfolio.Id}?section=positions")">Позиции</NavLink>
-                    <NavLink class="nav-link" href="@($"/portfolios/{portfolio.Id}?section=transactions")">Транзакции</NavLink>
+                    <NavLink class="nav-link" href="@($"/stockpilot/portfolios/{portfolio.Id}?section=positions")">Позиции</NavLink>
+                    <NavLink class="nav-link" href="@($"/stockpilot/portfolios/{portfolio.Id}?section=transactions")">Транзакции</NavLink>
                 </div>
             </details>
         }
@@ -34,16 +34,16 @@
 
     <details class="nav-group" open><summary>Акции</summary>
         <div class="nav-children">
-            <NavLink class="nav-link" href="/stocks" Match="NavLinkMatch.All">Отслеживаемые акции</NavLink>
-            <NavLink class="nav-link" href="/stocks/catalog">Список акций</NavLink>
+            <NavLink class="nav-link" href="/stockpilot/stocks" Match="NavLinkMatch.All">Отслеживаемые акции</NavLink>
+            <NavLink class="nav-link" href="/stockpilot/stocks/catalog">Список акций</NavLink>
             <details class="nav-group nav-group-nested">
                 <summary>Мировые индексы</summary>
                 <div class="nav-children">
-                    <NavLink class="nav-link" href="/market-indices" Match="NavLinkMatch.All">Управление</NavLink>
+                    <NavLink class="nav-link" href="/stockpilot/market-indices" Match="NavLinkMatch.All">Управление</NavLink>
                     @foreach (var index in _marketIndices)
                     {
                         var tooltip = index.Name == index.Code ? index.Name : $"{index.Name} ({index.Code})";
-                        <NavLink class="nav-link" href="@($"/market-indices/{index.Id}")" Match="NavLinkMatch.All" title="@tooltip">@index.Name</NavLink>
+                        <NavLink class="nav-link" href="@($"/stockpilot/market-indices/{index.Id}")" Match="NavLinkMatch.All" title="@tooltip">@index.Name</NavLink>
                     }
                 </div>
             </details>
@@ -53,31 +53,31 @@
     <details class="nav-group">
         <summary>Справочники</summary>
         <div class="nav-children">
-            <NavLink class="nav-link" href="/sectors">Секторы и отрасли</NavLink>
+            <NavLink class="nav-link" href="/stockpilot/sectors">Секторы и отрасли</NavLink>
             <details class="nav-group nav-group-nested">
                 <summary>Аналитика и показатели</summary>
                 <div class="nav-children">
-                    <NavLink class="nav-link" href="/help/analytical-signal">Аналитический сигнал: как читать</NavLink>
-                    <NavLink class="nav-link" href="/help/technical-indicators">Технические показатели в FinanceApp: краткий обзор</NavLink>
-                    <NavLink class="nav-link" href="/help/technical-indicator-formulas">Технические показатели: формулы, примеры и ограничения</NavLink>
-                    <NavLink class="nav-link" href="/help/fundamentals">Фундаментальные показатели и экраны</NavLink>
+                    <NavLink class="nav-link" href="/stockpilot/help/analytical-signal">Аналитический сигнал: как читать</NavLink>
+                    <NavLink class="nav-link" href="/stockpilot/help/technical-indicators">Технические показатели в FinanceApp: краткий обзор</NavLink>
+                    <NavLink class="nav-link" href="/stockpilot/help/technical-indicator-formulas">Технические показатели: формулы, примеры и ограничения</NavLink>
+                    <NavLink class="nav-link" href="/stockpilot/help/fundamentals">Фундаментальные показатели и экраны</NavLink>
                 </div>
             </details>
-            <NavLink class="nav-link" href="/financial-metrics">Финансовые показатели</NavLink>
-            <NavLink class="nav-link" href="/help">Справка</NavLink>
+            <NavLink class="nav-link" href="/stockpilot/financial-metrics">Финансовые показатели</NavLink>
+            <NavLink class="nav-link" href="/stockpilot/help">Справка</NavLink>
         </div>
     </details>
 
     <details class="nav-group">
         <summary>Система</summary>
         <div class="nav-children">
-            <NavLink class="nav-link" href="/system/processes">Журнал процессов</NavLink>
+            <NavLink class="nav-link" href="/stockpilot/system/processes">Журнал процессов</NavLink>
         </div>
     </details>
 
     <div class="sidebar-bottom">
-        <NavLink class="nav-link" href="/profile">@(_userName ?? "Профиль")</NavLink>
-        <NavLink class="nav-link nav-link-logout" href="/logout">Выйти</NavLink>
+        <NavLink class="nav-link" href="/stockpilot/profile">@(_userName ?? "Профиль")</NavLink>
+        <NavLink class="nav-link nav-link-logout" href="/stockpilot/logout">Выйти</NavLink>
     </div>
 </nav>
 

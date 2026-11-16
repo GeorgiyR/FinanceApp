@@ -28,7 +28,7 @@
             <p>@_error</p>
             @if (_requiresLogin)
             {
-                <a class="portfolio-login-link" href="/login">Войти</a>
+                <a class="portfolio-login-link" href="/stockpilot/login">Войти</a>
             }
             <button class="portfolio-refresh-button" @onclick="LoadPortfoliosAsync">Повторить</button>
         </div>
@@ -42,7 +42,7 @@
         <div class="portfolio-list">
             @foreach (var portfolio in _portfolios)
             {
-                <a class="portfolio-card" href="@($"/portfolios/{portfolio.Id}")">
+                <a class="portfolio-card" href="@($"/stockpilot/portfolios/{portfolio.Id}")">
                     <div class="portfolio-card-heading">
                         <h2>@portfolio.Name</h2>
                         <span class="portfolio-card-arrow" aria-hidden="true">→</span>

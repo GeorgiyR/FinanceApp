@@ -59,7 +59,7 @@
     {
         <div class="portfolio-state portfolio-state-error" role="alert">
             <p>@_error</p>
-            @if (_requiresLogin) { <a class="portfolio-login-link" href="/login">Войти</a> }
+            @if (_requiresLogin) { <a class="portfolio-login-link" href="/stockpilot/login">Войти</a> }
             <button type="button" class="portfolio-refresh-button" @onclick="LoadTrackedStocksAsync">Повторить</button>
         </div>
     }

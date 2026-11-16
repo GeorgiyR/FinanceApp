@@ -1,0 +1,483 @@
+@using System.Globalization
+@using System.Net
+@using System.Net.Http.Headers
+@using System.Net.Http.Json
+@using System.Text.Json
+@inject IHttpClientFactory HttpClientFactory
+@inject IJSRuntime JS
+
+<div id="@PanelId" class="market-index-chart-panel">
+    @if (string.IsNullOrWhiteSpace(ProviderSymbol))
+    {
+        <div class="market-index-chart-empty">
+            Символ поставщика не указан для этого индекса. Укажите ProviderSymbol в настройках индекса для загрузки графика.
+        </div>
+    }
+    else
+    {
+        <div class="market-index-chart-header">
+            <strong>История: @Code — @Name</strong>
+            <div class="market-index-chart-actions">
+                @if (IsArchived)
+                {
+                    <span class="market-index-archived-note">Архивный индекс</span>
+                }
+                <button type="button" class="history-refresh-button" title="@(IsArchived ? "Архивный индекс: обновление заблокировано" : null)" @onclick="ConfirmRefreshAsync" disabled="@(_refreshing || IsArchived)">
+                    @(_refreshing ? "Перезагрузка…" : "Перезагрузить")
+                </button>
+            </div>
+        </div>
+
+        <div class="history-range-buttons market-index-range-buttons" role="group" aria-label="Период истории индекса">
+            @foreach (var range in Ranges)
+            {
+                <button type="button" class="@(_range == range.Value ? "active" : "")" @onclick="() => SelectRangeAsync(range.Value)" disabled="@_loading">@range.Label</button>
+            }
+        </div>
+
+        @if (!string.IsNullOrWhiteSpace(_notice))
+        {
+            <div class="history-notice history-notice-@_noticeLevel" role="status">@_notice</div>
+        }
+
+        @if (_isStale && !string.IsNullOrWhiteSpace(_staleReason))
+        {
+            <div class="market-index-stale-alert" role="status">@_staleReason</div>
+        }
+
+        @if (_loading)
+        {
+            <div class="position-history-state">Загрузка истории…</div>
+        }
+        else if (!string.IsNullOrWhiteSpace(_error))
+        {
+            <div class="position-history-state position-history-error" role="alert">
+                @_error
+                <button type="button" @onclick="() => LoadHistoryAsync(_range)">Повторить</button>
+            </div>
+        }
+        else if (DisplayPoints.Count == 0)
+        {
+            <div class="position-history-state">Нет исторических данных для выбранного диапазона</div>
+        }
+        else
+        {
+            <div class="market-index-summary">
+                <strong class="market-index-latest">@FormatPoints(LatestClose)</strong>
+                @if (ChangeValue is decimal change && ChangePercent is decimal percent)
+                {
+                    <span class="market-index-change @(change >= 0 ? "positive" : "negative")">
+                        @FormatSigned(change) пт (@FormatSigned(percent) %)
+                    </span>
+                }
+                <span class="market-index-summary-caption">От начала выбранного периода</span>
+            </div>
+
+            <div class="position-history-chart market-index-chart">
+                <svg viewBox="0 0 800 220" role="img" aria-label="График исторических значений @Code" preserveAspectRatio="none">
+                    @foreach (var tick in GetAxisTicks())
+                    {
+                        <line class="history-grid-line" x1="70" y1="@tick.Y.ToString(CultureInfo.InvariantCulture)" x2="790" y2="@tick.Y.ToString(CultureInfo.InvariantCulture)" />
+                        @((MarkupString)$"<text class='history-price-label' x='62' y='{(tick.Y + 4).ToString(CultureInfo.InvariantCulture)}' text-anchor='end'>{tick.Label}</text>")
+                    }
+                    @foreach (var tick in GetDateTicks())
+                    {
+                        <line class="history-date-tick" x1="@tick.X.ToString(CultureInfo.InvariantCulture)" y1="180" x2="@tick.X.ToString(CultureInfo.InvariantCulture)" y2="184" />
+                        @((MarkupString)$"<text class='history-date-label' x='{tick.X.ToString(CultureInfo.InvariantCulture)}' y='205' text-anchor='{tick.Anchor}'>{tick.Label}</text>")
+                    }
+                    <line class="history-axis-line" x1="70" y1="24" x2="70" y2="180" />
+                    <line class="history-axis-line" x1="70" y1="180" x2="790" y2="180" />
+                    <polyline class="@(ChangeValue >= 0 ? "market-index-line positive" : "market-index-line negative")" points="@GetPolyline()" />
+                    @foreach (var point in GetPointMarkers())
+                    {
+                        <circle class="market-index-point" cx="@point.X.ToString("0.##", CultureInfo.InvariantCulture)" cy="@point.Y.ToString("0.##", CultureInfo.InvariantCulture)" r="2.4">
+                            <title>@point.Tooltip</title>
+                        </circle>
+                    }
+                </svg>
+            </div>
+
+            <div class="market-index-provider-note">Источник: Yahoo Finance · @ProviderSymbol · Данные могут быть задержаны</div>
+        }
+    }
+</div>
+
+@code {
+    private static readonly CultureInfo RussianCulture = CultureInfo.GetCultureInfo("ru-RU");
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly (string Label, string Value)[] Ranges =
+    [
+        ("Сегодня", "today"), ("24ч", "24h"), ("1н", "1w"), ("1м", "1m"), ("3м", "3m"),
+        ("6м", "6m"), ("1г", "1y"), ("3г", "3y"), ("5г", "5y"),
+    ];
+
+    [Parameter, EditorRequired] public int IndexId { get; set; }
+    [Parameter] public string Code { get; set; } = string.Empty;
+    [Parameter] public string Name { get; set; } = string.Empty;
+    [Parameter] public string? ProviderSymbol { get; set; }
+    [Parameter] public bool IsArchived { get; set; }
+    [Parameter] public string PanelId { get; set; } = string.Empty;
+
+    private string _range = "1y";
+    private bool _loading;
+    private bool _refreshing;
+    private string? _error;
+    private string? _notice;
+    private string _noticeLevel = "info";
+    private MarketIndexHistoryResponse? _history;
+    private int? _loadedIndexId;
+    private string? _loadedRange;
+
+    private List<ChartPoint> DisplayPoints { get; set; } = [];
+
+    private decimal? LatestClose => DisplayPoints.Count == 0 ? null : DisplayPoints[^1].Close;
+    private decimal? FirstClose => DisplayPoints.Count == 0 ? null : DisplayPoints[0].Close;
+    private decimal? ChangeValue => LatestClose is decimal latest && FirstClose is decimal first ? latest - first : null;
+    private decimal? ChangePercent => ChangeValue is decimal change && FirstClose is decimal first && first != 0m ? change / first * 100m : null;
+    private bool _isStale;
+    private string? _staleReason;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedIndexId == IndexId && _loadedRange == _range) return;
+        if (string.IsNullOrWhiteSpace(ProviderSymbol))
+        {
+            _loadedIndexId = IndexId;
+            _loadedRange = _range;
+            return;
+        }
+        _loadedIndexId = IndexId;
+        await LoadHistoryAsync(_range);
+    }
+
+    private async Task SelectRangeAsync(string range)
+    {
+        _range = range;
+        _notice = null;
+        await LoadHistoryAsync(range);
+    }
+
+    private async Task LoadHistoryAsync(string range)
+    {
+        _range = range;
+        _loading = true;
+        _error = null;
+        _notice = null;
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null)
+            {
+                _error = "Войдите в приложение, чтобы увидеть историю индекса.";
+                return;
+            }
+
+            using var response = await client.GetAsync($"market-indices/{IndexId}/history?range={Uri.EscapeDataString(range)}");
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                _error = "Войдите в приложение, чтобы увидеть историю индекса.";
+                return;
+            }
+            if (!response.IsSuccessStatusCode)
+            {
+                _error = await BuildApiErrorAsync(response, "Ошибка загрузки исторических данных");
+                return;
+            }
+
+            _history = await response.Content.ReadFromJsonAsync<MarketIndexHistoryResponse>(JsonOptions);
+            _isStale = _history?.IsStale == true;
+            _staleReason = _history?.StaleReason;
+            BuildDisplayPoints();
+        }
+        catch
+        {
+            _error = "Ошибка загрузки исторических данных";
+            _history = null;
+            DisplayPoints = [];
+        }
+        finally
+        {
+            _loading = false;
+            _loadedRange = range;
+        }
+    }
+
+    private async Task ConfirmRefreshAsync()
+    {
+        if (_refreshing || IsArchived) return;
+        var confirmed = await JS.InvokeAsync<bool>(
+            "confirm",
+            "Перезагрузить историю?\n\nВсе сохранённые исторические данные будут удалены и загружены заново.");
+        if (!confirmed) return;
+        await RefreshAsync();
+    }
+
+    private async Task RefreshAsync()
+    {
+        if (_refreshing) return;
+        _refreshing = true;
+        _notice = null;
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null)
+            {
+                _notice = "Войдите в приложение, чтобы перезагрузить историю.";
+                _noticeLevel = "error";
+                return;
+            }
+
+            using var response = await client.PostAsync($"market-indices/{IndexId}/history/refresh", null);
+            if (!response.IsSuccessStatusCode)
+            {
+                _notice = await BuildApiErrorAsync(response, "Не удалось перезагрузить историю");
+                _noticeLevel = "error";
+                return;
+            }
+
+            var result = await response.Content.ReadFromJsonAsync<MarketIndexRefreshResponse>(JsonOptions);
+            await LoadHistoryAsync(_range);
+            _notice = $"История перезагружена: удалено {result?.DeletedPoints ?? 0}, загружено {result?.ImportedPoints ?? 0}";
+            _noticeLevel = "success";
+        }
+        catch
+        {
+            _notice = "Не удалось перезагрузить историю";
+            _noticeLevel = "error";
+        }
+        finally
+        {
+            _refreshing = false;
+        }
+    }
+
+    private async Task<HttpClient?> CreateAuthenticatedClientAsync()
+    {
+        var module = await JS.InvokeAsync<IJSObjectReference>("import", "./portfolioApi.js");
+        try
+        {
+            var token = await module.InvokeAsync<string?>("getToken");
+            if (string.IsNullOrWhiteSpace(token)) return null;
+            var client = HttpClientFactory.CreateClient("FinanceApi");
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            return client;
+        }
+        finally
+        {
+            await module.DisposeAsync();
+        }
+    }
+
+    private void BuildDisplayPoints()
+    {
+        var points = (_history?.Points ?? [])
+            .Where(point => point.Close > 0m)
+            .OrderBy(point => point.Timestamp)
+            .Select(point => new ChartPoint
+            {
+                Timestamp = NormalizeTimestamp(point.Timestamp),
+                Close = point.Close,
+                Open = point.Open,
+                High = point.High,
+                Low = point.Low,
+                Volume = point.Volume,
+            })
+            .ToList();
+
+        if (_range == "1y" && points.Count > 0 && _history?.CurrentPrice is decimal currentPrice && currentPrice > 0m
+            && _history.CurrentPriceIsDelayed != true
+            && !string.IsNullOrWhiteSpace(_history.CurrentPriceAt))
+        {
+            var overlay = NormalizeTimestamp(_history.CurrentPriceAt);
+            if (overlay > points[^1].Timestamp && overlay <= DateTime.UtcNow.AddMinutes(5))
+            {
+                points.Add(new ChartPoint
+                {
+                    Timestamp = overlay,
+                    Close = currentPrice,
+                    Open = currentPrice,
+                    High = currentPrice,
+                    Low = currentPrice,
+                    Volume = null,
+                });
+            }
+        }
+
+        DisplayPoints = points;
+    }
+
+    private IEnumerable<(decimal Y, string Label)> GetAxisTicks()
+    {
+        if (DisplayPoints.Count == 0) yield break;
+        var (min, max) = GetMinMax();
+        const int steps = 4;
+        for (var i = 0; i <= steps; i++)
+        {
+            var value = max - (max - min) * i / steps;
+            var y = 24m + (180m - 24m) * i / steps;
+            yield return (y, value.ToString("N0", RussianCulture));
+        }
+    }
+
+    private IEnumerable<(decimal X, string Label, string Anchor)> GetDateTicks()
+    {
+        if (DisplayPoints.Count == 0) yield break;
+        var count = Math.Min(6, DisplayPoints.Count);
+        var used = new HashSet<int>();
+        for (var i = 0; i < count; i++)
+        {
+            var index = count == 1 ? 0 : (int)Math.Round((DisplayPoints.Count - 1) * (double)i / (count - 1));
+            if (!used.Add(index)) continue;
+            var x = 70m + 720m * index / Math.Max(1, DisplayPoints.Count - 1);
+            var anchor = i == 0 ? "start" : i == count - 1 ? "end" : "middle";
+            yield return (x, FormatAxisDate(DisplayPoints[index].Timestamp), anchor);
+        }
+    }
+
+    private string GetPolyline()
+    {
+        if (DisplayPoints.Count == 0) return string.Empty;
+        var (min, max) = GetMinMax();
+        var spread = max - min;
+        var result = new List<string>(DisplayPoints.Count);
+        for (var i = 0; i < DisplayPoints.Count; i++)
+        {
+            var x = 70m + 720m * i / Math.Max(1, DisplayPoints.Count - 1);
+            var y = 180m - (DisplayPoints[i].Close - min) / spread * 156m;
+            result.Add($"{x.ToString("0.##", CultureInfo.InvariantCulture)},{y.ToString("0.##", CultureInfo.InvariantCulture)}");
+        }
+        return string.Join(" ", result);
+    }
+
+    private IEnumerable<(decimal X, decimal Y, string Tooltip)> GetPointMarkers()
+    {
+        if (DisplayPoints.Count > 120) yield break;
+        var (min, max) = GetMinMax();
+        var spread = max - min;
+        for (var i = 0; i < DisplayPoints.Count; i++)
+        {
+            var x = 70m + 720m * i / Math.Max(1, DisplayPoints.Count - 1);
+            var y = 180m - (DisplayPoints[i].Close - min) / spread * 156m;
+            var tooltip = $"{DisplayPoints[i].Timestamp.ToLocalTime():dd.MM.yyyy HH:mm}: {FormatPoints(DisplayPoints[i].Close)}";
+            yield return (x, y, tooltip);
+        }
+    }
+
+    private (decimal Min, decimal Max) GetMinMax()
+    {
+        var min = DisplayPoints.Min(point => point.Close);
+        var max = DisplayPoints.Max(point => point.Close);
+        if (min == max)
+        {
+            var padding = Math.Max(Math.Abs(min) * 0.01m, 0.01m);
+            min -= padding;
+            max += padding;
+        }
+        else
+        {
+            var padding = (max - min) * 0.05m;
+            min -= padding;
+            max += padding;
+        }
+        return (min, max);
+    }
+
+    private string FormatAxisDate(DateTime timestamp)
+    {
+        var local = timestamp.ToLocalTime();
+        return _range switch
+        {
+            "5y" or "3y" => local.ToString("MM.yyyy", RussianCulture),
+            "1y" or "6m" or "3m" => local.ToString("dd.MM.yy", RussianCulture),
+            "1m" => local.ToString("dd", RussianCulture),
+            "1w" => local.ToString("dd.MM HH:mm", RussianCulture),
+            _ => local.ToString("HH:mm", RussianCulture),
+        };
+    }
+
+    private static DateTime NormalizeTimestamp(string? value) =>
+        DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsed)
+            ? parsed.ToUniversalTime()
+            : DateTime.UtcNow;
+
+    private static string FormatPoints(decimal? value) =>
+        value is decimal points ? $"{points.ToString("N2", RussianCulture)} пт" : "—";
+
+    private static string FormatSigned(decimal value) =>
+        $"{(value >= 0m ? "+" : string.Empty)}{value.ToString("N2", RussianCulture)}";
+
+    private static async Task<string> BuildApiErrorAsync(HttpResponseMessage response, string fallback)
+    {
+        try
+        {
+            var body = await response.Content.ReadAsStringAsync();
+            if (!string.IsNullOrWhiteSpace(body))
+            {
+                try
+                {
+                    using var document = JsonDocument.Parse(body);
+                    if (document.RootElement.ValueKind == JsonValueKind.String)
+                    {
+                        var text = document.RootElement.GetString();
+                        if (!string.IsNullOrWhiteSpace(text)) return text;
+                    }
+                    foreach (var key in new[] { "message", "detail", "title" })
+                    {
+                        if (document.RootElement.TryGetProperty(key, out var property)
+                            && property.ValueKind == JsonValueKind.String)
+                        {
+                            var text = property.GetString();
+                            if (!string.IsNullOrWhiteSpace(text)) return text;
+                        }
+                    }
+                }
+                catch (JsonException)
+                {
+                }
+                if (!body.TrimStart().StartsWith('<')) return body;
+            }
+        }
+        catch
+        {
+        }
+        return $"{fallback} (HTTP {(int)response.StatusCode}).";
+    }
+
+    private sealed class ChartPoint
+    {
+        public DateTime Timestamp { get; set; }
+        public decimal Close { get; set; }
+        public decimal Open { get; set; }
+        public decimal High { get; set; }
+        public decimal Low { get; set; }
+        public long? Volume { get; set; }
+    }
+
+    private sealed class MarketIndexHistoryResponse
+    {
+        public int MarketIndexId { get; set; }
+        public string? Range { get; set; }
+        public decimal? CurrentPrice { get; set; }
+        public string? CurrentPriceAt { get; set; }
+        public bool CurrentPriceIsDelayed { get; set; }
+        public bool IsStale { get; set; }
+        public string? StaleReason { get; set; }
+        public List<MarketIndexHistoryPoint> Points { get; set; } = [];
+    }
+
+    private sealed class MarketIndexHistoryPoint
+    {
+        public string? Timestamp { get; set; }
+        public decimal Open { get; set; }
+        public decimal High { get; set; }
+        public decimal Low { get; set; }
+        public decimal Close { get; set; }
+        public long? Volume { get; set; }
+    }
+
+    private sealed class MarketIndexRefreshResponse
+    {
+        public int DeletedPoints { get; set; }
+        public int ImportedPoints { get; set; }
+    }
+}

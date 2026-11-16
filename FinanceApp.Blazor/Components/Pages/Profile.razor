@@ -25,7 +25,7 @@
             <p>@_loadError</p>
             @if (_requiresLogin)
             {
-                <a class="portfolio-login-link" href="/login">Войти</a>
+                <a class="portfolio-login-link" href="/stockpilot/login">Войти</a>
             }
             else
             {
@@ -257,7 +257,7 @@
             _passwordSuccess = "Пароль изменён. Выполните вход снова.";
             await InvokeAsync(StateHasChanged);
             await Task.Delay(1500);
-            Navigation.NavigateTo("/logout");
+            Navigation.NavigateTo("/stockpilot/logout");
         }
         catch (Exception)
         {

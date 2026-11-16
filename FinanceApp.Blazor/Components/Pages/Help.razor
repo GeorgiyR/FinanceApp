@@ -36,7 +36,7 @@
                         <ul class="help-page__article-list">
                             @foreach (var article in entry.Articles)
                             {
-                                <li><NavLink class="help-page__article-link" href="@($"/help/{article.Slug}")">@article.Title</NavLink></li>
+                                <li><NavLink class="help-page__article-link" href="@($"/stockpilot/help/{article.Slug}")">@article.Title</NavLink></li>
                             }
                         </ul>
                     </section>
@@ -61,7 +61,7 @@
                     <ul class="help-page__article-list">
                         @foreach (var article in HelpData.Articles.Take(3))
                         {
-                            <li><NavLink class="help-page__article-link" href="@($"/help/{article.Slug}")">@article.Title</NavLink></li>
+                            <li><NavLink class="help-page__article-link" href="@($"/stockpilot/help/{article.Slug}")">@article.Title</NavLink></li>
                         }
                     </ul>
                 </div>
@@ -267,8 +267,8 @@
 
     private static string RelatedHref(HelpRelatedLink link) =>
         string.IsNullOrWhiteSpace(link.SectionSlug)
-            ? $"/help/{link.ArticleSlug}"
-            : $"/help/{link.ArticleSlug}#{link.SectionSlug}";
+            ? $"/stockpilot/help/{link.ArticleSlug}"
+            : $"/stockpilot/help/{link.ArticleSlug}#{link.SectionSlug}";
 
     private static string BlockText(HelpBlock block) => block.Type switch
     {

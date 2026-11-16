@@ -19,6 +19,10 @@ builder.Services.AddRazorComponents()
 
 var app = builder.Build();
 
+// The application is hosted under the /stockpilot path prefix.
+app.UsePathBase("/stockpilot");
+app.UseRouting();
+
 // Configure the HTTP request pipeline.
 if (!app.Environment.IsDevelopment())
 {
