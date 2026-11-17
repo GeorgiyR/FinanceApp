@@ -38,7 +38,7 @@
         </select>
         @if (_sortMode != "name")
         {
-            <button type="button" class="stocks-toolbar-button stocks-sort-direction" @onclick="ToggleSortDirection" aria-label="@(_sortDirection == "desc" ? "Сортировать по возрастанию" : "Сортировать по убыванию")" title="@(_sortDirection == "desc" ? "Убывание" : "Возрастание")">@(_sortDirection == "desc" ? "↓" : "↑")</button>
+            <button type="button" class="stocks-toolbar-button stocks-sort-direction" @onclick="ToggleSortDirection" aria-label="@(_sortDirection == "desc" ? "Сортировать по возрастанию" : "Сортировать по убыванию")" title="@(_sortDirection == "desc" ? "Убывание" : "Возрастание")">@(_sortDirection == "desc" ? "↑" : "↓")</button>
         }
         <span>Найдено: @FilteredStocks.Count() из @_stocks.Count</span>
     </div>

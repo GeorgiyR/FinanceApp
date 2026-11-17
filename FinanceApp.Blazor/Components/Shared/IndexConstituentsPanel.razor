@@ -33,6 +33,10 @@
                 }
             </select>
         </label>
+        @if (_sortMode != "name")
+        {
+            <button type="button" class="stocks-toolbar-button stocks-sort-direction" @onclick="ToggleSortDirection" aria-label="@(_sortDirection == "desc" ? "Сортировать по возрастанию" : "Сортировать по убыванию")" title="@(_sortDirection == "desc" ? "Убывание" : "Возрастание")">@(_sortDirection == "desc" ? "↑" : "↓")</button>
+        }
         @if (!IsArchived)
         {
             <button type="button" class="stocks-toolbar-button" @onclick="RefreshConstituentsAsync" disabled="@(_refreshing || _batchHistoryRefreshing || _batchQuoteRefreshing)">@(_refreshing ? "Обновление…" : "Обновить состав")</button>
@@ -278,6 +282,7 @@
     private string _infoNoticeLevel = "info";
     private string? _search = string.Empty;
     private string _sortMode = "name";
+    private string _sortDirection = "desc";
     private int _page = 1;
     private int? _loadedIndexId;
     private int? _trackingStockId;
@@ -311,11 +316,13 @@
     {
         get
         {
+            var direction = _sortDirection == "asc" ? 1 : -1;
             var sorted = _sortMode == "name"
                 ? _constituents.OrderBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase)
                     .ThenBy(item => item.Ticker, StringComparer.CurrentCultureIgnoreCase)
                     .ThenBy(item => item.StockId)
-                : _constituents.OrderByDescending(item => _performanceByStockId.TryGetValue(item.StockId, out var value) && value is not null ? value.Value : (decimal?)null)
+                : _constituents.OrderByDescending(item => PerformanceOf(item.StockId) is not null)
+                    .ThenBy(item => (PerformanceOf(item.StockId) ?? decimal.MinValue) * direction)
                     .ThenBy(item => item.StockId);
 
             var query = (_search ?? string.Empty).Trim();
@@ -330,6 +337,9 @@
                 || Contains(item.ProviderSymbol, query)).ToList();
         }
     }
+
+    private decimal? PerformanceOf(int stockId) =>
+        _performanceByStockId.TryGetValue(stockId, out var value) ? value : null;
 
     private List<IndexConstituentDto> PagedConstituents => FilteredConstituents.Skip((_page - 1) * 20).Take(20).ToList();
     private int PageCount => Math.Max(1, (int)Math.Ceiling(FilteredConstituents.Count / 20.0));
@@ -435,6 +445,12 @@
             return;
         }
         await LoadPerformanceAsync(_sortMode);
+    }
+
+    private void ToggleSortDirection()
+    {
+        _sortDirection = _sortDirection == "desc" ? "asc" : "desc";
+        _page = 1;
     }
 
     private void OnSearchInput(ChangeEventArgs args)
