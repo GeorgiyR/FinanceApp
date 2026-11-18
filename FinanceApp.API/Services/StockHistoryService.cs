@@ -15,10 +15,13 @@ public class StockHistoryService : IStockHistoryService
 {
     private const int MaxYahooRequestAttempts = 5;
     private const int FullBackfillMinimumLookbackDays = 366 * 5;
+    private const int MinimumWeeklyIntradayPoints = 120;
     private static readonly TimeSpan YahooRetryBaseDelay = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan YahooRetryMaxDelay = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan WeeklyIntradayBackfillMinInterval = TimeSpan.FromHours(6);
     private static readonly ConcurrentDictionary<int, SemaphoreSlim> StockRefreshLocks = new();
     private static readonly ConcurrentDictionary<int, DateTime> LastOnDemandIntradayRefreshAttemptUtc = new();
+    private static readonly ConcurrentDictionary<int, DateTime> LastWeeklyIntradayBackfillAttemptUtc = new();
     private static readonly Regex ProviderSymbolRegex = new(@"^[A-Za-z0-9\^\.\-_]{1,50}$", RegexOptions.Compiled);
 
     private readonly AppDbContext _dbContext;
@@ -518,7 +521,7 @@ public class StockHistoryService : IStockHistoryService
                 var dailyRange = IsFrankfurtExchange(stock.Exchange) ? "5y" : "2y";
                 var daily = await FetchCandlesAsync(effectiveProviderSymbol, "1d", dailyRange, cancellationToken);
                 var hourly = await FetchCandlesAsync(effectiveProviderSymbol, "1h", "7d", cancellationToken);
-                var fiveMinute = await FetchCandlesAsync(effectiveProviderSymbol, "5m", "1d", cancellationToken);
+                var fiveMinute = await FetchCandlesAsync(effectiveProviderSymbol, "5m", "7d", cancellationToken);
                 var tenMinute = fiveMinute.WasRateLimited ? CandleFetchResult.RateLimited() : CandleFetchResult.Success(AggregateToTenMinute(fiveMinute.Batch));
 
                 if (monthly.WasRateLimited || weekly.WasRateLimited || daily.WasRateLimited || hourly.WasRateLimited || fiveMinute.WasRateLimited)
@@ -777,6 +780,31 @@ public class StockHistoryService : IStockHistoryService
             }
         }
 
+        if (normalizedRange == "1w"
+            && string.Equals(interval, "10m", StringComparison.Ordinal)
+            && !HasSufficientWeeklyIntradayCoverage(data, nowUtc)
+            && TryReserveRefreshAttempt(LastWeeklyIntradayBackfillAttemptUtc, stock.Id, nowUtc, WeeklyIntradayBackfillMinInterval))
+        {
+            try
+            {
+                if (await BackfillWeeklyIntradayAsync(stock, cancellationToken))
+                {
+                    (data, usedDailyAggregationFallback) = await LoadHistoryWithDailyAggregationFallbackAsync(
+                        stock,
+                        interval,
+                        from,
+                        normalizedRange,
+                        intradayWindow,
+                        nowUtc,
+                        cancellationToken);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Weekly intraday backfill failed for stock {StockId}", stock.Id);
+            }
+        }
+
         var currencyMetadata = data.LastOrDefault();
         var conversionContext = await _stockQuoteConversionService.GetConversionContextAsync(
             currencyMetadata?.QuoteCurrency,
@@ -788,7 +816,7 @@ public class StockHistoryService : IStockHistoryService
             conversionContext,
             usedDailyAggregationFallback || (IsFrankfurtExchange(stock.Exchange) && IsLongRangeAggregateInterval(interval)));
         var asOfUtc = data.LastOrDefault()?.Timestamp;
-        var isPotentiallyStale = IsPotentiallyStale(interval, asOfUtc, nowUtc);
+        var isPotentiallyStale = IsPotentiallyStale(interval, asOfUtc, nowUtc, normalizedRange);
         var staleReason = BuildHistoryStaleReason(stock.Exchange, normalizedRange, interval, asOfUtc, nowUtc, isPotentiallyStale, onDemandRefreshFailed);
         var unavailableReason = data.Count == 0
             ? BuildUnavailableReason(stock, normalizedRange, onDemandRefreshFailed)
@@ -839,7 +867,7 @@ public class StockHistoryService : IStockHistoryService
         if (daily.WasRateLimited) return HistoryBatchFetchResult.RateLimited();
         var hourly = await FetchCandlesAsync(providerSymbol, "1h", "7d", cancellationToken);
         if (hourly.WasRateLimited) return HistoryBatchFetchResult.RateLimited();
-        var fiveMinute = await FetchCandlesAsync(providerSymbol, "5m", "1d", cancellationToken);
+        var fiveMinute = await FetchCandlesAsync(providerSymbol, "5m", "7d", cancellationToken);
         if (fiveMinute.WasRateLimited) return HistoryBatchFetchResult.RateLimited();
         var tenMinute = AggregateToTenMinute(fiveMinute);
 
@@ -884,7 +912,7 @@ public class StockHistoryService : IStockHistoryService
             return HistoryBatchFetchResult.RateLimited();
         }
 
-        var fiveMinute = await FetchCandlesAsync(providerSymbol, "5m", "1d", cancellationToken);
+        var fiveMinute = await FetchCandlesAsync(providerSymbol, "5m", "7d", cancellationToken);
         if (fiveMinute.WasRateLimited)
         {
             return HistoryBatchFetchResult.RateLimited();
@@ -906,6 +934,19 @@ public class StockHistoryService : IStockHistoryService
         }
 
         return HistoryBatchFetchResult.Success(batches);
+    }
+
+    private async Task<bool> BackfillWeeklyIntradayAsync(Stock stock, CancellationToken cancellationToken)
+    {
+        var providerSymbol = ResolveStockProviderSymbol(stock);
+        var fiveMinute = await FetchCandlesAsync(providerSymbol, "5m", "7d", cancellationToken);
+        if (fiveMinute.WasRateLimited || fiveMinute.Batch.Candles.Count == 0)
+        {
+            return false;
+        }
+
+        await UpsertCandlesAsync(stock.Id, "10m", AggregateToTenMinute(fiveMinute.Batch), cancellationToken);
+        return true;
     }
 
     private async Task UpsertHistoryBatchesAsync(int stockId, IEnumerable<IntervalBatch> batches, CancellationToken cancellationToken)
@@ -1265,8 +1306,7 @@ public class StockHistoryService : IStockHistoryService
         "5y" or "3y" => "1mo",
         "1y" => "1wk",
         "6m" or "3m" or "1m" => "1d",
-        "1w" => "1h",
-        "24h" or "today" => "10m",
+        "1w" or "24h" or "today" => "10m",
         _ => "1mo"
     };
 
@@ -1968,13 +2008,27 @@ public class StockHistoryService : IStockHistoryService
         return TryReserveOnDemandIntradayRefresh(stock.Id, nowUtc);
     }
 
+    private static bool HasSufficientWeeklyIntradayCoverage(IReadOnlyList<StockHistoricalPrice> data, DateTime nowUtc)
+    {
+        var weekStartUtc = nowUtc.AddDays(-7);
+        var providerPoints = data.Count(x => x.Timestamp >= weekStartUtc && !x.IsQuoteDerived);
+        return providerPoints >= MinimumWeeklyIntradayPoints;
+    }
+
     private bool TryReserveOnDemandIntradayRefresh(int stockId, DateTime nowUtc)
+        => TryReserveRefreshAttempt(LastOnDemandIntradayRefreshAttemptUtc, stockId, nowUtc, _options.OnDemandIntradayRefreshMinInterval);
+
+    private static bool TryReserveRefreshAttempt(
+        ConcurrentDictionary<int, DateTime> attempts,
+        int stockId,
+        DateTime nowUtc,
+        TimeSpan minInterval)
     {
         while (true)
         {
-            if (!LastOnDemandIntradayRefreshAttemptUtc.TryGetValue(stockId, out var previousAttemptUtc))
+            if (!attempts.TryGetValue(stockId, out var previousAttemptUtc))
             {
-                if (LastOnDemandIntradayRefreshAttemptUtc.TryAdd(stockId, nowUtc))
+                if (attempts.TryAdd(stockId, nowUtc))
                 {
                     return true;
                 }
@@ -1984,7 +2038,7 @@ public class StockHistoryService : IStockHistoryService
 
             if (nowUtc <= previousAttemptUtc)
             {
-                if (LastOnDemandIntradayRefreshAttemptUtc.TryUpdate(stockId, nowUtc, previousAttemptUtc))
+                if (attempts.TryUpdate(stockId, nowUtc, previousAttemptUtc))
                 {
                     return true;
                 }
@@ -1992,12 +2046,12 @@ public class StockHistoryService : IStockHistoryService
                 continue;
             }
 
-            if ((nowUtc - previousAttemptUtc) < _options.OnDemandIntradayRefreshMinInterval)
+            if ((nowUtc - previousAttemptUtc) < minInterval)
             {
                 return false;
             }
 
-            if (LastOnDemandIntradayRefreshAttemptUtc.TryUpdate(stockId, nowUtc, previousAttemptUtc))
+            if (attempts.TryUpdate(stockId, nowUtc, previousAttemptUtc))
             {
                 return true;
             }
@@ -2135,21 +2189,24 @@ public class StockHistoryService : IStockHistoryService
             .ToList();
     }
 
-    private static bool IsPotentiallyStale(string interval, DateTime? asOfUtc, DateTime nowUtc)
+    private static bool IsPotentiallyStale(string interval, DateTime? asOfUtc, DateTime nowUtc, string? range = null)
     {
         if (asOfUtc is null)
         {
             return true;
         }
 
-        var threshold = interval switch
-        {
-            "10m" => TimeSpan.FromHours(2),
-            "1h" => TimeSpan.FromHours(8),
-            "1d" => TimeSpan.FromDays(4),
-            "1wk" => TimeSpan.FromDays(14),
-            _ => TimeSpan.FromDays(45),
-        };
+        // The weekly range keeps 10-minute points across sessions, so weekend gaps are expected.
+        var threshold = range == "1w" && string.Equals(interval, "10m", StringComparison.Ordinal)
+            ? TimeSpan.FromDays(3)
+            : interval switch
+            {
+                "10m" => TimeSpan.FromHours(2),
+                "1h" => TimeSpan.FromHours(8),
+                "1d" => TimeSpan.FromDays(4),
+                "1wk" => TimeSpan.FromDays(14),
+                _ => TimeSpan.FromDays(45),
+            };
 
         return (nowUtc - asOfUtc.Value) > threshold;
     }
