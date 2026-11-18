@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Sidebar blue background with rounded corners -->
+  <rect width="32" height="32" rx="6" fill="#073f86"/>
+  <!-- Rising trend line (bright green), left-to-right upward -->
+  <polyline points="3,27 10,21 17,23 27,11" fill="none" stroke="#4ade80" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Arrow head at the tip of the trend line -->
+  <polyline points="22,9 27,11 25,16" fill="none" stroke="#4ade80" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
