@@ -181,10 +181,6 @@ a { color: inherit; text-decoration: none; }
 .position-history-chart svg .history-date-tick { stroke: #aab4c0; stroke-width: 1; }
 .position-history-chart svg .history-date-label { fill: #697586; font-size: 10px; font-stretch: normal; letter-spacing: normal; white-space: pre; }
 .position-history-chart svg .history-month-label { fill: #697586; font-size: 10px; font-stretch: normal; letter-spacing: normal; white-space: pre; }
-.position-history-chart svg .history-candle-wick { stroke-width: 1; vector-effect: non-scaling-stroke; }
-.position-history-chart svg .history-candle-body { stroke-width: 1; }
-.position-history-chart svg .history-candle-up { stroke: #16a34a; fill: #16a34a; }
-.position-history-chart svg .history-candle-down { stroke: #dc2626; fill: #dc2626; }
 .position-volume-chart { margin-top: 4px; }
 .position-volume-chart svg { display: block; width: 100%; height: 168px; }
 .position-volume-chart svg line { stroke: #d9e0e8; stroke-width: 1; }
