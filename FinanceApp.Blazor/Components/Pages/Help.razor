@@ -89,9 +89,9 @@
                         <nav class="help-page__card help-page__toc" aria-label="Содержание">
                             <h2>Содержание</h2>
                             <ol>
-                                @foreach (var section in article.Sections)
+                                @foreach (var helpSection in article.Sections)
                                 {
-                                    <li><a href="#@section.Slug">@section.Title</a></li>
+                                    <li><a href="#@helpSection.Slug">@helpSection.Title</a></li>
                                 }
                             </ol>
                         </nav>
@@ -99,12 +99,12 @@
 
                     <div class="help-page__live-status" aria-live="polite">@_copyStatus</div>
 
-                    @foreach (var section in article.Sections)
+                    @foreach (var helpSection in article.Sections)
                     {
-                        <section id="@section.Slug" class="help-page__section">
-                            <h3>@section.Title</h3>
+                        <section id="@helpSection.Slug" class="help-page__section">
+                            <h3>@helpSection.Title</h3>
                             <div class="help-page__section-body">
-                                @foreach (var block in section.Blocks)
+                                @foreach (var block in helpSection.Blocks)
                                 {
                                     @switch (block.Type)
                                     {
