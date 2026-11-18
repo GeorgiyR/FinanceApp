@@ -515,10 +515,11 @@
     private static List<(DateTime Timestamp, decimal Price)> GetUsableHistoryPoints(StockHistoryResponse history) => history.Points
         .Select(point => (point.Timestamp, Price: point.CloseEur ?? point.CloseNormalized)).Where(point => point.Price > 0m).OrderBy(point => point.Timestamp).ToList();
 
-    // Nights and weekends are stretched over the whole week on a plain time axis; compress them
+    // Nights and weekends are stretched over the whole range on a plain time axis; compress them
     // so the actual trading sessions stay readable.
-    private static readonly long WeeklyNoTradeGapTicks = TimeSpan.FromMinutes(30).Ticks;
-    private const decimal WeeklyNoTradeGapCompression = 3m;
+    private static readonly long NoTradeGapTicks = TimeSpan.FromMinutes(30).Ticks;
+    private const decimal NoTradeGapCompression = 3m;
+    private static bool UsesNoTradeGapCompression(string range) => range is "1w" or "24h";
 
     private static Func<DateTime, decimal> BuildHistoryXMap(StockHistoryResponse history, string range)
     {
@@ -529,13 +530,13 @@
         var end = points[^1].Timestamp;
         var duration = (decimal)(end - start).Ticks;
         decimal Linear(DateTime timestamp) => duration == 0m ? 430m : 70m + (decimal)(timestamp - start).Ticks / duration * 720m;
-        if (range != "1w" || points.Count < 2) return Linear;
+        if (!UsesNoTradeGapCompression(range) || points.Count < 2) return Linear;
 
         var cumulative = new decimal[points.Count];
         for (var index = 1; index < points.Count; index++)
         {
             var delta = (decimal)(points[index].Timestamp - points[index - 1].Timestamp).Ticks;
-            cumulative[index] = cumulative[index - 1] + (delta > WeeklyNoTradeGapTicks ? delta / WeeklyNoTradeGapCompression : delta);
+            cumulative[index] = cumulative[index - 1] + (delta > NoTradeGapTicks ? delta / NoTradeGapCompression : delta);
         }
 
         var total = cumulative[^1];
@@ -578,7 +579,7 @@
         for (var index = 1; index < points.Count; index++)
         {
             var gap = (points[index].Timestamp - points[index - 1].Timestamp).Ticks;
-            if (range == "1w" && gap > WeeklyNoTradeGapTicks)
+            if (UsesNoTradeGapCompression(range) && gap > NoTradeGapTicks)
             {
                 if (current.Count > 1) segments.Add(new HistoryLineSegment(string.Join(" ", current), false));
                 var gapPoints = FormatHistoryChartPoint(points[index], xMap, min, spread);
@@ -647,17 +648,19 @@
         var points = GetUsableHistoryPoints(history); if (points.Count == 0) return [];
         if (range == "1m") return GetDailyHistoryDateTicks(points);
         if (range == "1w") return GetWeeklyHistoryDateTicks(points, BuildHistoryXMap(history, range));
-        var start = points[0].Timestamp; var end = points[^1].Timestamp; var duration = (decimal)(end - start).Ticks;
+        var start = points[0].Timestamp; var end = points[^1].Timestamp;
         Func<DateTime, DateTime> addStep = range switch { "today" => date => date.AddHours(2), "24h" => date => date.AddHours(4), "1w" => date => date.AddDays(1), "3m" or "6m" => date => date.AddDays(14), "1y" => date => date.AddMonths(1), "3y" => date => date.AddMonths(3), "5y" => date => date.AddMonths(6), _ => date => date.AddDays(14) };
         var dates = new List<DateTime> { start };
         for (var date = addStep(start); date < end && dates.Count < 20; date = addStep(date)) dates.Add(date);
         if (end > start) dates.Add(end);
         var format = range is "today" or "24h" ? "HH:mm" : range is "1y" or "3y" or "5y" ? "MM.yy" : "dd.MM";
+        var xMap = BuildHistoryXMap(history, range);
+        if (UsesNoTradeGapCompression(range)) return BuildCompressedDateTicks(dates, xMap, format);
         if (dates.Count > 2)
         {
             var previous = dates[^2];
-            var previousX = duration == 0m ? 430m : 70m + (decimal)(previous - start).Ticks / duration * 720m;
-            var endX = duration == 0m ? 430m : 790m;
+            var previousX = xMap(previous);
+            var endX = xMap(end);
             var previousLabel = previous.ToLocalTime().ToString(format, RussianCulture);
             var endLabel = end.ToLocalTime().ToString(format, RussianCulture);
             if (previousLabel == endLabel)
@@ -665,13 +668,30 @@
             else if (endX - previousX < 40m)
                 dates.RemoveAt(dates.Count - 2);
         }
-        return dates.Select((date, index) => new HistoryDateTick(duration == 0m ? 430m : 70m + (decimal)(date - start).Ticks / duration * 720m, date.ToLocalTime().ToString(format, RussianCulture), index == 0 ? "start" : index == dates.Count - 1 ? "end" : "middle")).ToArray();
+        return dates.Select((date, index) => new HistoryDateTick(xMap(date), date.ToLocalTime().ToString(format, RussianCulture), index == 0 ? "start" : index == dates.Count - 1 ? "end" : "middle")).ToArray();
+    }
+
+    private static IReadOnlyList<HistoryDateTick> BuildCompressedDateTicks(IReadOnlyList<DateTime> dates, Func<DateTime, decimal> xMap, string format)
+    {
+        // Compressed gaps shift trading sessions closer together, so thin labels by pixel distance.
+        const decimal minLabelGap = 55m;
+        var ticks = new List<HistoryDateTick>();
+        foreach (var date in dates)
+        {
+            var x = xMap(date);
+            if (ticks.Count > 0 && x - ticks[^1].X < minLabelGap) continue;
+            ticks.Add(new HistoryDateTick(x, date.ToLocalTime().ToString(format, RussianCulture), "middle"));
+        }
+
+        if (ticks.Count > 0 && ticks[^1].X > 770m) ticks[^1] = ticks[^1] with { Anchor = "end" };
+        if (ticks.Count > 0 && ticks[0].X < 80m) ticks[0] = ticks[0] with { Anchor = "start" };
+        return ticks;
     }
 
     private static IReadOnlyList<HistoryDateTick> GetWeeklyHistoryDateTicks(IReadOnlyList<(DateTime Timestamp, decimal Price)> points, Func<DateTime, decimal> xMap)
     {
         // Only trading days get a label; nights and weekends are compressed green connectors.
-        const decimal minLabelGap = 45m;
+        const decimal minLabelGap = 36m;
         var ticks = new List<HistoryDateTick>();
         foreach (var day in points.GroupBy(point => point.Timestamp.ToLocalTime().Date).OrderBy(group => group.Key))
         {
