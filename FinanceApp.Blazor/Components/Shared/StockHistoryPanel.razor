@@ -68,7 +68,7 @@
         </div>
         <div class="position-history-chart">
             <svg viewBox="0 0 800 220" role="img" aria-label="График исторических цен @Stock.Ticker" preserveAspectRatio="none">
-                @foreach (var tick in GetHistoryAxisTicks(_history))
+                @foreach (var tick in GetHistoryAxisTicks(_history, _historyRange))
                 {
                     <line class="history-grid-line" x1="70" y1="@tick.Y.ToString(CultureInfo.InvariantCulture)" x2="790" y2="@tick.Y.ToString(CultureInfo.InvariantCulture)" />
                     @((MarkupString)$"<text class='history-price-label' x='62' y='{(tick.Y + 4).ToString(CultureInfo.InvariantCulture)}' text-anchor='end'>{tick.Label}</text>")
@@ -76,12 +76,26 @@
                 @foreach (var tick in GetHistoryDateTicks(_history, _historyRange))
                 {
                     <line class="history-date-tick" x1="@tick.X.ToString(CultureInfo.InvariantCulture)" y1="180" x2="@tick.X.ToString(CultureInfo.InvariantCulture)" y2="184" />
-                    var labelX = tick.LabelX ?? tick.X;
-                    @((MarkupString)$"<text class='history-date-label' x='{labelX.ToString(CultureInfo.InvariantCulture)}' y='205' text-anchor='{tick.Anchor}'{(tick.Compact ? $" transform='rotate(-45 {labelX.ToString(CultureInfo.InvariantCulture)} 205)'" : "")}>{tick.Label}</text>")
+                    @((MarkupString)$"<text class='history-date-label' x='{tick.X.ToString(CultureInfo.InvariantCulture)}' y='{tick.Y.ToString(CultureInfo.InvariantCulture)}' text-anchor='{tick.Anchor}'>{tick.Label}</text>")
+                }
+                @foreach (var month in GetHistoryMonthLabels(_history, _historyRange))
+                {
+                    @((MarkupString)$"<text class='history-month-label' x='{month.X.ToString(CultureInfo.InvariantCulture)}' y='214' text-anchor='middle'>{month.Label}</text>")
                 }
                 <line class="history-axis-line" x1="70" y1="24" x2="70" y2="180" />
                 <line class="history-axis-line" x1="70" y1="180" x2="790" y2="180" />
-                <polyline points="@GetHistoryPolyline(_history)" />
+                @if (_historyRange == "1m")
+                {
+                    @foreach (var candle in GetHistoryCandles(_history, _historyRange))
+                    {
+                        <line class="@(candle.IsUp ? "history-candle-wick history-candle-up" : "history-candle-wick history-candle-down")" x1="@candle.X.ToString(CultureInfo.InvariantCulture)" y1="@candle.WickTop.ToString(CultureInfo.InvariantCulture)" x2="@candle.X.ToString(CultureInfo.InvariantCulture)" y2="@candle.WickBottom.ToString(CultureInfo.InvariantCulture)" />
+                        <rect class="@(candle.IsUp ? "history-candle-body history-candle-up" : "history-candle-body history-candle-down")" x="@((candle.X - candle.Width / 2m).ToString(CultureInfo.InvariantCulture))" y="@candle.BodyTop.ToString(CultureInfo.InvariantCulture)" width="@candle.Width.ToString(CultureInfo.InvariantCulture)" height="@((candle.BodyBottom - candle.BodyTop).ToString(CultureInfo.InvariantCulture))" rx="0.5" />
+                    }
+                }
+                else
+                {
+                    <polyline points="@GetHistoryPolyline(_history)" />
+                }
             </svg>
         </div>
         @if (GetVolumeBars(_history, Stock.Exchange, _historyRange).Count == 0)
@@ -525,13 +539,60 @@
             return $"{x.ToString("0.##", CultureInfo.InvariantCulture)},{y.ToString("0.##", CultureInfo.InvariantCulture)}";
         }));
     }
-    private static IReadOnlyList<HistoryAxisTick> GetHistoryAxisTicks(StockHistoryResponse history)
+    private static IReadOnlyList<HistoryAxisTick> GetHistoryAxisTicks(StockHistoryResponse history, string range)
     {
-        var prices = history.Points.Select(point => point.CloseEur ?? point.CloseNormalized).Where(price => price > 0m).ToArray();
-        if (prices.Length == 0) return [];
-        var min = prices.Min(); var max = prices.Max();
-        if (min == max) { var padding = Math.Max(min * 0.01m, 0.01m); min -= padding; max += padding; }
+        var (min, max) = GetHistoryPriceBounds(history, range);
+        if (min == max) return [];
         return Enumerable.Range(0, 5).Select(index => { var ratio = index / 4m; return new HistoryAxisTick(24m + ratio * 156m, $"{(max - (max - min) * ratio).ToString("N2", RussianCulture)} €"); }).ToArray();
+    }
+    private static (decimal Min, decimal Max) GetHistoryPriceBounds(StockHistoryResponse history, string range)
+    {
+        var values = range == "1m"
+            ? history.Points.SelectMany(point => new[] { point.LowEur ?? point.LowNormalized, point.HighEur ?? point.HighNormalized }).Where(value => value > 0m).ToArray()
+            : history.Points.Select(point => point.CloseEur ?? point.CloseNormalized).Where(value => value > 0m).ToArray();
+        if (values.Length == 0) return (0m, 0m);
+        var min = values.Min(); var max = values.Max();
+        if (min == max) { var padding = Math.Max(min * 0.01m, 0.01m); min -= padding; max += padding; }
+        return (min, max);
+    }
+    private static IReadOnlyList<HistoryCandle> GetHistoryCandles(StockHistoryResponse history, string range)
+    {
+        if (range != "1m") return [];
+        var points = history.Points.OrderBy(point => point.Timestamp).ToArray();
+        if (points.Length == 0) return [];
+
+        var (min, max) = GetHistoryPriceBounds(history, range);
+        var spread = max - min;
+        if (spread <= 0m) return [];
+
+        var start = points[0].Timestamp; var end = points[^1].Timestamp;
+        var duration = (decimal)(end - start).Ticks;
+        decimal X(DateTime timestamp) => duration == 0m ? 430m : 70m + (decimal)(timestamp - start).Ticks / duration * 720m;
+        decimal Y(decimal price) => 180m - (price - min) / spread * 156m;
+
+        var width = Math.Clamp(720m / points.Length * 0.6m, 2m, 12m);
+        var candles = new List<HistoryCandle>();
+        foreach (var point in points)
+        {
+            var close = point.CloseEur ?? point.CloseNormalized;
+            if (close <= 0m) continue;
+            var open = point.OpenEur ?? point.OpenNormalized;
+            if (open <= 0m) open = close;
+            var high = point.HighEur ?? point.HighNormalized;
+            var low = point.LowEur ?? point.LowNormalized;
+            if (high <= 0m) high = Math.Max(open, close);
+            if (low <= 0m) low = Math.Min(open, close);
+            high = Math.Max(high, Math.Max(open, close));
+            low = Math.Min(low, Math.Min(open, close));
+
+            var bodyTop = Math.Min(Y(open), Y(close));
+            var bodyBottom = Math.Max(Y(open), Y(close));
+            if (bodyBottom - bodyTop < 1m) { var middle = (bodyTop + bodyBottom) / 2m; bodyTop = middle - 0.5m; bodyBottom = middle + 0.5m; }
+
+            candles.Add(new HistoryCandle(X(point.Timestamp), Y(high), Y(low), bodyTop, bodyBottom, width, close >= open));
+        }
+
+        return candles;
     }
     private static decimal GetVolumeDisplayMax(IEnumerable<long> sourceVolumes, string? exchange, string range)
     {
@@ -596,38 +657,50 @@
         var end = points[^1].Timestamp;
         var duration = (decimal)(end - start).Ticks;
 
-        var dailyDates = points
-            .Select(point => point.Timestamp.ToLocalTime())
-            .GroupBy(date => date.Date)
-            .Select(group => group.Max())
-            .OrderBy(date => date)
-            .ToList();
+        decimal X(DateTime timestamp) => duration == 0m ? 430m : 70m + (decimal)(timestamp - start).Ticks / duration * 720m;
 
-        decimal X(DateTime date) => duration == 0m ? 430m : 70m + (decimal)(date - start).Ticks / duration * 720m;
-
-        // Show every trading day of the month; rotated labels keep neighbouring "dd.MM" values readable.
+        // Horizontal day numbers; the month is rendered on its own row below.
         const decimal minLabelGap = 15m;
         var ticks = new List<HistoryDateTick>();
-        foreach (var date in dailyDates)
+        foreach (var day in points.GroupBy(point => point.Timestamp.ToLocalTime().Date).OrderBy(group => group.Key))
         {
-            var x = X(date);
+            var x = X(day.Min(point => point.Timestamp));
             if (ticks.Count > 0 && x - ticks[^1].X < minLabelGap) continue;
-            ticks.Add(new HistoryDateTick(x, date.ToString("dd.MM", RussianCulture), "start", Compact: true));
+            ticks.Add(new HistoryDateTick(x, day.Key.Day.ToString(RussianCulture), "middle", 200m));
         }
-
-        if (ticks.Count > 0 && ticks[^1].X > 778m)
-            ticks[^1] = ticks[^1] with { LabelX = 778m };
-        if (ticks.Count > 1 && (ticks[^1].LabelX ?? ticks[^1].X) - ticks[^2].X < minLabelGap)
-            ticks.RemoveAt(ticks.Count - 2);
 
         return ticks;
     }
 
+    private static IReadOnlyList<HistoryMonthLabel> GetHistoryMonthLabels(StockHistoryResponse history, string range)
+    {
+        if (range != "1m") return [];
+        var points = GetUsableHistoryPoints(history);
+        if (points.Count == 0) return [];
+
+        var start = points[0].Timestamp;
+        var end = points[^1].Timestamp;
+        var duration = (decimal)(end - start).Ticks;
+
+        decimal X(DateTime timestamp) => duration == 0m ? 430m : 70m + (decimal)(timestamp - start).Ticks / duration * 720m;
+
+        return points
+            .GroupBy(point => { var local = point.Timestamp.ToLocalTime(); return new { local.Year, local.Month }; })
+            .OrderBy(group => group.Key.Year)
+            .ThenBy(group => group.Key.Month)
+            .Select(group => new HistoryMonthLabel(
+                (X(group.Min(point => point.Timestamp)) + X(group.Max(point => point.Timestamp))) / 2m,
+                RussianCulture.DateTimeFormat.GetMonthName(group.Key.Month)))
+            .ToList();
+    }
+
     private sealed class StockHistoryResponse { public List<StockHistoryPoint> Points { get; set; } = []; public StockHistoryVolumeMetrics VolumeMetrics { get; set; } = new(); public string? Range { get; set; } }
     private sealed class StockHistoryVolumeMetrics { public decimal? AverageVolume20 { get; set; } public decimal? AverageVolume50 { get; set; } public decimal? RelativeVolume { get; set; } public decimal? Turnover { get; set; } public string? TurnoverCurrency { get; set; } }
-    private sealed class StockHistoryPoint { public DateTime Timestamp { get; set; } public decimal CloseNormalized { get; set; } public decimal? CloseEur { get; set; } public decimal HighNormalized { get; set; } public decimal LowNormalized { get; set; } public decimal? HighEur { get; set; } public decimal? LowEur { get; set; } public long Volume { get; set; } }
+    private sealed class StockHistoryPoint { public DateTime Timestamp { get; set; } public decimal OpenNormalized { get; set; } public decimal? OpenEur { get; set; } public decimal CloseNormalized { get; set; } public decimal? CloseEur { get; set; } public decimal HighNormalized { get; set; } public decimal LowNormalized { get; set; } public decimal? HighEur { get; set; } public decimal? LowEur { get; set; } public long Volume { get; set; } }
     private sealed record HistoryAxisTick(decimal Y, string Label);
-    private sealed record HistoryDateTick(decimal X, string Label, string Anchor, bool Compact = false, decimal? LabelX = null);
+    private sealed record HistoryDateTick(decimal X, string Label, string Anchor, decimal Y = 205m);
+    private sealed record HistoryMonthLabel(decimal X, string Label);
+    private sealed record HistoryCandle(decimal X, decimal WickTop, decimal WickBottom, decimal BodyTop, decimal BodyBottom, decimal Width, bool IsUp);
     private sealed record HistoryVolumeBar(DateTime Timestamp, long Volume, decimal X, decimal Y, decimal Width, decimal Height, bool IsCapped);
 
     private sealed class StockHistoryRefreshResponse
