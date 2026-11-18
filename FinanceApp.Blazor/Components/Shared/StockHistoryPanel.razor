@@ -76,7 +76,8 @@
                 @foreach (var tick in GetHistoryDateTicks(_history, _historyRange))
                 {
                     <line class="history-date-tick" x1="@tick.X.ToString(CultureInfo.InvariantCulture)" y1="180" x2="@tick.X.ToString(CultureInfo.InvariantCulture)" y2="184" />
-                    @((MarkupString)$"<text class='history-date-label' x='{tick.X.ToString(CultureInfo.InvariantCulture)}' y='205' text-anchor='{tick.Anchor}'>{tick.Label}</text>")
+                    var labelX = tick.LabelX ?? tick.X;
+                    @((MarkupString)$"<text class='history-date-label' x='{labelX.ToString(CultureInfo.InvariantCulture)}' y='205' text-anchor='{tick.Anchor}'{(tick.Compact ? $" transform='rotate(-45 {labelX.ToString(CultureInfo.InvariantCulture)} 205)'" : "")}>{tick.Label}</text>")
                 }
                 <line class="history-axis-line" x1="70" y1="24" x2="70" y2="180" />
                 <line class="history-axis-line" x1="70" y1="180" x2="790" y2="180" />
@@ -567,8 +568,9 @@
     private static IReadOnlyList<HistoryDateTick> GetHistoryDateTicks(StockHistoryResponse history, string range)
     {
         var points = GetUsableHistoryPoints(history); if (points.Count == 0) return [];
+        if (range == "1m") return GetDailyHistoryDateTicks(points);
         var start = points[0].Timestamp; var end = points[^1].Timestamp; var duration = (decimal)(end - start).Ticks;
-        Func<DateTime, DateTime> addStep = range switch { "today" => date => date.AddHours(2), "24h" => date => date.AddHours(4), "1w" => date => date.AddDays(1), "1m" => date => date.AddDays(7), "3m" or "6m" => date => date.AddDays(14), "1y" => date => date.AddMonths(1), "3y" => date => date.AddMonths(3), "5y" => date => date.AddMonths(6), _ => date => date.AddDays(14) };
+        Func<DateTime, DateTime> addStep = range switch { "today" => date => date.AddHours(2), "24h" => date => date.AddHours(4), "1w" => date => date.AddDays(1), "3m" or "6m" => date => date.AddDays(14), "1y" => date => date.AddMonths(1), "3y" => date => date.AddMonths(3), "5y" => date => date.AddMonths(6), _ => date => date.AddDays(14) };
         var dates = new List<DateTime> { start };
         for (var date = addStep(start); date < end && dates.Count < 20; date = addStep(date)) dates.Add(date);
         if (end > start) dates.Add(end);
@@ -588,11 +590,44 @@
         return dates.Select((date, index) => new HistoryDateTick(duration == 0m ? 430m : 70m + (decimal)(date - start).Ticks / duration * 720m, date.ToLocalTime().ToString(format, RussianCulture), index == 0 ? "start" : index == dates.Count - 1 ? "end" : "middle")).ToArray();
     }
 
+    private static IReadOnlyList<HistoryDateTick> GetDailyHistoryDateTicks(IReadOnlyList<(DateTime Timestamp, decimal Price)> points)
+    {
+        var start = points[0].Timestamp;
+        var end = points[^1].Timestamp;
+        var duration = (decimal)(end - start).Ticks;
+
+        var dailyDates = points
+            .Select(point => point.Timestamp.ToLocalTime())
+            .GroupBy(date => date.Date)
+            .Select(group => group.Max())
+            .OrderBy(date => date)
+            .ToList();
+
+        decimal X(DateTime date) => duration == 0m ? 430m : 70m + (decimal)(date - start).Ticks / duration * 720m;
+
+        // Show every trading day of the month; rotated labels keep neighbouring "dd.MM" values readable.
+        const decimal minLabelGap = 15m;
+        var ticks = new List<HistoryDateTick>();
+        foreach (var date in dailyDates)
+        {
+            var x = X(date);
+            if (ticks.Count > 0 && x - ticks[^1].X < minLabelGap) continue;
+            ticks.Add(new HistoryDateTick(x, date.ToString("dd.MM", RussianCulture), "start", Compact: true));
+        }
+
+        if (ticks.Count > 0 && ticks[^1].X > 778m)
+            ticks[^1] = ticks[^1] with { LabelX = 778m };
+        if (ticks.Count > 1 && (ticks[^1].LabelX ?? ticks[^1].X) - ticks[^2].X < minLabelGap)
+            ticks.RemoveAt(ticks.Count - 2);
+
+        return ticks;
+    }
+
     private sealed class StockHistoryResponse { public List<StockHistoryPoint> Points { get; set; } = []; public StockHistoryVolumeMetrics VolumeMetrics { get; set; } = new(); public string? Range { get; set; } }
     private sealed class StockHistoryVolumeMetrics { public decimal? AverageVolume20 { get; set; } public decimal? AverageVolume50 { get; set; } public decimal? RelativeVolume { get; set; } public decimal? Turnover { get; set; } public string? TurnoverCurrency { get; set; } }
     private sealed class StockHistoryPoint { public DateTime Timestamp { get; set; } public decimal CloseNormalized { get; set; } public decimal? CloseEur { get; set; } public decimal HighNormalized { get; set; } public decimal LowNormalized { get; set; } public decimal? HighEur { get; set; } public decimal? LowEur { get; set; } public long Volume { get; set; } }
     private sealed record HistoryAxisTick(decimal Y, string Label);
-    private sealed record HistoryDateTick(decimal X, string Label, string Anchor);
+    private sealed record HistoryDateTick(decimal X, string Label, string Anchor, bool Compact = false, decimal? LabelX = null);
     private sealed record HistoryVolumeBar(DateTime Timestamp, long Volume, decimal X, decimal Y, decimal Width, decimal Height, bool IsCapped);
 
     private sealed class StockHistoryRefreshResponse
