@@ -84,7 +84,10 @@
                 }
                 <line class="history-axis-line" x1="70" y1="24" x2="70" y2="180" />
                 <line class="history-axis-line" x1="70" y1="180" x2="790" y2="180" />
-                <polyline points="@GetHistoryPolyline(_history)" />
+                @foreach (var segment in GetHistoryLineSegments(_history, _historyRange))
+                {
+                    <polyline class="@(segment.IsGap ? "history-gap-line" : null)" points="@segment.Points" />
+                }
             </svg>
         </div>
         @if (GetVolumeBars(_history, Stock.Exchange, _historyRange).Count == 0)
@@ -511,22 +514,92 @@
 
     private static List<(DateTime Timestamp, decimal Price)> GetUsableHistoryPoints(StockHistoryResponse history) => history.Points
         .Select(point => (point.Timestamp, Price: point.CloseEur ?? point.CloseNormalized)).Where(point => point.Price > 0m).OrderBy(point => point.Timestamp).ToList();
-    private static string GetHistoryPolyline(StockHistoryResponse history)
+
+    // Nights and weekends are stretched over the whole week on a plain time axis; compress them
+    // so the actual trading sessions stay readable.
+    private static readonly long WeeklyNoTradeGapTicks = TimeSpan.FromMinutes(30).Ticks;
+    private const decimal WeeklyNoTradeGapCompression = 3m;
+
+    private static Func<DateTime, decimal> BuildHistoryXMap(StockHistoryResponse history, string range)
     {
         var points = GetUsableHistoryPoints(history);
-        if (points.Count == 0) return string.Empty;
-        var min = points.Min(point => point.Price);
-        var spread = points.Max(point => point.Price) - min;
-        if (spread == 0m) spread = Math.Max(min * 0.01m, 0.01m);
+        if (points.Count == 0) return _ => 430m;
+
         var start = points[0].Timestamp;
         var end = points[^1].Timestamp;
         var duration = (decimal)(end - start).Ticks;
-        return string.Join(" ", points.Select(point =>
+        decimal Linear(DateTime timestamp) => duration == 0m ? 430m : 70m + (decimal)(timestamp - start).Ticks / duration * 720m;
+        if (range != "1w" || points.Count < 2) return Linear;
+
+        var cumulative = new decimal[points.Count];
+        for (var index = 1; index < points.Count; index++)
         {
-            var x = duration == 0m ? 430m : 70m + (decimal)(point.Timestamp - start).Ticks / duration * 720m;
-            var y = 180m - (point.Price - min) / spread * 156m;
-            return $"{x.ToString("0.##", CultureInfo.InvariantCulture)},{y.ToString("0.##", CultureInfo.InvariantCulture)}";
-        }));
+            var delta = (decimal)(points[index].Timestamp - points[index - 1].Timestamp).Ticks;
+            cumulative[index] = cumulative[index - 1] + (delta > WeeklyNoTradeGapTicks ? delta / WeeklyNoTradeGapCompression : delta);
+        }
+
+        var total = cumulative[^1];
+        if (total <= 0m) return Linear;
+
+        return timestamp =>
+        {
+            if (timestamp <= start) return 70m;
+            if (timestamp >= end) return 790m;
+
+            var low = 1;
+            var high = points.Count - 1;
+            while (low < high)
+            {
+                var middle = (low + high) / 2;
+                if (points[middle].Timestamp < timestamp) low = middle + 1; else high = middle;
+            }
+
+            var next = low;
+            var previous = next - 1;
+            var span = (decimal)(points[next].Timestamp - points[previous].Timestamp).Ticks;
+            var ratio = span <= 0m ? 0m : (decimal)(timestamp - points[previous].Timestamp).Ticks / span;
+            var position = cumulative[previous] + (cumulative[next] - cumulative[previous]) * ratio;
+            return 70m + position / total * 720m;
+        };
+    }
+
+    private static IReadOnlyList<HistoryLineSegment> GetHistoryLineSegments(StockHistoryResponse history, string range)
+    {
+        var points = GetUsableHistoryPoints(history);
+        if (points.Count == 0) return [];
+
+        var min = points.Min(point => point.Price);
+        var spread = points.Max(point => point.Price) - min;
+        if (spread == 0m) spread = Math.Max(min * 0.01m, 0.01m);
+        var xMap = BuildHistoryXMap(history, range);
+
+        var segments = new List<HistoryLineSegment>();
+        var current = new List<string> { FormatHistoryChartPoint(points[0], xMap, min, spread) };
+        for (var index = 1; index < points.Count; index++)
+        {
+            var gap = (points[index].Timestamp - points[index - 1].Timestamp).Ticks;
+            if (range == "1w" && gap > WeeklyNoTradeGapTicks)
+            {
+                if (current.Count > 1) segments.Add(new HistoryLineSegment(string.Join(" ", current), false));
+                var gapPoints = FormatHistoryChartPoint(points[index], xMap, min, spread);
+                segments.Add(new HistoryLineSegment($"{current[^1]} {gapPoints}", true));
+                current = [gapPoints];
+            }
+            else
+            {
+                current.Add(FormatHistoryChartPoint(points[index], xMap, min, spread));
+            }
+        }
+
+        if (current.Count > 1) segments.Add(new HistoryLineSegment(string.Join(" ", current), false));
+        return segments;
+    }
+
+    private static string FormatHistoryChartPoint((DateTime Timestamp, decimal Price) point, Func<DateTime, decimal> xMap, decimal min, decimal spread)
+    {
+        var x = xMap(point.Timestamp);
+        var y = 180m - (point.Price - min) / spread * 156m;
+        return $"{x.ToString("0.##", CultureInfo.InvariantCulture)},{y.ToString("0.##", CultureInfo.InvariantCulture)}";
     }
     private static IReadOnlyList<HistoryAxisTick> GetHistoryAxisTicks(StockHistoryResponse history)
     {
@@ -553,9 +626,10 @@
         var points = history.Points.Where(point => point.Volume > 0).OrderBy(point => point.Timestamp).ToArray();
         var max = GetVolumeDisplayMax(points.Select(point => point.Volume), exchange, range);
         if (points.Length == 0 || max <= 0m) return [];
-        var start = points[0].Timestamp; var end = points[^1].Timestamp; var duration = (decimal)(end - start).Ticks;
+        // Share the price chart's time mapping so volume bars line up with the price line.
+        var xMap = BuildHistoryXMap(history, range);
         var width = Math.Clamp(700m / points.Length * 0.72m, 1m, 12m);
-        return points.Select(point => { var x = duration == 0m ? 430m : 70m + (decimal)(point.Timestamp - start).Ticks / duration * 720m; var height = Math.Min((decimal)point.Volume, max) / max * 120m; return new HistoryVolumeBar(point.Timestamp, point.Volume, x - width / 2m, 140m - height, width, height, point.Volume > max); }).ToArray();
+        return points.Select(point => { var x = xMap(point.Timestamp); var height = Math.Min((decimal)point.Volume, max) / max * 120m; return new HistoryVolumeBar(point.Timestamp, point.Volume, x - width / 2m, 140m - height, width, height, point.Volume > max); }).ToArray();
     }
     private static IReadOnlyList<HistoryAxisTick> GetVolumeAxisTicks(StockHistoryResponse history, string? exchange, string range)
     {
@@ -572,6 +646,7 @@
     {
         var points = GetUsableHistoryPoints(history); if (points.Count == 0) return [];
         if (range == "1m") return GetDailyHistoryDateTicks(points);
+        if (range == "1w") return GetWeeklyHistoryDateTicks(points, BuildHistoryXMap(history, range));
         var start = points[0].Timestamp; var end = points[^1].Timestamp; var duration = (decimal)(end - start).Ticks;
         Func<DateTime, DateTime> addStep = range switch { "today" => date => date.AddHours(2), "24h" => date => date.AddHours(4), "1w" => date => date.AddDays(1), "3m" or "6m" => date => date.AddDays(14), "1y" => date => date.AddMonths(1), "3y" => date => date.AddMonths(3), "5y" => date => date.AddMonths(6), _ => date => date.AddDays(14) };
         var dates = new List<DateTime> { start };
@@ -591,6 +666,22 @@
                 dates.RemoveAt(dates.Count - 2);
         }
         return dates.Select((date, index) => new HistoryDateTick(duration == 0m ? 430m : 70m + (decimal)(date - start).Ticks / duration * 720m, date.ToLocalTime().ToString(format, RussianCulture), index == 0 ? "start" : index == dates.Count - 1 ? "end" : "middle")).ToArray();
+    }
+
+    private static IReadOnlyList<HistoryDateTick> GetWeeklyHistoryDateTicks(IReadOnlyList<(DateTime Timestamp, decimal Price)> points, Func<DateTime, decimal> xMap)
+    {
+        // Only trading days get a label; nights and weekends are compressed green connectors.
+        const decimal minLabelGap = 45m;
+        var ticks = new List<HistoryDateTick>();
+        foreach (var day in points.GroupBy(point => point.Timestamp.ToLocalTime().Date).OrderBy(group => group.Key))
+        {
+            var x = xMap(day.Min(point => point.Timestamp));
+            if (ticks.Count > 0 && x - ticks[^1].X < minLabelGap) continue;
+            ticks.Add(new HistoryDateTick(x, day.Key.ToString("dd.MM", RussianCulture), "middle"));
+        }
+
+        if (ticks.Count > 0 && ticks[^1].X > 770m) ticks[^1] = ticks[^1] with { Anchor = "end" };
+        return ticks;
     }
 
     private static IReadOnlyList<HistoryDateTick> GetDailyHistoryDateTicks(IReadOnlyList<(DateTime Timestamp, decimal Price)> points)
@@ -642,6 +733,7 @@
     private sealed record HistoryAxisTick(decimal Y, string Label);
     private sealed record HistoryDateTick(decimal X, string Label, string Anchor, decimal Y = 205m);
     private sealed record HistoryMonthLabel(decimal X, string Label);
+    private sealed record HistoryLineSegment(string Points, bool IsGap);
     private sealed record HistoryVolumeBar(DateTime Timestamp, long Volume, decimal X, decimal Y, decimal Width, decimal Height, bool IsCapped);
 
     private sealed class StockHistoryRefreshResponse
