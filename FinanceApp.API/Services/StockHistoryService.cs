@@ -16,6 +16,7 @@ public class StockHistoryService : IStockHistoryService
     private const int MaxYahooRequestAttempts = 5;
     private const int FullBackfillMinimumLookbackDays = 366 * 5;
     private const int MinimumWeeklyIntradayPoints = 120;
+    private const int MinimumWeeklyIntradayDays = 4;
     private static readonly TimeSpan YahooRetryBaseDelay = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan YahooRetryMaxDelay = TimeSpan.FromSeconds(20);
     private static readonly TimeSpan WeeklyIntradayBackfillMinInterval = TimeSpan.FromHours(6);
@@ -2011,8 +2012,13 @@ public class StockHistoryService : IStockHistoryService
     private static bool HasSufficientWeeklyIntradayCoverage(IReadOnlyList<StockHistoricalPrice> data, DateTime nowUtc)
     {
         var weekStartUtc = nowUtc.AddDays(-7);
-        var providerPoints = data.Count(x => x.Timestamp >= weekStartUtc && !x.IsQuoteDerived);
-        return providerPoints >= MinimumWeeklyIntradayPoints;
+        var providerRows = data.Where(x => x.Timestamp >= weekStartUtc && !x.IsQuoteDerived).ToArray();
+        if (providerRows.Length < MinimumWeeklyIntradayPoints)
+        {
+            return false;
+        }
+
+        return providerRows.Select(x => x.Timestamp.Date).Distinct().Count() >= MinimumWeeklyIntradayDays;
     }
 
     private bool TryReserveOnDemandIntradayRefresh(int stockId, DateTime nowUtc)

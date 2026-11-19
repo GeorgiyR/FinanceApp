@@ -519,12 +519,37 @@
     // so the actual trading sessions stay readable.
     private static readonly long NoTradeGapTicks = TimeSpan.FromMinutes(30).Ticks;
     private const decimal NoTradeGapCompression = 3m;
-    private static bool UsesNoTradeGapCompression(string range) => range is "1w" or "24h";
+    private static bool UsesNoTradeGapCompression(string range) => range == "24h";
+    // The weekly range mirrors the React chart: one horizontal step per data point, no empty time gaps.
+    private static bool UsesIndexBasedXAxis(string range) => range == "1w";
+
+    private static int FindHistoryPointIndex(IReadOnlyList<(DateTime Timestamp, decimal Price)> points, DateTime timestamp)
+    {
+        var low = 0;
+        var high = points.Count - 1;
+        while (low < high)
+        {
+            var middle = (low + high + 1) / 2;
+            if (points[middle].Timestamp <= timestamp) low = middle; else high = middle - 1;
+        }
+
+        return low;
+    }
 
     private static Func<DateTime, decimal> BuildHistoryXMap(StockHistoryResponse history, string range)
     {
         var points = GetUsableHistoryPoints(history);
         if (points.Count == 0) return _ => 430m;
+
+        if (UsesIndexBasedXAxis(range))
+        {
+            return timestamp =>
+            {
+                if (points.Count == 1) return 430m;
+                var index = FindHistoryPointIndex(points, timestamp);
+                return 70m + (decimal)index / (points.Count - 1) * 720m;
+            };
+        }
 
         var start = points[0].Timestamp;
         var end = points[^1].Timestamp;
@@ -690,17 +715,24 @@
 
     private static IReadOnlyList<HistoryDateTick> GetWeeklyHistoryDateTicks(IReadOnlyList<(DateTime Timestamp, decimal Price)> points, Func<DateTime, decimal> xMap)
     {
-        // Only trading days get a label; nights and weekends are compressed green connectors.
-        const decimal minLabelGap = 36m;
+        // 1:1 weekly axis: labels are sampled by point index, not by wall-clock time.
+        const int maxLabels = 10;
+        var step = Math.Max(1, (int)Math.Ceiling((points.Count - 1) / (decimal)(maxLabels - 1)));
+        var format = "dd.MM HH:mm";
         var ticks = new List<HistoryDateTick>();
-        foreach (var day in points.GroupBy(point => point.Timestamp.ToLocalTime().Date).OrderBy(group => group.Key))
+        for (var index = 0; index < points.Count; index += step)
         {
-            var x = xMap(day.Min(point => point.Timestamp));
-            if (ticks.Count > 0 && x - ticks[^1].X < minLabelGap) continue;
-            ticks.Add(new HistoryDateTick(x, day.Key.ToString("dd.MM", RussianCulture), "middle"));
+            ticks.Add(new HistoryDateTick(xMap(points[index].Timestamp), points[index].Timestamp.ToLocalTime().ToString(format, RussianCulture), "middle"));
         }
 
-        if (ticks.Count > 0 && ticks[^1].X > 770m) ticks[^1] = ticks[^1] with { Anchor = "end" };
+        var lastX = xMap(points[^1].Timestamp);
+        if (ticks.Count == 0 || ticks[^1].X < lastX - 40m)
+        {
+            ticks.Add(new HistoryDateTick(lastX, points[^1].Timestamp.ToLocalTime().ToString(format, RussianCulture), "middle"));
+        }
+
+        if (ticks[^1].X > 770m) ticks[^1] = ticks[^1] with { Anchor = "end" };
+        if (ticks[0].X < 80m) ticks[0] = ticks[0] with { Anchor = "start" };
         return ticks;
     }
 
