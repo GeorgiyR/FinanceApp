@@ -20,7 +20,7 @@
         @if (SelectedSection == "positions" && !_loading)
         {
             <div class="portfolio-detail-actions">
-                <button class="portfolio-refresh-button" @onclick="LoadPortfolioAsync" disabled="@_loading">Обновить</button>
+                <button class="portfolio-refresh-button" @onclick="RefreshPositionPricesAsync" disabled="@_refreshingPrices">@(_refreshingPrices ? "Обновление цен…" : "Обновить цены")</button>
                 <button class="portfolio-primary-button" @onclick="OpenAddPositionAsync">Добавить позицию</button>
             </div>
         }
@@ -31,6 +31,11 @@
             </div>
         }
     </div>
+
+    @if (SelectedSection == "positions" && !string.IsNullOrWhiteSpace(_refreshMessage))
+    {
+        <div class="portfolio-refresh-notice" role="status">@_refreshMessage</div>
+    }
 
     @if (SelectedSection == "positions")
     {
@@ -299,6 +304,8 @@
 
     private PortfolioDetailsViewModel? _portfolio;
     private bool _loading = true;
+    private bool _refreshingPrices;
+    private string? _refreshMessage;
     private bool _requiresLogin;
     private string? _error;
     private int? _requestedPortfolioId;
@@ -640,6 +647,102 @@
         finally
         {
             _loading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task RefreshPositionPricesAsync()
+    {
+        if (_refreshingPrices || _portfolio is null) return;
+
+        _refreshingPrices = true;
+        _refreshMessage = null;
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null)
+            {
+                _refreshMessage = "Войдите в приложение, чтобы обновить цены.";
+                return;
+            }
+
+            var stocks = _portfolio.Items
+                .Select(item => item.Stock)
+                .Where(stock => stock is not null
+                    && !string.IsNullOrWhiteSpace(stock.Ticker)
+                    && !string.IsNullOrWhiteSpace(stock.Exchange))
+                .GroupBy(stock => stock!.Id)
+                .Select(group => group.First()!)
+                .ToArray();
+
+            var failed = 0;
+            var delayed = 0;
+            var skipped = 0;
+            var patches = new System.Collections.Concurrent.ConcurrentBag<(int StockId, TrackedStockQuoteUpdateViewModel Snapshot)>();
+
+            await Task.WhenAll(stocks.Select(async stock =>
+            {
+                try
+                {
+                    var slug = string.IsNullOrWhiteSpace(stock.FinanzenNetSlug) ? string.Empty : $"&finanzenNetSlug={Uri.EscapeDataString(stock.FinanzenNetSlug)}";
+                    using var quoteResponse = await client.GetAsync($"StockPrice/{Uri.EscapeDataString(stock.Ticker)}?exchange={Uri.EscapeDataString(stock.Exchange!)}{slug}");
+                    if (!quoteResponse.IsSuccessStatusCode) { Interlocked.Increment(ref failed); return; }
+
+                    var quote = await quoteResponse.Content.ReadFromJsonAsync<StockLiveQuoteViewModel>(JsonOptions);
+                    if (quote is null) { Interlocked.Increment(ref failed); return; }
+                    if (quote.IsStale || !string.IsNullOrWhiteSpace(quote.DelayWarning)) Interlocked.Increment(ref delayed);
+                    if (quote.CurrentPriceEur is not decimal eurPrice) { Interlocked.Increment(ref skipped); return; }
+
+                    var update = new
+                    {
+                        currentPrice = Math.Round(eurPrice, 2, MidpointRounding.AwayFromZero),
+                        currentPriceChange = quote.ChangeEur is decimal change ? Math.Round(change, 4, MidpointRounding.AwayFromZero) : (decimal?)null,
+                        currentPriceChangePercent = quote.PercentChange is decimal percent ? Math.Round(percent, 4, MidpointRounding.AwayFromZero) : (decimal?)null,
+                        currentPriceAt = quote.PriceTimestampUtc,
+                        currentPriceIsDelayed = quote.IsStale || !string.IsNullOrWhiteSpace(quote.DelayWarning),
+                        currentPriceDelayWarning = string.IsNullOrWhiteSpace(quote.DelayWarning) ? null : quote.DelayWarning.Trim()
+                    };
+                    using var updateResponse = await client.PatchAsJsonAsync($"Stocks/{stock.Id}/quote", update);
+                    if (!updateResponse.IsSuccessStatusCode) { Interlocked.Increment(ref failed); return; }
+
+                    var snapshot = await updateResponse.Content.ReadFromJsonAsync<TrackedStockQuoteUpdateViewModel>(JsonOptions);
+                    if (snapshot is not null) patches.Add((stock.Id, snapshot));
+                }
+                catch
+                {
+                    Interlocked.Increment(ref failed);
+                }
+            }));
+
+            foreach (var (stockId, snapshot) in patches)
+            {
+                foreach (var stock in _portfolio.Items
+                    .Select(item => item.Stock)
+                    .Where(stock => stock?.Id == stockId))
+                {
+                    stock!.CurrentPrice = snapshot.CurrentPrice;
+                    stock.CurrentPriceChange = snapshot.CurrentPriceChange;
+                    stock.CurrentPriceChangePercent = snapshot.CurrentPriceChangePercent;
+                    stock.CurrentPriceAt = snapshot.CurrentPriceAt;
+                }
+            }
+
+            var problems = failed + skipped;
+            _refreshMessage = problems == 0 && delayed == 0
+                ? "Цены обновлены."
+                : delayed > 0 && problems == 0
+                    ? $"Цены обновлены; задержанных котировок: {delayed}."
+                    : $"Цены обновлены частично: ошибок — {failed}, задержанных — {delayed}{(skipped > 0 ? $", без цены в EUR — {skipped}" : string.Empty)}.";
+        }
+        catch
+        {
+            _refreshMessage = "Не удалось обновить цены.";
+        }
+        finally
+        {
+            _refreshingPrices = false;
             await InvokeAsync(StateHasChanged);
         }
     }

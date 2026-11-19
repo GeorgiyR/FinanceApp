@@ -24,6 +24,7 @@ public sealed class PortfolioStockViewModel
     public string? CommonName { get; set; }
     public string? Exchange { get; set; }
     public string? Isin { get; set; }
+    public string? FinanzenNetSlug { get; set; }
     public decimal CurrentPrice { get; set; }
     public decimal? CurrentPriceChange { get; set; }
     public decimal? CurrentPriceChangePercent { get; set; }
