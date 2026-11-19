@@ -521,7 +521,7 @@
     private const decimal NoTradeGapCompression = 3m;
     private static bool UsesNoTradeGapCompression(string range) => range == "24h";
     // The weekly range mirrors the React chart: one horizontal step per data point, no empty time gaps.
-    private static bool UsesIndexBasedXAxis(string range) => range == "1w";
+    private static bool UsesIndexBasedXAxis(string range) => range is "1w" or "1m";
 
     private static int FindHistoryPointIndex(IReadOnlyList<(DateTime Timestamp, decimal Price)> points, DateTime timestamp)
     {
@@ -671,7 +671,7 @@
     private static IReadOnlyList<HistoryDateTick> GetHistoryDateTicks(StockHistoryResponse history, string range)
     {
         var points = GetUsableHistoryPoints(history); if (points.Count == 0) return [];
-        if (range == "1m") return GetDailyHistoryDateTicks(points);
+        if (range == "1m") return GetDailyHistoryDateTicks(points, BuildHistoryXMap(history, range));
         if (range == "1w") return GetWeeklyHistoryDateTicks(points, BuildHistoryXMap(history, range));
         var start = points[0].Timestamp; var end = points[^1].Timestamp;
         Func<DateTime, DateTime> addStep = range switch { "today" => date => date.AddHours(2), "24h" => date => date.AddHours(4), "1w" => date => date.AddDays(1), "3m" or "6m" => date => date.AddDays(14), "1y" => date => date.AddMonths(1), "3y" => date => date.AddMonths(3), "5y" => date => date.AddMonths(6), _ => date => date.AddDays(14) };
@@ -736,20 +736,14 @@
         return ticks;
     }
 
-    private static IReadOnlyList<HistoryDateTick> GetDailyHistoryDateTicks(IReadOnlyList<(DateTime Timestamp, decimal Price)> points)
+    private static IReadOnlyList<HistoryDateTick> GetDailyHistoryDateTicks(IReadOnlyList<(DateTime Timestamp, decimal Price)> points, Func<DateTime, decimal> xMap)
     {
-        var start = points[0].Timestamp;
-        var end = points[^1].Timestamp;
-        var duration = (decimal)(end - start).Ticks;
-
-        decimal X(DateTime timestamp) => duration == 0m ? 430m : 70m + (decimal)(timestamp - start).Ticks / duration * 720m;
-
         // Horizontal day numbers; the month is rendered on its own row below.
         const decimal minLabelGap = 15m;
         var ticks = new List<HistoryDateTick>();
         foreach (var day in points.GroupBy(point => point.Timestamp.ToLocalTime().Date).OrderBy(group => group.Key))
         {
-            var x = X(day.Min(point => point.Timestamp));
+            var x = xMap(day.Min(point => point.Timestamp));
             if (ticks.Count > 0 && x - ticks[^1].X < minLabelGap) continue;
             ticks.Add(new HistoryDateTick(x, day.Key.Day.ToString(RussianCulture), "middle", 200m));
         }
@@ -763,18 +757,14 @@
         var points = GetUsableHistoryPoints(history);
         if (points.Count == 0) return [];
 
-        var start = points[0].Timestamp;
-        var end = points[^1].Timestamp;
-        var duration = (decimal)(end - start).Ticks;
-
-        decimal X(DateTime timestamp) => duration == 0m ? 430m : 70m + (decimal)(timestamp - start).Ticks / duration * 720m;
+        var xMap = BuildHistoryXMap(history, range);
 
         return points
             .GroupBy(point => { var local = point.Timestamp.ToLocalTime(); return new { local.Year, local.Month }; })
             .OrderBy(group => group.Key.Year)
             .ThenBy(group => group.Key.Month)
             .Select(group => new HistoryMonthLabel(
-                (X(group.Min(point => point.Timestamp)) + X(group.Max(point => point.Timestamp))) / 2m,
+                (xMap(group.Min(point => point.Timestamp)) + xMap(group.Max(point => point.Timestamp))) / 2m,
                 RussianCulture.DateTimeFormat.GetMonthName(group.Key.Month)))
             .ToList();
     }
