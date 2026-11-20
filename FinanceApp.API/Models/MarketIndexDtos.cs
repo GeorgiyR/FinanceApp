@@ -259,5 +259,4 @@ public sealed class IndexConstituentsBatchQuoteRefreshJobResponse
     public bool IsWaitingForRetry { get; init; }
     public DateTime? NextRetryAtUtc { get; init; }
     public string? Error { get; init; }
-
 }
