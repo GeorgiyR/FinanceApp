@@ -450,6 +450,7 @@ public class AppDbContext : DbContext
     public DbSet<Portfolio> Portfolios { get; set; } = null!;
     public DbSet<PortfolioItem> PortfolioItems { get; set; } = null!;
     public DbSet<Order> Orders { get; set; } = null!;
+    public DbSet<OrderEventOutbox> OrderEventsOutbox { get; set; } = null!;
     public DbSet<Transaction> Transactions { get; set; } = null!;
     public DbSet<Dividend> Dividends { get; set; } = null!;
     public DbSet<StockHistoricalPrice> StockHistoricalPrices { get; set; } = null!;
@@ -472,6 +473,37 @@ public class AppDbContext : DbContext
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        modelBuilder.Entity<Order>(entity =>
+        {
+            entity.Property(x => x.Kind)
+                .HasDefaultValue(OrderKind.Limit)
+                .HasSentinel((OrderKind)(-1));
+            entity.Property(x => x.TimeInForce)
+                .HasDefaultValue(TimeInForce.Gtc)
+                .HasSentinel((TimeInForce)(-1));
+            entity.Property(x => x.FilledQuantity).HasPrecision(18, 2);
+            entity.Property(x => x.AverageFillPrice).HasPrecision(18, 2);
+            entity.Property(x => x.StopPrice).HasPrecision(18, 2);
+            entity.Property(x => x.TakeProfitPrice).HasPrecision(18, 2);
+            entity.Property(x => x.TrailAmount).HasPrecision(18, 2);
+            entity.Property(x => x.TrailPercent).HasPrecision(18, 4);
+            entity.Property(x => x.TrailingReferencePrice).HasPrecision(18, 2);
+            entity.Property(x => x.RejectReason).HasMaxLength(500);
+            entity.Property(x => x.OcoGroupId).HasMaxLength(64);
+            entity.HasIndex(x => new { x.Status, x.Kind });
+            entity.HasIndex(x => new { x.PortfolioId, x.Status });
+            entity.HasIndex(x => new { x.StockId, x.Status });
+        });
+
+        modelBuilder.Entity<OrderEventOutbox>(entity =>
+        {
+            entity.HasIndex(x => x.EventId).IsUnique();
+            entity.HasIndex(x => new { x.ProcessedAt, x.OccurredAt });
+            entity.Property(x => x.EventType).HasMaxLength(100);
+            entity.Property(x => x.Payload).HasColumnType("longtext");
+            entity.Property(x => x.LastError).HasMaxLength(2000);
+        });
 
         modelBuilder.Entity<Transaction>(entity =>
         {

@@ -1,0 +1,705 @@
+@using System.ComponentModel.DataAnnotations
+@using System.Globalization
+@using System.Net
+@using System.Net.Http.Headers
+@using System.Net.Http.Json
+@using System.Text.Json
+@inject IHttpClientFactory HttpClientFactory
+@inject IJSRuntime JS
+@implements IDisposable
+
+<section class="orders-panel">
+    <div class="orders-toolbar">
+        <div class="orders-toolbar-info">
+            <span>Открытых: <strong>@OpenOrders.Count</strong></span>
+            <span>В истории: <strong>@HistoryOrders.Count</strong></span>
+        </div>
+        <div class="orders-toolbar-actions">
+            <button type="button" class="portfolio-refresh-button" @onclick="LoadOrdersAsync" disabled="@_loading">Обновить</button>
+            <button type="button" class="portfolio-primary-button" @onclick="OpenDialog">Новый ордер</button>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(_error))
+    {
+        <div class="portfolio-state portfolio-state-error" role="alert">@_error</div>
+    }
+    else if (_loading && _orders.Count == 0)
+    {
+        <div class="portfolio-state">Загрузка ордеров…</div>
+    }
+    else
+    {
+        @if (!string.IsNullOrWhiteSpace(_actionMessage))
+        {
+            <div class="portfolio-refresh-notice" role="status">@_actionMessage</div>
+        }
+
+        <h2 class="orders-section-title">Открытые ордера</h2>
+        @if (OpenOrders.Count == 0)
+        {
+            <div class="portfolio-state">Нет открытых ордеров.</div>
+        }
+        else
+        {
+            <div class="orders-table-wrap">
+                <table class="orders-table">
+                    <thead>
+                        <tr>
+                            <th>Инструмент</th>
+                            <th>Сторона</th>
+                            <th>Тип</th>
+                            <th>Количество</th>
+                            <th>Условие</th>
+                            <th>Статус</th>
+                            <th>Создан</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var order in OpenOrders)
+                        {
+                            <tr>
+                                <td>
+                                    <span class="orders-ticker">@order.StockTicker</span>
+                                    <span class="orders-name">@order.StockName</span>
+                                </td>
+                                <td class="@(order.Side == "Buy" ? "orders-side-buy" : "orders-side-sell")">@SideLabel(order.Side)</td>
+                                <td>@KindLabel(order.Kind)</td>
+                                <td>@FormatNumber(order.Quantity)</td>
+                                <td>@PriceCondition(order)</td>
+                                <td><span class="orders-status orders-status-@order.Status.ToLowerInvariant()">@StatusLabel(order.Status)</span></td>
+                                <td>@FormatDate(order.CreatedAt)</td>
+                                <td>
+                                    <button type="button" class="orders-action-button" @onclick="() => CancelOrderAsync(order)" disabled="@_busy">Отменить</button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+
+        <h2 class="orders-section-title">История</h2>
+        @if (HistoryOrders.Count == 0)
+        {
+            <div class="portfolio-state">История пуста.</div>
+        }
+        else
+        {
+            <div class="orders-table-wrap">
+                <table class="orders-table">
+                    <thead>
+                        <tr>
+                            <th>Инструмент</th>
+                            <th>Сторона</th>
+                            <th>Тип</th>
+                            <th>Количество</th>
+                            <th>Цена исполнения</th>
+                            <th>Статус</th>
+                            <th>Исполнен</th>
+                            <th>Источник</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var order in HistoryOrders)
+                        {
+                            <tr>
+                                <td>
+                                    <span class="orders-ticker">@order.StockTicker</span>
+                                    <span class="orders-name">@order.StockName</span>
+                                </td>
+                                <td class="@(order.Side == "Buy" ? "orders-side-buy" : "orders-side-sell")">@SideLabel(order.Side)</td>
+                                <td>@KindLabel(order.Kind)</td>
+                                <td>@FormatNumber(order.Quantity)</td>
+                                <td>@(order.AverageFillPrice is decimal price ? FormatMoney(price) : "—")</td>
+                                <td>
+                                    <span class="orders-status orders-status-@order.Status.ToLowerInvariant()">@StatusLabel(order.Status)</span>
+                                    @if (!string.IsNullOrWhiteSpace(order.RejectReason))
+                                    {
+                                        <span class="orders-reject-reason">@order.RejectReason</span>
+                                    }
+                                </td>
+                                <td>@FormatDateTime(order.ExecutedAt)</td>
+                                <td>
+                                    @if (order.ExecutionSource == "Automatic")
+                                    {
+                                        <span class="orders-auto-badge">Авто</span>
+                                    }
+                                    else if (order.ExecutionSource == "Manual")
+                                    {
+                                        <span>Вручную</span>
+                                    }
+                                    else
+                                    {
+                                        <span>—</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    }
+</section>
+
+@if (_dialogOpen)
+{
+    <div class="dialog-backdrop" role="presentation" @onclick="CloseDialog">
+        <section class="action-dialog orders-dialog" role="dialog" aria-modal="true" aria-labelledby="order-dialog-title" @onclick:stopPropagation>
+            <h2 id="order-dialog-title">Новый ордер</h2>
+            @if (!string.IsNullOrWhiteSpace(_formError))
+            {
+                <div class="login-error" role="alert">@_formError</div>
+            }
+            <EditForm Model="_form" OnValidSubmit="SubmitOrderAsync" FormName="order-form">
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+                <div class="login-field">
+                    <label for="order-side">Сторона</label>
+                    <select id="order-side" @bind="_form.Side">
+                        <option value="Buy">Покупка</option>
+                        <option value="Sell">Продажа</option>
+                    </select>
+                </div>
+                <div class="login-field">
+                    <label for="order-kind">Тип ордера</label>
+                    <select id="order-kind" @bind="_form.Kind">
+                        <option value="Market">Рыночный (Market)</option>
+                        <option value="Limit">Лимитный (Limit)</option>
+                        <option value="StopMarket">Стоп-маркет (Stop Market)</option>
+                        <option value="StopLimit">Стоп-лимит (Stop Limit)</option>
+                        <option value="TakeProfit">Тейк-профит (Take Profit)</option>
+                        <option value="TrailingStop">Трейлинг-стоп (Trailing Stop)</option>
+                    </select>
+                </div>
+                <div class="login-field stock-autocomplete-field">
+                    <label for="order-stock-search">Акция</label>
+                    <input id="order-stock-search" class="stock-search-input" type="search" role="combobox"
+                           aria-autocomplete="list" aria-controls="order-stock-results" aria-expanded="@_stockSearchOpen"
+                           autocomplete="off" placeholder="Введите тикер или название"
+                           value="@_stockSearch" @oninput="OnStockSearchChanged" />
+                    @if (_stockSearchOpen)
+                    {
+                        <div id="order-stock-results" class="stock-autocomplete-results" role="listbox">
+                            @if (_stockSearchLoading)
+                            {
+                                <div class="stock-search-message">Поиск акций…</div>
+                            }
+                            else if (_stockOptions.Count == 0)
+                            {
+                                <div class="stock-search-message">Совпадений не найдено.</div>
+                            }
+                            else
+                            {
+                                @foreach (var stock in _stockOptions)
+                                {
+                                    <button type="button" class="stock-search-option" @onclick="() => SelectStock(stock)">
+                                        <span class="stock-search-ticker">@stock.Ticker</span>
+                                        <span class="stock-search-name">@stock.Name</span>
+                                        <span class="stock-search-exchange">@stock.Exchange</span>
+                                        <span class="stock-search-price">@FormatMoney(stock.CurrentPrice)</span>
+                                    </button>
+                                }
+                            }
+                        </div>
+                    }
+                </div>
+                <div class="login-field">
+                    <label for="order-quantity">Количество</label>
+                    <input id="order-quantity" type="number" step="0.01" min="0.01" @bind="_form.Quantity" />
+                </div>
+
+                @if (_form.Kind is "Limit" or "StopLimit")
+                {
+                    <div class="login-field">
+                        <label for="order-limit-price">Лимитная цена</label>
+                        <input id="order-limit-price" type="number" step="0.01" min="0" @bind="_form.Price" />
+                    </div>
+                }
+
+                @if (_form.Kind is "StopMarket" or "StopLimit")
+                {
+                    <div class="login-field">
+                        <label for="order-stop-price">Стоп-цена</label>
+                        <input id="order-stop-price" type="number" step="0.01" min="0" @bind="_form.StopPrice" />
+                    </div>
+                }
+
+                @if (_form.Kind == "TakeProfit")
+                {
+                    <div class="login-field">
+                        <label for="order-take-profit">Целевая цена</label>
+                        <input id="order-take-profit" type="number" step="0.01" min="0" @bind="_form.TakeProfitPrice" />
+                    </div>
+                }
+
+                @if (_form.Kind == "TrailingStop")
+                {
+                    <div class="login-field">
+                        <label for="order-trailing-mode">Режим трейлинга</label>
+                        <select id="order-trailing-mode" @bind="_form.TrailingMode">
+                            <option value="Percent">Процент от цены</option>
+                            <option value="Absolute">Абсолютный размер</option>
+                        </select>
+                    </div>
+                    @if (_form.TrailingMode == "Percent")
+                    {
+                        <div class="login-field">
+                            <label for="order-trail-percent">Процент (%)</label>
+                            <input id="order-trail-percent" type="number" step="0.01" min="0.01" @bind="_form.TrailPercentInput" />
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="login-field">
+                            <label for="order-trail-amount">Абсолютный размер</label>
+                            <input id="order-trail-amount" type="number" step="0.01" min="0.01" @bind="_form.TrailAmountInput" />
+                        </div>
+                    }
+                }
+
+                <div class="dialog-actions">
+                    <button type="button" class="portfolio-refresh-button" @onclick="CloseDialog">Отмена</button>
+                    <button type="submit" class="login-submit" disabled="@_busy">@(_busy ? "Сохранение…" : "Создать ордер")</button>
+                </div>
+            </EditForm>
+        </section>
+    </div>
+}
+
+@code {
+    private static readonly CultureInfo RussianCulture = CultureInfo.GetCultureInfo("ru-RU");
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        PropertyNameCaseInsensitive = true,
+    };
+
+    [Parameter] public int PortfolioId { get; set; }
+    [Parameter] public EventCallback OnOrdersChanged { get; set; }
+
+    private readonly List<OrderListItem> _orders = [];
+    private bool _loading;
+    private string? _error;
+    private string? _actionMessage;
+    private bool _busy;
+    private bool _disposed;
+    private int? _loadedPortfolioId;
+    private Timer? _pollTimer;
+
+    private bool _dialogOpen;
+    private string? _formError;
+    private readonly OrderFormModel _form = new();
+    private string _stockSearch = string.Empty;
+    private bool _stockSearchOpen;
+    private bool _stockSearchLoading;
+    private List<StockOption> _stockOptions = [];
+    private CancellationTokenSource? _stockSearchCancellation;
+
+    private List<OrderListItem> OpenOrders => _orders
+        .Where(o => o.Status is "Pending" or "Triggered")
+        .ToList();
+
+    private List<OrderListItem> HistoryOrders => _orders
+        .Where(o => o.Status is not ("Pending" or "Triggered"))
+        .ToList();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedPortfolioId == PortfolioId) return;
+        _loadedPortfolioId = PortfolioId;
+        _orders.Clear();
+        EnsurePolling();
+        await LoadOrdersAsync();
+    }
+
+    private void EnsurePolling()
+    {
+        _pollTimer ??= new Timer(_ => _ = InvokeAsync(PollAsync), null, TimeSpan.FromSeconds(20), TimeSpan.FromSeconds(20));
+    }
+
+    private async Task PollAsync()
+    {
+        if (_disposed || _loading || _dialogOpen || _busy) return;
+        await LoadOrdersAsync(silent: true);
+    }
+
+    private async Task LoadOrdersAsync() => await LoadOrdersAsync(silent: false);
+
+    private async Task LoadOrdersAsync(bool silent)
+    {
+        if (_loading) return;
+        _loading = true;
+        if (!silent) _error = null;
+        if (!silent) await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null)
+            {
+                _error = "Войдите в приложение, чтобы увидеть ордера.";
+                return;
+            }
+
+            using var response = await client.GetAsync($"Portfolios/{PortfolioId}/orders");
+            if (!response.IsSuccessStatusCode)
+            {
+                if (!silent)
+                {
+                    _error = response.StatusCode == HttpStatusCode.Unauthorized
+                        ? "Войдите в приложение, чтобы увидеть ордера."
+                        : $"Не удалось загрузить ордера (HTTP {(int)response.StatusCode}).";
+                }
+                return;
+            }
+
+            var loaded = await response.Content.ReadFromJsonAsync<List<OrderListItem>>(JsonOptions) ?? [];
+            _orders.Clear();
+            _orders.AddRange(loaded);
+            _error = null;
+        }
+        catch (Exception)
+        {
+            if (!silent) _error = "Не удалось загрузить ордера.";
+        }
+        finally
+        {
+            _loading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void OpenDialog()
+    {
+        _formError = null;
+        _actionMessage = null;
+        _dialogOpen = true;
+        _form.Side = "Buy";
+        _form.Kind = "Market";
+        _form.Quantity = 1m;
+        _form.Price = 0m;
+        _form.StopPrice = null;
+        _form.TakeProfitPrice = null;
+        _form.TrailPercentInput = 5m;
+        _form.TrailAmountInput = null;
+        _form.TrailingMode = "Percent";
+        _form.StockId = null;
+        _stockSearch = string.Empty;
+        _stockOptions = [];
+        _stockSearchOpen = false;
+    }
+
+    private void CloseDialog()
+    {
+        _dialogOpen = false;
+        _stockSearchCancellation?.Cancel();
+        _stockSearchOpen = false;
+    }
+
+    private async Task SubmitOrderAsync()
+    {
+        if (_form.StockId is null)
+        {
+            _formError = "Выберите акцию.";
+            return;
+        }
+
+        _busy = true;
+        _formError = null;
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null)
+            {
+                _formError = "Войдите в приложение, чтобы создать ордер.";
+                return;
+            }
+
+            var payload = new Dictionary<string, object?>
+            {
+                ["stockId"] = _form.StockId.Value,
+                ["side"] = _form.Side,
+                ["kind"] = _form.Kind,
+                ["quantity"] = _form.Quantity,
+            };
+
+            switch (_form.Kind)
+            {
+                case "Limit":
+                    payload["price"] = _form.Price;
+                    break;
+                case "StopMarket":
+                    payload["stopPrice"] = _form.StopPrice;
+                    break;
+                case "StopLimit":
+                    payload["price"] = _form.Price;
+                    payload["stopPrice"] = _form.StopPrice;
+                    break;
+                case "TakeProfit":
+                    payload["takeProfitPrice"] = _form.TakeProfitPrice;
+                    break;
+                case "TrailingStop":
+                    if (_form.TrailingMode == "Percent")
+                    {
+                        payload["trailPercent"] = _form.TrailPercentInput;
+                    }
+                    else
+                    {
+                        payload["trailAmount"] = _form.TrailAmountInput;
+                    }
+                    break;
+            }
+
+            using var response = await client.PostAsJsonAsync($"Portfolios/{PortfolioId}/orders", payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                _formError = await ReadErrorAsync(response);
+                return;
+            }
+
+            _dialogOpen = false;
+            _actionMessage = "Ордер создан.";
+            await LoadOrdersAsync(silent: true);
+            if (OnOrdersChanged.HasDelegate) await OnOrdersChanged.InvokeAsync();
+        }
+        catch (Exception)
+        {
+            _formError = "Не удалось создать ордер.";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task CancelOrderAsync(OrderListItem order)
+    {
+        _busy = true;
+        _actionMessage = null;
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null)
+            {
+                _actionMessage = "Войдите в приложение, чтобы отменить ордер.";
+                return;
+            }
+
+            using var response = await client.PostAsync($"Portfolios/{PortfolioId}/orders/{order.Id}/cancel", null);
+            if (!response.IsSuccessStatusCode)
+            {
+                _actionMessage = await ReadErrorAsync(response);
+                return;
+            }
+
+            _actionMessage = "Ордер отменён.";
+            await LoadOrdersAsync(silent: true);
+            if (OnOrdersChanged.HasDelegate) await OnOrdersChanged.InvokeAsync();
+        }
+        catch (Exception)
+        {
+            _actionMessage = "Не удалось отменить ордер.";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task OnStockSearchChanged(ChangeEventArgs args)
+    {
+        var query = args.Value?.ToString() ?? string.Empty;
+        _stockSearch = query;
+        _stockSearchOpen = query.Trim().Length >= 2;
+        _stockOptions = [];
+        _stockSearchLoading = false;
+
+        _stockSearchCancellation?.Cancel();
+        _stockSearchCancellation?.Dispose();
+        _stockSearchCancellation = null;
+
+        if (!_stockSearchOpen) return;
+
+        var cancellation = new CancellationTokenSource();
+        _stockSearchCancellation = cancellation;
+        _stockSearchLoading = true;
+        try
+        {
+            await Task.Delay(250, cancellation.Token);
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null) return;
+            using var response = await client.GetAsync($"Stocks/search?q={Uri.EscapeDataString(query.Trim())}&limit=15", cancellation.Token);
+            if (response.IsSuccessStatusCode)
+            {
+                _stockOptions = await response.Content.ReadFromJsonAsync<List<StockOption>>(JsonOptions, cancellation.Token) ?? [];
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch { _formError = "Не удалось выполнить поиск акции."; }
+        finally
+        {
+            if (!cancellation.IsCancellationRequested)
+            {
+                _stockSearchLoading = false;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+    }
+
+    private void SelectStock(StockOption stock)
+    {
+        _form.StockId = stock.Id;
+        _stockSearch = $"{stock.Ticker} - {stock.Name}";
+        _stockSearchOpen = false;
+        _stockOptions = [];
+    }
+
+    private async Task<HttpClient?> CreateAuthenticatedClientAsync()
+    {
+        var module = await JS.InvokeAsync<IJSObjectReference>("import", "./portfolioApi.js");
+        string? token;
+        try
+        {
+            token = await module.InvokeAsync<string?>("getToken");
+        }
+        finally
+        {
+            await module.DisposeAsync();
+        }
+
+        if (string.IsNullOrWhiteSpace(token)) return null;
+
+        var client = HttpClientFactory.CreateClient("FinanceApi");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        return client;
+    }
+
+    private static async Task<string> ReadErrorAsync(HttpResponseMessage response)
+    {
+        try
+        {
+            var body = await response.Content.ReadAsStringAsync();
+            if (!string.IsNullOrWhiteSpace(body))
+            {
+                var trimmed = body.Trim();
+                if (trimmed.StartsWith('"') && trimmed.EndsWith('"'))
+                {
+                    return JsonSerializer.Deserialize<string>(trimmed) ?? trimmed;
+                }
+                return trimmed;
+            }
+        }
+        catch
+        {
+        }
+        return $"Запрос завершился с ошибкой (HTTP {(int)response.StatusCode}).";
+    }
+
+    private static string SideLabel(string side) => side == "Buy" ? "Покупка" : "Продажа";
+
+    private static string KindLabel(string kind) => kind switch
+    {
+        "Market" => "Рыночный",
+        "Limit" => "Лимитный",
+        "StopMarket" => "Стоп-маркет",
+        "StopLimit" => "Стоп-лимит",
+        "TakeProfit" => "Тейк-профит",
+        "TrailingStop" => "Трейлинг-стоп",
+        _ => kind,
+    };
+
+    private static string StatusLabel(string status) => status switch
+    {
+        "Pending" => "Ожидает",
+        "Triggered" => "Активирован",
+        "Executed" => "Исполнен",
+        "Cancelled" => "Отменён",
+        "Rejected" => "Отклонён",
+        "Expired" => "Истёк",
+        "PartiallyFilled" => "Частично исполнен",
+        _ => status,
+    };
+
+    private static string PriceCondition(OrderListItem order) => order.Kind switch
+    {
+        "Market" => "По рынку",
+        "Limit" => $"Лимит {FormatMoney(order.Price)}",
+        "StopMarket" => $"Стоп {FormatMoney(order.StopPrice ?? 0m)}",
+        "StopLimit" => $"Стоп {FormatMoney(order.StopPrice ?? 0m)} / лимит {FormatMoney(order.Price)}",
+        "TakeProfit" => $"Цель {FormatMoney(order.TakeProfitPrice ?? 0m)}",
+        "TrailingStop" => order.TrailPercent is decimal percent
+            ? $"Трейлинг {percent.ToString("N2", RussianCulture)}%"
+            : $"Трейлинг {FormatMoney(order.TrailAmount ?? 0m)}",
+        _ => "—",
+    };
+
+    private static string FormatMoney(decimal value) => $"{value.ToString("N2", RussianCulture)} €";
+    private static string FormatNumber(decimal value) => value.ToString("N2", RussianCulture);
+    private static string FormatDate(DateTime value) => value.ToLocalTime().ToString("dd.MM.yyyy HH:mm", RussianCulture);
+    private static string FormatDateTime(DateTime? value) => value?.ToLocalTime().ToString("dd.MM.yyyy HH:mm", RussianCulture) ?? "—";
+
+    public void Dispose()
+    {
+        _disposed = true;
+        _pollTimer?.Dispose();
+        _stockSearchCancellation?.Cancel();
+        _stockSearchCancellation?.Dispose();
+    }
+
+    private sealed class OrderListItem
+    {
+        public OrderListItem() { }
+        public int Id { get; set; }
+        public int PortfolioId { get; set; }
+        public int StockId { get; set; }
+        public string? StockTicker { get; set; }
+        public string? StockName { get; set; }
+        public string Type { get; set; } = "Buy";
+        public string Side { get; set; } = "Buy";
+        public string Kind { get; set; } = "Limit";
+        public string Status { get; set; } = "Pending";
+        public decimal Quantity { get; set; }
+        public decimal FilledQuantity { get; set; }
+        public decimal Price { get; set; }
+        public decimal? AverageFillPrice { get; set; }
+        public decimal? StopPrice { get; set; }
+        public decimal? TakeProfitPrice { get; set; }
+        public decimal? TrailAmount { get; set; }
+        public decimal? TrailPercent { get; set; }
+        public string? ExecutionSource { get; set; }
+        public DateTime CreatedAt { get; set; }
+        public DateTime? ExecutedAt { get; set; }
+        public DateTime? CancelledAt { get; set; }
+        public DateTime? TriggeredAt { get; set; }
+        public string? RejectReason { get; set; }
+    }
+
+    private sealed class OrderFormModel
+    {
+        public int? StockId { get; set; }
+        public string Side { get; set; } = "Buy";
+        public string Kind { get; set; } = "Market";
+
+        [Range(typeof(decimal), "0.01", "1000000000", ParseLimitsInInvariantCulture = true, ErrorMessage = "Количество должно быть больше нуля.")]
+        public decimal Quantity { get; set; } = 1m;
+
+        public decimal Price { get; set; }
+        public decimal? StopPrice { get; set; }
+        public decimal? TakeProfitPrice { get; set; }
+        public string TrailingMode { get; set; } = "Percent";
+        public decimal? TrailPercentInput { get; set; } = 5m;
+        public decimal? TrailAmountInput { get; set; }
+    }
+
+    private sealed class StockOption
+    {
+        public StockOption() { }
+        public int Id { get; set; }
+        public string Ticker { get; set; } = string.Empty;
+        public string Exchange { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public decimal CurrentPrice { get; set; }
+    }
+}

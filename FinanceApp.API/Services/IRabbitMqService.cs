@@ -7,4 +7,10 @@ public interface IRabbitMqService
     Task PublishUpdatePricesAsync(
         UpdatePricesCommand message,
         CancellationToken cancellationToken = default);
+
+    Task PublishOrderEventAsync(
+        string routingKey,
+        string queueName,
+        string payload,
+        CancellationToken cancellationToken = default);
 }

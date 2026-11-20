@@ -7,6 +7,7 @@ using System.Security.Claims;
 using System.ComponentModel.DataAnnotations;
 using System.Text.Json.Serialization;
 using FinanceApp.API.Extensions;
+using FinanceApp.API.Services;
 
 namespace FinanceApp.API.Controllers;
 
@@ -16,7 +17,13 @@ namespace FinanceApp.API.Controllers;
 public class FinanceController : ControllerBase
 {
     private readonly AppDbContext _context;
-    public FinanceController(AppDbContext context) { _context = context; }
+    private readonly IOrderExecutionService _orderExecutionService;
+
+    public FinanceController(AppDbContext context, IOrderExecutionService orderExecutionService)
+    {
+        _context = context;
+        _orderExecutionService = orderExecutionService;
+    }
 
     private int GetUserId() => int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
 
@@ -116,6 +123,7 @@ public class FinanceController : ControllerBase
         _context.UpdatePortfolioItemsForTransaction(portfolioId, transaction);
 
         await _context.SaveChangesAsync();
+        await SyncOrderWithTransactionAsync(transaction);
 
         if (transaction.StockId.HasValue)
             await _context.Entry(transaction).Reference(t => t.Stock).LoadAsync();
@@ -159,6 +167,7 @@ public class FinanceController : ControllerBase
         transaction.UnitPrice = normalizedSnapshot.UnitPrice;
 
         await _context.SaveChangesAsync();
+        await SyncOrderWithTransactionAsync(transaction);
 
         if (transaction.StockId.HasValue)
             await _context.Entry(transaction).Reference(t => t.Stock).LoadAsync();
@@ -176,6 +185,16 @@ public class FinanceController : ControllerBase
         _context.Transactions.Remove(transaction);
         await _context.SaveChangesAsync();
         return NoContent();
+    }
+
+    private async Task SyncOrderWithTransactionAsync(Transaction transaction)
+    {
+        if (transaction.StockId.HasValue &&
+            transaction.Type is TransactionType.Buy or TransactionType.Sell &&
+            transaction.Quantity.GetValueOrDefault() > 0m)
+        {
+            await _orderExecutionService.SyncFromTransactionAsync(transaction);
+        }
     }
 
     private async Task<decimal> GetTransactionCashBalance(int portfolioId)

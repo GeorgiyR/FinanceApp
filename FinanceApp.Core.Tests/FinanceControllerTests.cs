@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using FinanceApp.API.Controllers;
+using FinanceApp.API.Services;
 using FinanceApp.Core.Models;
 using FinanceApp.Data.Data;
 using Microsoft.AspNetCore.Http;
@@ -721,7 +722,7 @@ public class FinanceControllerTests
 
     private static FinanceController CreateController(AppDbContext context, int userId)
     {
-        return new FinanceController(context)
+        return new FinanceController(context, new OrderExecutionService(context, TimeProvider.System))
         {
             ControllerContext = new ControllerContext
             {

@@ -223,6 +223,14 @@ builder.Services.AddSingleton<ICatalogFundamentalsRefreshStatusService>(sp =>
 builder.Services.AddHostedService(sp => sp.GetRequiredService<CatalogFundamentalsRefreshHostedService>());
 builder.Services.AddHostedService<StockHistoryRefreshHostedService>();
 builder.Services.AddHostedService<StockQuoteRefreshHostedService>();
+builder.Services.Configure<OrderEvaluationOptions>(
+    builder.Configuration.GetSection("OrderEvaluation"));
+builder.Services.Configure<OrderEventOutboxOptions>(
+    builder.Configuration.GetSection("OrderEvents"));
+builder.Services.AddScoped<IOrderExecutionService, OrderExecutionService>();
+builder.Services.AddScoped<IOrderExecutedHandler, LoggingOrderExecutedHandler>();
+builder.Services.AddHostedService<OrderEvaluationHostedService>();
+builder.Services.AddHostedService<OrderEventOutboxDispatcher>();
 builder.Services.AddScoped<IRabbitMqService, RabbitMqService>();
 
 var app = builder.Build();

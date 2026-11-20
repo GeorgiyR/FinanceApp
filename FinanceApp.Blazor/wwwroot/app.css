@@ -728,3 +728,33 @@ a { color: inherit; text-decoration: none; }
 .profile-alert-info { border-color: #91caff; background: #e6f4ff; color: #0958d9; }
 .profile-alert-success { border-color: #b7eb8f; background: #f6ffed; color: #237804; }
 .profile-alert-error { border-color: #ffccc7; background: #fff2f0; color: #b42318; }
+
+/* Portfolio orders */
+.orders-panel { display: flex; flex-direction: column; gap: 14px; }
+.orders-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 14px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; }
+.orders-toolbar-info { display: flex; gap: 18px; color: #4b5563; font-size: 14px; }
+.orders-toolbar-actions { display: flex; gap: 8px; }
+.orders-section-title { margin: 6px 0 0; font-size: 17px; color: #111827; }
+.orders-table-wrap { overflow-x: auto; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; }
+.orders-table { width: 100%; border-collapse: collapse; min-width: 860px; font-size: 14px; }
+.orders-table th { text-align: left; padding: 10px 12px; color: #6b7280; font-weight: 600; border-bottom: 1px solid #e5e7eb; white-space: nowrap; }
+.orders-table td { padding: 10px 12px; border-bottom: 1px solid #f1f2f4; vertical-align: middle; }
+.orders-table tr:last-child td { border-bottom: none; }
+.orders-ticker { display: block; font-weight: 700; color: #111827; }
+.orders-name { display: block; color: #6b7280; font-size: 12px; }
+.orders-side-buy { color: #067647; font-weight: 600; }
+.orders-side-sell { color: #b42318; font-weight: 600; }
+.orders-status { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; background: #eef2f7; color: #344054; }
+.orders-status-pending { background: #fff7e6; color: #b54708; }
+.orders-status-triggered { background: #eef4ff; color: #175cd3; }
+.orders-status-executed { background: #ecfdf3; color: #067647; }
+.orders-status-cancelled { background: #f2f4f7; color: #475467; }
+.orders-status-rejected { background: #fef3f2; color: #b42318; }
+.orders-status-expired { background: #f4f3ff; color: #5925dc; }
+.orders-reject-reason { display: block; margin-top: 4px; font-size: 11px; color: #b42318; max-width: 220px; }
+.orders-action-button { padding: 5px 10px; border: 1px solid #d0d5dd; border-radius: 6px; background: #fff; color: #344054; font: inherit; font-size: 13px; cursor: pointer; }
+.orders-action-button:hover:not(:disabled) { border-color: #b42318; color: #b42318; }
+.orders-action-button:disabled { cursor: wait; opacity: .6; }
+.orders-auto-badge { display: inline-block; padding: 1px 7px; border-radius: 999px; background: #ecfdf3; color: #067647; font-size: 12px; font-weight: 600; }
+.orders-dialog { width: min(560px, 94vw); max-height: 90vh; overflow-y: auto; }
+.orders-dialog select { width: 100%; padding: 9px 10px; border: 1px solid #d0d5dd; border-radius: 7px; font: inherit; background: #fff; }

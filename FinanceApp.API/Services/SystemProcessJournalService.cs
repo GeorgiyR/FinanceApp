@@ -26,6 +26,7 @@ public static class SystemProcessTypes
     public const string IndexConstituentHistoryRefresh = "index-constituent-history-refresh";
     public const string IndexConstituentsBatchQuoteRefresh = "index-constituents-batch-quote-refresh";
     public const string FrankfurtAggregateRebuild = "frankfurt-aggregate-rebuild";
+    public const string OrderEvaluationCycle = "order-evaluation-cycle";
 
     public static string GetDisplayName(string processType)
         => processType switch
@@ -37,6 +38,7 @@ public static class SystemProcessTypes
             IndexConstituentHistoryRefresh => "Обновление истории акции индекса",
             IndexConstituentsBatchQuoteRefresh => "Пакетное обновление котировок индекса",
             FrankfurtAggregateRebuild => "Пересборка агрегатов Frankfurt",
+            OrderEvaluationCycle => "Автоисполнение ордеров",
             _ => processType,
         };
 }

@@ -1008,7 +1008,7 @@ public class StocksControllerTests
             Portfolio = portfolio,
             StockId = stock.Id,
             Stock = stock,
-            Type = OrderType.Buy,
+            Side = OrderSide.Buy,
             Quantity = 1,
             Price = 1,
             CreatedAt = DateTime.UtcNow,

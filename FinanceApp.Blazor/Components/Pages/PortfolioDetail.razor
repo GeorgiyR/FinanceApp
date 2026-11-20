@@ -90,10 +90,14 @@
             <PortfolioPositionsTable Items="_portfolio.Items" OnFundamentals="OpenFundamentalsAsync" OnEdit="BeginEdit" OnDelete="AskDelete" />
         }
     }
-    else
+    else if (SelectedSection == "transactions")
     {
         <PortfolioTransactionsTable Transactions="@_transactions" StockValue="@TotalCurrentValue" Loading="@_transactionsLoading" Error="@_transactionsError"
                                     OnCreate="OpenNewTransaction" OnRefresh="LoadTransactionsAsync" OnEdit="OpenEditTransaction" OnDelete="DeleteTransactionAsync" />
+    }
+    else
+    {
+        <PortfolioOrdersPanel PortfolioId="Id" />
     }
 </div>
 
@@ -342,8 +346,18 @@
     private bool _savingPosition;
     private bool _deleting;
 
-    private string SelectedSection => Section?.ToLowerInvariant() == "transactions" ? "transactions" : "positions";
-    private string PageHeading => SelectedSection == "transactions" ? "Транзакции" : "Позиции";
+    private string SelectedSection => Section?.ToLowerInvariant() switch
+    {
+        "transactions" => "transactions",
+        "orders" => "orders",
+        _ => "positions",
+    };
+    private string PageHeading => SelectedSection switch
+    {
+        "transactions" => "Транзакции",
+        "orders" => "Ордера",
+        _ => "Позиции",
+    };
     private decimal TotalCurrentValue => _portfolio?.Items.Sum(item => (item.Stock?.CurrentPrice ?? 0m) * item.Quantity) ?? 0m;
     private decimal TotalCost => _portfolio?.Items.Sum(item => item.BuyPrice * item.Quantity) ?? 0m;
     private decimal TotalProfitLoss => TotalCurrentValue - TotalCost;

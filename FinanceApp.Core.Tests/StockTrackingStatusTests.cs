@@ -276,7 +276,7 @@ public class StockTrackingStatusTests
         {
             PortfolioId = portfolio.Id,
             StockId = stock.Id,
-            Type = OrderType.Buy,
+            Side = OrderSide.Buy,
             Quantity = 1m,
             Price = 100m,
             CreatedAt = DateTime.UtcNow,
