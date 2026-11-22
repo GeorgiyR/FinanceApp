@@ -62,6 +62,47 @@ public class StockHistoryRefreshTests
     }
 
     [Fact]
+    public async Task GetHistoryAsync_MixedQuoteCurrencies_ConvertsEachPointWithItsOwnCurrency()
+    {
+        await using var context = CreateInMemoryContext();
+        var now = new DateTime(2026, 11, 22, 12, 0, 0, DateTimeKind.Utc); // Sunday, US market closed
+        var stock = new Stock { Id = 991, Ticker = "MIX", Exchange = StockExchanges.Nyse, Name = "Mixed currencies" };
+        context.Stocks.Add(stock);
+        context.StockHistoricalPrices.AddRange(
+            new StockHistoricalPrice
+            {
+                StockId = stock.Id,
+                Interval = "10m",
+                Timestamp = new DateTime(2026, 11, 20, 20, 50, 0, DateTimeKind.Utc),
+                Open = 349m, High = 349m, Low = 349m, Close = 349.11m,
+                QuoteCurrency = "USD", FinancialCurrency = "USD", NormalizedQuoteCurrency = "USD", QuoteUnitMultiplier = 1m,
+                Volume = 1000
+            },
+            new StockHistoricalPrice
+            {
+                StockId = stock.Id,
+                Interval = "10m",
+                Timestamp = new DateTime(2026, 11, 20, 21, 0, 0, DateTimeKind.Utc),
+                Open = 317.69m, High = 317.69m, Low = 317.69m, Close = 317.69m,
+                QuoteCurrency = "EUR", FinancialCurrency = "EUR", NormalizedQuoteCurrency = "EUR", QuoteUnitMultiplier = 1m,
+                IsQuoteDerived = true
+            });
+        await context.SaveChangesAsync();
+
+        var service = CreateService(
+            context,
+            new CountingHandler(),
+            new FixedTimeProvider(new DateTimeOffset(now)),
+            conversionService: new RateApplyingConversionService());
+
+        var response = await service.GetHistoryAsync(stock, "1w");
+
+        Assert.Equal(2, response.Points.Count);
+        Assert.InRange(response.Points[0].CloseEur!.Value, 317.6m, 317.8m);
+        Assert.Equal(317.69m, response.Points[1].CloseEur);
+    }
+
+    [Fact]
     public async Task GetHistoryAsync_CatalogOnlyStockWithoutStoredHistory_PerformsOnDemandSync()
     {
         await using var context = CreateInMemoryContext();
@@ -1682,7 +1723,8 @@ public class StockHistoryRefreshTests
         AppDbContext context,
         HttpMessageHandler handler,
         TimeProvider? timeProvider = null,
-        StockHistoryRefreshOptions? refreshOptions = null)
+        StockHistoryRefreshOptions? refreshOptions = null,
+        IStockQuoteConversionService? conversionService = null)
     {
         var coordinator = new YahooRequestCoordinator(
             new FixedHttpClientFactory(new HttpClient(handler)),
@@ -1697,7 +1739,7 @@ public class StockHistoryRefreshTests
         return new StockHistoryService(
             context,
             coordinator,
-            new StubStockQuoteConversionService(),
+            conversionService ?? new StubStockQuoteConversionService(),
             timeProvider ?? TimeProvider.System,
             Options.Create(refreshOptions ?? new StockHistoryRefreshOptions()),
             NullLogger<StockHistoryService>.Instance);
@@ -1839,6 +1881,33 @@ public class StockHistoryRefreshTests
                 Content = new StringContent(SuccessChartJson(1704067200 + call, 10m + call), Encoding.UTF8, "application/json")
             };
         }
+    }
+
+    private sealed class RateApplyingConversionService : IStockQuoteConversionService
+    {
+        public Task<CurrencyConversionContext> GetConversionContextAsync(string? quoteCurrency, string? financialCurrency, CancellationToken cancellationToken = default)
+        {
+            var meta = QuoteCurrencyMetadata.Parse(quoteCurrency, financialCurrency);
+            var rate = string.Equals(meta.NormalizedQuoteCurrency, "EUR", StringComparison.OrdinalIgnoreCase) ? 1m : 0.91m;
+            return Task.FromResult(new CurrencyConversionContext(
+                meta,
+                new ExchangeRateResult(quoteCurrency, rate, DateTime.UtcNow, "stub", null),
+                null));
+        }
+
+        public StockQuoteResponse BuildQuoteResponse(string symbol, decimal rawCurrentPrice, decimal rawPreviousClose, decimal percentChange, string marketState, CurrencyConversionContext conversionContext, string priceSession = "REGULAR", DateTime? priceTimestampUtc = null, string? priceSource = null, string? delayWarning = null, decimal? rawDayHigh = null, decimal? rawDayLow = null)
+            => new() { Symbol = symbol };
+
+        public StockHistoryPointResponse BuildHistoryPointResponse(StockHistoricalPrice historicalPrice, CurrencyConversionContext conversionContext)
+            => new()
+            {
+                Timestamp = historicalPrice.Timestamp,
+                Interval = historicalPrice.Interval,
+                CloseRaw = historicalPrice.Close,
+                CloseEur = conversionContext.ConvertNormalizedToEur(conversionContext.Normalize(historicalPrice.Close)),
+                Volume = historicalPrice.Volume,
+                IsQuoteDerived = historicalPrice.IsQuoteDerived
+            };
     }
 
     private sealed class StubStockQuoteConversionService : IStockQuoteConversionService
