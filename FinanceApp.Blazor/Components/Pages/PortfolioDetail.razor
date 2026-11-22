@@ -573,7 +573,9 @@
                 : await client.PutAsJsonAsync($"Portfolios/{Id}/finance/transactions/{_editingTransaction.Id}", payload);
             if (!response.IsSuccessStatusCode)
             {
-                _transactionFormError = $"Не удалось сохранить транзакцию (HTTP {(int)response.StatusCode}).";
+                var details = await response.Content.ReadAsStringAsync();
+                if (details.Length > 500) details = details[..500] + "…";
+                _transactionFormError = $"Не удалось сохранить транзакцию (HTTP {(int)response.StatusCode}): {details}";
                 return;
             }
 
