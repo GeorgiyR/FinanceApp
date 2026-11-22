@@ -811,6 +811,13 @@ public class StockHistoryService : IStockHistoryService
             currencyMetadata?.QuoteCurrency,
             currencyMetadata?.FinancialCurrency,
             cancellationToken);
+        // A single range can mix provider candles (raw quote currency, e.g. USD for NYSE) with
+        // snapshot-derived points (already converted to EUR). Convert each point with the metadata
+        // stored on its own row, otherwise the series jumps by the FX rate and the chart looks torn.
+        var conversionContextsByCurrency = await BuildHistoryConversionContextsAsync(
+            data,
+            conversionContext,
+            cancellationToken);
         var volumeMetrics = BuildVolumeMetrics(
             data,
             interval,
@@ -848,9 +855,52 @@ public class StockHistoryService : IStockHistoryService
             UnavailableReason = unavailableReason,
             VolumeMetrics = volumeMetrics,
             Points = data
-                .Select(point => _stockQuoteConversionService.BuildHistoryPointResponse(point, conversionContext))
+                .GroupBy(point => point.Timestamp)
+                .Select(group => group.OrderBy(point => point.IsQuoteDerived).First())
+                .Select(point => _stockQuoteConversionService.BuildHistoryPointResponse(
+                    point,
+                    ResolveHistoryConversionContext(point, conversionContextsByCurrency, conversionContext)))
                 .ToList()
         };
+    }
+
+    private async Task<IReadOnlyDictionary<string, CurrencyConversionContext>> BuildHistoryConversionContextsAsync(
+        IReadOnlyList<StockHistoricalPrice> data,
+        CurrencyConversionContext fallback,
+        CancellationToken cancellationToken)
+    {
+        var contexts = new Dictionary<string, CurrencyConversionContext>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in data)
+        {
+            var currency = row.QuoteCurrency?.Trim();
+            if (string.IsNullOrEmpty(currency) || contexts.ContainsKey(currency))
+            {
+                continue;
+            }
+
+            contexts[currency] = string.Equals(
+                currency,
+                fallback.Metadata.QuoteCurrency?.Trim(),
+                StringComparison.OrdinalIgnoreCase)
+                ? fallback
+                : await _stockQuoteConversionService.GetConversionContextAsync(
+                    currency,
+                    row.FinancialCurrency,
+                    cancellationToken);
+        }
+
+        return contexts;
+    }
+
+    private static CurrencyConversionContext ResolveHistoryConversionContext(
+        StockHistoricalPrice point,
+        IReadOnlyDictionary<string, CurrencyConversionContext> contextsByCurrency,
+        CurrencyConversionContext fallback)
+    {
+        var currency = point.QuoteCurrency?.Trim();
+        return !string.IsNullOrEmpty(currency) && contextsByCurrency.TryGetValue(currency, out var context)
+            ? context
+            : fallback;
     }
 
     private async Task<HistoryBatchFetchResult> FetchHistoryBatchesAsync(Stock stock, CancellationToken cancellationToken)
