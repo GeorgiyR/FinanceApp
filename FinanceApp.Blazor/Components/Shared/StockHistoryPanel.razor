@@ -114,6 +114,10 @@
                 </svg>
             </div>
         }
+        @if (GetVolumeBars(_history, Stock.Exchange, _historyRange).Any(bar => bar.IsCapped))
+        {
+            <div class="volume-cap-note">Аукционные объёмы в начале и конце сессии ограничены по шкале; точное значение — во всплывающей подсказке.</div>
+        }
         <TechnicalAnalysisPanel StockId="Stock.Id" />
     }
 </section>
@@ -635,27 +639,44 @@
         if (min == max) { var padding = Math.Max(min * 0.01m, 0.01m); min -= padding; max += padding; }
         return Enumerable.Range(0, 5).Select(index => { var ratio = index / 4m; return new HistoryAxisTick(24m + ratio * 156m, $"{(max - (max - min) * ratio).ToString("N2", RussianCulture)} €"); }).ToArray();
     }
+    private static bool IsUsIntradayVolumeRange(string? exchange, string range)
+    {
+        if (range is not ("1w" or "24h" or "today")) return false;
+        var normalizedExchange = exchange?.Trim();
+        if (string.IsNullOrEmpty(normalizedExchange)) return false;
+        return normalizedExchange.Contains("NYSE", StringComparison.OrdinalIgnoreCase)
+            || normalizedExchange.Contains("NASDAQ", StringComparison.OrdinalIgnoreCase)
+            || normalizedExchange.Contains("AMEX", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static decimal GetVolumeDisplayMax(IEnumerable<long> sourceVolumes, string? exchange, string range)
     {
         var volumes = sourceVolumes.Where(volume => volume > 0).Select(volume => (decimal)volume).Order().ToArray();
         if (volumes.Length == 0) return 0m;
         var max = volumes[^1];
 
-        var isFrankfurtLongRange = string.Equals(exchange, "Frankfurt", StringComparison.OrdinalIgnoreCase) && range is "1y" or "3y" or "5y";
+        var isFrankfurtLongRange = string.Equals(exchange?.Trim(), "Frankfurt", StringComparison.OrdinalIgnoreCase)
+            && range is "1y" or "3y" or "5y";
+        if (isFrankfurtLongRange && volumes.Length >= 20)
+        {
+            var reference = volumes[(int)Math.Floor((volumes.Length - 1) * 0.95m)];
+            if (max > reference * 2m) return Math.Min(max, reference * 1.25m);
+        }
+
         // Yahoo's US 5m bars put the whole opening/closing auction into the first and last bar of
         // a session, so the first and last 10m buckets dwarf every other bucket on 1w/24h/today.
-        // Use a robust scale and mark those bars as capped; the tooltip still shows the real volume.
-        var isUsIntraday = range is "1w" or "24h" or "today"
-            && (string.Equals(exchange, "NYSE", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(exchange, "NASDAQ", StringComparison.OrdinalIgnoreCase));
-        if ((isFrankfurtLongRange || isUsIntraday) && volumes.Length >= 20)
+        // Anchor the scale on the regular-session distribution and mark auction bars as capped;
+        // the tooltip still shows the real volume.
+        if (IsUsIntradayVolumeRange(exchange, range) && volumes.Length >= 20)
         {
-            var reference = volumes[(int)Math.Floor((volumes.Length - 1) * (isUsIntraday ? 0.90m : 0.95m))];
-            if (max > reference * 2m)
+            var median = volumes[(int)Math.Floor((volumes.Length - 1) * 0.50m)];
+            var p90 = volumes[(int)Math.Floor((volumes.Length - 1) * 0.90m)];
+            if (max > p90 * 1.5m || max > median * 3m)
             {
-                return Math.Min(max, reference * (isUsIntraday ? 1.6m : 1.25m));
+                return Math.Min(max, p90 * 1.4m);
             }
         }
+
         return max;
     }
     private static IReadOnlyList<HistoryVolumeBar> GetVolumeBars(StockHistoryResponse history, string? exchange, string range)
