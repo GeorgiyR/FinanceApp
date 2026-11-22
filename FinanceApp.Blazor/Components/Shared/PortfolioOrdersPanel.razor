@@ -4,6 +4,7 @@
 @using System.Net.Http.Headers
 @using System.Net.Http.Json
 @using System.Text.Json
+@using FinanceApp.Blazor.Components.Models
 @inject IHttpClientFactory HttpClientFactory
 @inject IJSRuntime JS
 @implements IDisposable
@@ -76,10 +77,13 @@
                         <tbody>
                             @foreach (var order in PagedOpenOrders)
                             {
-                                <tr>
+                                <tr @key="order.Id">
                                     <td>
-                                        <span class="orders-ticker">@order.StockTicker</span>
-                                        <span class="orders-name">@order.StockName</span>
+                                        <button type="button" class="orders-ticker-button" @onclick="() => ToggleHistoryAsync(order)" aria-expanded="@(_expandedOrderId == order.Id)" title="Показать историю цены">
+                                            <span class="orders-ticker">@order.StockTicker</span>
+                                            <span class="orders-name">@order.StockName</span>
+                                            <span class="orders-expand-icon">@(_expandedOrderId == order.Id ? "▾" : "▸")</span>
+                                        </button>
                                     </td>
                                     <td class="@(order.Side == "Buy" ? "orders-side-buy" : "orders-side-sell")">@SideLabel(order.Side)</td>
                                     <td>@KindLabel(order.Kind)</td>
@@ -91,6 +95,25 @@
                                         <button type="button" class="orders-action-button" @onclick="() => CancelOrderAsync(order)" disabled="@_busy">Отменить</button>
                                     </td>
                                 </tr>
+                                @if (_expandedOrderId == order.Id)
+                                {
+                                    <tr class="orders-history-row" @key="-order.Id">
+                                        <td colspan="8">
+                                            @if (_stockDetailsLoading)
+                                            {
+                                                <div class="position-history-state">Загрузка данных инструмента…</div>
+                                            }
+                                            else if (!string.IsNullOrWhiteSpace(_stockDetailsError))
+                                            {
+                                                <div class="position-history-state position-history-error" role="alert">@_stockDetailsError</div>
+                                            }
+                                            else if (_expandedStock is not null)
+                                            {
+                                                <StockHistoryPanel @key="_expandedStock.Id" Stock="_expandedStock" />
+                                            }
+                                        </td>
+                                    </tr>
+                                }
                             }
                         </tbody>
                     </table>
@@ -130,10 +153,13 @@
                         <tbody>
                             @foreach (var order in PagedHistoryOrders)
                             {
-                                <tr>
+                                <tr @key="order.Id">
                                     <td>
-                                        <span class="orders-ticker">@order.StockTicker</span>
-                                        <span class="orders-name">@order.StockName</span>
+                                        <button type="button" class="orders-ticker-button" @onclick="() => ToggleHistoryAsync(order)" aria-expanded="@(_expandedOrderId == order.Id)" title="Показать историю цены">
+                                            <span class="orders-ticker">@order.StockTicker</span>
+                                            <span class="orders-name">@order.StockName</span>
+                                            <span class="orders-expand-icon">@(_expandedOrderId == order.Id ? "▾" : "▸")</span>
+                                        </button>
                                     </td>
                                     <td class="@(order.Side == "Buy" ? "orders-side-buy" : "orders-side-sell")">@SideLabel(order.Side)</td>
                                     <td>@KindLabel(order.Kind)</td>
@@ -162,6 +188,25 @@
                                         }
                                     </td>
                                 </tr>
+                                @if (_expandedOrderId == order.Id)
+                                {
+                                    <tr class="orders-history-row" @key="-order.Id">
+                                        <td colspan="8">
+                                            @if (_stockDetailsLoading)
+                                            {
+                                                <div class="position-history-state">Загрузка данных инструмента…</div>
+                                            }
+                                            else if (!string.IsNullOrWhiteSpace(_stockDetailsError))
+                                            {
+                                                <div class="position-history-state position-history-error" role="alert">@_stockDetailsError</div>
+                                            }
+                                            else if (_expandedStock is not null)
+                                            {
+                                                <StockHistoryPanel @key="_expandedStock.Id" Stock="_expandedStock" />
+                                            }
+                                        </td>
+                                    </tr>
+                                }
                             }
                         </tbody>
                     </table>
@@ -338,6 +383,12 @@
     private int _historyPage = 1;
     private string _activeTab = "open";
 
+    private int? _expandedOrderId;
+    private PortfolioStockViewModel? _expandedStock;
+    private bool _stockDetailsLoading;
+    private string? _stockDetailsError;
+    private readonly Dictionary<int, PortfolioStockViewModel> _stockDetailsCache = [];
+
     private List<OrderListItem> OpenOrders => _orders
         .Where(o => o.Status is "Pending" or "Triggered")
         .ToList();
@@ -443,13 +494,30 @@
         if (_openPage < 1) _openPage = 1;
         if (_historyPage > HistoryPageCount) _historyPage = HistoryPageCount;
         if (_historyPage < 1) _historyPage = 1;
+
+        if (_expandedOrderId is int expandedId && _orders.All(o => o.Id != expandedId))
+        {
+            CollapseHistory();
+        }
     }
 
-    private void SelectTab(string tab) => _activeTab = tab == "history" ? "history" : "open";
+    private void SelectTab(string tab)
+    {
+        _activeTab = tab == "history" ? "history" : "open";
+        CollapseHistory();
+    }
 
-    private void GoToOpenPage(int page) => _openPage = Math.Clamp(page, 1, OpenPageCount);
+    private void GoToOpenPage(int page)
+    {
+        _openPage = Math.Clamp(page, 1, OpenPageCount);
+        CollapseHistory();
+    }
 
-    private void GoToHistoryPage(int page) => _historyPage = Math.Clamp(page, 1, HistoryPageCount);
+    private void GoToHistoryPage(int page)
+    {
+        _historyPage = Math.Clamp(page, 1, HistoryPageCount);
+        CollapseHistory();
+    }
 
     private void OnPageSizeChanged(ChangeEventArgs args)
     {
@@ -457,6 +525,91 @@
         _pageSize = size;
         _openPage = 1;
         _historyPage = 1;
+        CollapseHistory();
+    }
+
+    private async Task ToggleHistoryAsync(OrderListItem order)
+    {
+        if (_expandedOrderId == order.Id)
+        {
+            CollapseHistory();
+            return;
+        }
+
+        _expandedOrderId = order.Id;
+        _expandedStock = null;
+        _stockDetailsError = null;
+
+        if (_stockDetailsCache.TryGetValue(order.StockId, out var cached))
+        {
+            _expandedStock = cached;
+            return;
+        }
+
+        var requestOrderId = order.Id;
+        _stockDetailsLoading = true;
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null)
+            {
+                _stockDetailsError = "Войдите в приложение, чтобы увидеть историю цены.";
+                return;
+            }
+
+            using var response = await client.GetAsync($"Stocks/{order.StockId}");
+            if (!response.IsSuccessStatusCode)
+            {
+                _stockDetailsError = await ReadErrorAsync(response);
+                return;
+            }
+
+            var stock = await response.Content.ReadFromJsonAsync<StockDetailsResponse>(JsonOptions);
+            if (stock is null)
+            {
+                _stockDetailsError = "Не удалось загрузить данные инструмента.";
+                return;
+            }
+
+            var viewModel = new PortfolioStockViewModel
+            {
+                Id = stock.Id,
+                Ticker = stock.Ticker ?? order.StockTicker ?? string.Empty,
+                Name = stock.Name ?? order.StockName ?? string.Empty,
+                CommonName = stock.CommonName,
+                Exchange = stock.Exchange,
+                Isin = stock.Isin,
+                CurrentPrice = stock.CurrentPrice,
+                CurrentPriceChange = stock.CurrentPriceChange,
+                CurrentPriceChangePercent = stock.CurrentPriceChangePercent,
+                CurrentPriceAt = stock.CurrentPriceAt,
+            };
+
+            _stockDetailsCache[order.StockId] = viewModel;
+            if (_expandedOrderId == requestOrderId) _expandedStock = viewModel;
+        }
+        catch (Exception)
+        {
+            if (_expandedOrderId == requestOrderId) _stockDetailsError = "Не удалось загрузить данные инструмента.";
+        }
+        finally
+        {
+            if (_expandedOrderId == requestOrderId)
+            {
+                _stockDetailsLoading = false;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+    }
+
+    private void CollapseHistory()
+    {
+        _expandedOrderId = null;
+        _expandedStock = null;
+        _stockDetailsError = null;
+        _stockDetailsLoading = false;
     }
 
     private void OpenDialog()
@@ -790,5 +943,19 @@
         public string Exchange { get; set; } = string.Empty;
         public string Name { get; set; } = string.Empty;
         public decimal CurrentPrice { get; set; }
+    }
+
+    private sealed class StockDetailsResponse
+    {
+        public int Id { get; set; }
+        public string? Ticker { get; set; }
+        public string? Name { get; set; }
+        public string? CommonName { get; set; }
+        public string? Exchange { get; set; }
+        public string? Isin { get; set; }
+        public decimal CurrentPrice { get; set; }
+        public decimal? CurrentPriceChange { get; set; }
+        public decimal? CurrentPriceChangePercent { get; set; }
+        public DateTime? CurrentPriceAt { get; set; }
     }
 }

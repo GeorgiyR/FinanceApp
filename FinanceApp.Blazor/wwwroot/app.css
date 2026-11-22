@@ -747,6 +747,10 @@ a { color: inherit; text-decoration: none; }
 .orders-table tr:last-child td { border-bottom: none; }
 .orders-ticker { display: block; font-weight: 700; color: #111827; }
 .orders-name { display: block; color: #6b7280; font-size: 12px; }
+.orders-ticker-button { display: block; width: 100%; padding: 0; border: 0; background: transparent; text-align: left; font: inherit; cursor: pointer; }
+.orders-ticker-button:hover .orders-ticker { color: #1677ff; }
+.orders-expand-icon { display: inline-block; margin-left: 4px; color: #98a2b3; font-size: 11px; }
+.orders-history-row > td { padding: 0; background: #f8fafc; }
 .orders-side-buy { color: #067647; font-weight: 600; }
 .orders-side-sell { color: #b42318; font-weight: 600; }
 .orders-status { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; background: #eef2f7; color: #344054; }
