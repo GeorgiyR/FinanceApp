@@ -640,10 +640,21 @@
         var volumes = sourceVolumes.Where(volume => volume > 0).Select(volume => (decimal)volume).Order().ToArray();
         if (volumes.Length == 0) return 0m;
         var max = volumes[^1];
-        if (string.Equals(exchange, "Frankfurt", StringComparison.OrdinalIgnoreCase) && (range is "1y" or "3y" or "5y") && volumes.Length >= 20)
+
+        var isFrankfurtLongRange = string.Equals(exchange, "Frankfurt", StringComparison.OrdinalIgnoreCase) && range is "1y" or "3y" or "5y";
+        // Yahoo's US 5m bars put the whole opening/closing auction into the first and last bar of
+        // a session, so the first and last 10m buckets dwarf every other bucket on 1w/24h/today.
+        // Use a robust scale and mark those bars as capped; the tooltip still shows the real volume.
+        var isUsIntraday = range is "1w" or "24h" or "today"
+            && (string.Equals(exchange, "NYSE", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(exchange, "NASDAQ", StringComparison.OrdinalIgnoreCase));
+        if ((isFrankfurtLongRange || isUsIntraday) && volumes.Length >= 20)
         {
-            var p95 = volumes[(int)Math.Floor((volumes.Length - 1) * 0.95m)];
-            if (max > p95 * 2m) return Math.Min(max, p95 * 1.25m);
+            var reference = volumes[(int)Math.Floor((volumes.Length - 1) * (isUsIntraday ? 0.90m : 0.95m))];
+            if (max > reference * 2m)
+            {
+                return Math.Min(max, reference * (isUsIntraday ? 1.6m : 1.25m));
+            }
         }
         return max;
     }
