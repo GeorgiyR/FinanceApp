@@ -11,8 +11,6 @@
 <section class="orders-panel">
     <div class="orders-toolbar">
         <div class="orders-toolbar-info">
-            <span>Открытых: <strong>@OpenOrders.Count</strong></span>
-            <span>В истории: <strong>@HistoryOrders.Count</strong></span>
             <label class="orders-page-size">
                 На странице:
                 <select value="@_pageSize" @onchange="OnPageSizeChanged">
@@ -44,126 +42,138 @@
             <div class="portfolio-refresh-notice" role="status">@_actionMessage</div>
         }
 
-        <h2 class="orders-section-title">Открытые ордера</h2>
-        @if (OpenOrders.Count == 0)
+        <div class="index-tabs orders-tabs" role="tablist" aria-label="Ордера">
+            <button type="button" role="tab" class="@(_activeTab == "open" ? "active" : "")" aria-selected="@(_activeTab == "open")" @onclick='() => SelectTab("open")'>
+                Открытые <span class="orders-tab-count">@OpenOrders.Count</span>
+            </button>
+            <button type="button" role="tab" class="@(_activeTab == "history" ? "active" : "")" aria-selected="@(_activeTab == "history")" @onclick='() => SelectTab("history")'>
+                История <span class="orders-tab-count">@HistoryOrders.Count</span>
+            </button>
+        </div>
+
+        @if (_activeTab == "open")
         {
-            <div class="portfolio-state">Нет открытых ордеров.</div>
-        }
-        else
-        {
-            <div class="orders-table-wrap">
-                <table class="orders-table">
-                    <thead>
-                        <tr>
-                            <th>Инструмент</th>
-                            <th>Сторона</th>
-                            <th>Тип</th>
-                            <th>Количество</th>
-                            <th>Условие</th>
-                            <th>Статус</th>
-                            <th>Создан</th>
-                            <th></th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var order in PagedOpenOrders)
-                        {
-                            <tr>
-                                <td>
-                                    <span class="orders-ticker">@order.StockTicker</span>
-                                    <span class="orders-name">@order.StockName</span>
-                                </td>
-                                <td class="@(order.Side == "Buy" ? "orders-side-buy" : "orders-side-sell")">@SideLabel(order.Side)</td>
-                                <td>@KindLabel(order.Kind)</td>
-                                <td>@FormatNumber(order.Quantity)</td>
-                                <td>@PriceCondition(order)</td>
-                                <td><span class="orders-status orders-status-@order.Status.ToLowerInvariant()">@StatusLabel(order.Status)</span></td>
-                                <td>@FormatDate(order.CreatedAt)</td>
-                                <td>
-                                    <button type="button" class="orders-action-button" @onclick="() => CancelOrderAsync(order)" disabled="@_busy">Отменить</button>
-                                </td>
-                            </tr>
-                        }
-                    </tbody>
-                </table>
-            </div>
-            @if (OpenPageCount > 1)
+            @if (OpenOrders.Count == 0)
             {
-                <div class="catalog-pagination orders-pagination">
-                    <button type="button" class="stocks-toolbar-button" @onclick="() => GoToOpenPage(_openPage - 1)" disabled="@(_openPage <= 1)">← Назад</button>
-                    <span>Страница @_openPage из @OpenPageCount</span>
-                    <button type="button" class="stocks-toolbar-button" @onclick="() => GoToOpenPage(_openPage + 1)" disabled="@(_openPage >= OpenPageCount)">Вперёд →</button>
+                <div class="portfolio-state">Нет открытых ордеров.</div>
+            }
+            else
+            {
+                <div class="orders-table-wrap">
+                    <table class="orders-table">
+                        <thead>
+                            <tr>
+                                <th>Инструмент</th>
+                                <th>Сторона</th>
+                                <th>Тип</th>
+                                <th>Количество</th>
+                                <th>Условие</th>
+                                <th>Статус</th>
+                                <th>Создан</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var order in PagedOpenOrders)
+                            {
+                                <tr>
+                                    <td>
+                                        <span class="orders-ticker">@order.StockTicker</span>
+                                        <span class="orders-name">@order.StockName</span>
+                                    </td>
+                                    <td class="@(order.Side == "Buy" ? "orders-side-buy" : "orders-side-sell")">@SideLabel(order.Side)</td>
+                                    <td>@KindLabel(order.Kind)</td>
+                                    <td>@FormatNumber(order.Quantity)</td>
+                                    <td>@PriceCondition(order)</td>
+                                    <td><span class="orders-status orders-status-@order.Status.ToLowerInvariant()">@StatusLabel(order.Status)</span></td>
+                                    <td>@FormatDate(order.CreatedAt)</td>
+                                    <td>
+                                        <button type="button" class="orders-action-button" @onclick="() => CancelOrderAsync(order)" disabled="@_busy">Отменить</button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
                 </div>
+                @if (OpenPageCount > 1)
+                {
+                    <div class="catalog-pagination orders-pagination">
+                        <button type="button" class="stocks-toolbar-button" @onclick="() => GoToOpenPage(_openPage - 1)" disabled="@(_openPage <= 1)">← Назад</button>
+                        <span>Страница @_openPage из @OpenPageCount</span>
+                        <button type="button" class="stocks-toolbar-button" @onclick="() => GoToOpenPage(_openPage + 1)" disabled="@(_openPage >= OpenPageCount)">Вперёд →</button>
+                    </div>
+                }
             }
         }
-
-        <h2 class="orders-section-title">История</h2>
-        @if (HistoryOrders.Count == 0)
-        {
-            <div class="portfolio-state">История пуста.</div>
-        }
         else
         {
-            <div class="orders-table-wrap">
-                <table class="orders-table">
-                    <thead>
-                        <tr>
-                            <th>Инструмент</th>
-                            <th>Сторона</th>
-                            <th>Тип</th>
-                            <th>Количество</th>
-                            <th>Цена исполнения</th>
-                            <th>Статус</th>
-                            <th>Исполнен</th>
-                            <th>Источник</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var order in PagedHistoryOrders)
-                        {
-                            <tr>
-                                <td>
-                                    <span class="orders-ticker">@order.StockTicker</span>
-                                    <span class="orders-name">@order.StockName</span>
-                                </td>
-                                <td class="@(order.Side == "Buy" ? "orders-side-buy" : "orders-side-sell")">@SideLabel(order.Side)</td>
-                                <td>@KindLabel(order.Kind)</td>
-                                <td>@FormatNumber(order.Quantity)</td>
-                                <td>@(order.AverageFillPrice is decimal price ? FormatMoney(price) : "—")</td>
-                                <td>
-                                    <span class="orders-status orders-status-@order.Status.ToLowerInvariant()">@StatusLabel(order.Status)</span>
-                                    @if (!string.IsNullOrWhiteSpace(order.RejectReason))
-                                    {
-                                        <span class="orders-reject-reason">@order.RejectReason</span>
-                                    }
-                                </td>
-                                <td>@FormatDateTime(order.ExecutedAt)</td>
-                                <td>
-                                    @if (order.ExecutionSource == "Automatic")
-                                    {
-                                        <span class="orders-auto-badge">Авто</span>
-                                    }
-                                    else if (order.ExecutionSource == "Manual")
-                                    {
-                                        <span>Вручную</span>
-                                    }
-                                    else
-                                    {
-                                        <span>—</span>
-                                    }
-                                </td>
-                            </tr>
-                        }
-                    </tbody>
-                </table>
-            </div>
-            @if (HistoryPageCount > 1)
+            @if (HistoryOrders.Count == 0)
             {
-                <div class="catalog-pagination orders-pagination">
-                    <button type="button" class="stocks-toolbar-button" @onclick="() => GoToHistoryPage(_historyPage - 1)" disabled="@(_historyPage <= 1)">← Назад</button>
-                    <span>Страница @_historyPage из @HistoryPageCount</span>
-                    <button type="button" class="stocks-toolbar-button" @onclick="() => GoToHistoryPage(_historyPage + 1)" disabled="@(_historyPage >= HistoryPageCount)">Вперёд →</button>
+                <div class="portfolio-state">История пуста.</div>
+            }
+            else
+            {
+                <div class="orders-table-wrap">
+                    <table class="orders-table">
+                        <thead>
+                            <tr>
+                                <th>Инструмент</th>
+                                <th>Сторона</th>
+                                <th>Тип</th>
+                                <th>Количество</th>
+                                <th>Цена исполнения</th>
+                                <th>Статус</th>
+                                <th>Исполнен</th>
+                                <th>Источник</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var order in PagedHistoryOrders)
+                            {
+                                <tr>
+                                    <td>
+                                        <span class="orders-ticker">@order.StockTicker</span>
+                                        <span class="orders-name">@order.StockName</span>
+                                    </td>
+                                    <td class="@(order.Side == "Buy" ? "orders-side-buy" : "orders-side-sell")">@SideLabel(order.Side)</td>
+                                    <td>@KindLabel(order.Kind)</td>
+                                    <td>@FormatNumber(order.Quantity)</td>
+                                    <td>@(order.AverageFillPrice is decimal price ? FormatMoney(price) : "—")</td>
+                                    <td>
+                                        <span class="orders-status orders-status-@order.Status.ToLowerInvariant()">@StatusLabel(order.Status)</span>
+                                        @if (!string.IsNullOrWhiteSpace(order.RejectReason))
+                                        {
+                                            <span class="orders-reject-reason">@order.RejectReason</span>
+                                        }
+                                    </td>
+                                    <td>@FormatDateTime(order.ExecutedAt)</td>
+                                    <td>
+                                        @if (order.ExecutionSource == "Automatic")
+                                        {
+                                            <span class="orders-auto-badge">Авто</span>
+                                        }
+                                        else if (order.ExecutionSource == "Manual")
+                                        {
+                                            <span>Вручную</span>
+                                        }
+                                        else
+                                        {
+                                            <span>—</span>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
                 </div>
+                @if (HistoryPageCount > 1)
+                {
+                    <div class="catalog-pagination orders-pagination">
+                        <button type="button" class="stocks-toolbar-button" @onclick="() => GoToHistoryPage(_historyPage - 1)" disabled="@(_historyPage <= 1)">← Назад</button>
+                        <span>Страница @_historyPage из @HistoryPageCount</span>
+                        <button type="button" class="stocks-toolbar-button" @onclick="() => GoToHistoryPage(_historyPage + 1)" disabled="@(_historyPage >= HistoryPageCount)">Вперёд →</button>
+                    </div>
+                }
             }
         }
     }
@@ -326,6 +336,7 @@
     private int _pageSize = 10;
     private int _openPage = 1;
     private int _historyPage = 1;
+    private string _activeTab = "open";
 
     private List<OrderListItem> OpenOrders => _orders
         .Where(o => o.Status is "Pending" or "Triggered")
@@ -356,6 +367,7 @@
         _orders.Clear();
         _openPage = 1;
         _historyPage = 1;
+        _activeTab = "open";
         EnsurePolling();
         await LoadOrdersAsync();
     }
@@ -432,6 +444,8 @@
         if (_historyPage > HistoryPageCount) _historyPage = HistoryPageCount;
         if (_historyPage < 1) _historyPage = 1;
     }
+
+    private void SelectTab(string tab) => _activeTab = tab == "history" ? "history" : "open";
 
     private void GoToOpenPage(int page) => _openPage = Math.Clamp(page, 1, OpenPageCount);
 
@@ -535,6 +549,7 @@
 
             _dialogOpen = false;
             _actionMessage = "Ордер создан.";
+            _activeTab = _form.Kind == "Market" ? "history" : "open";
             await LoadOrdersAsync(silent: true);
             if (OnOrdersChanged.HasDelegate) await OnOrdersChanged.InvokeAsync();
         }
