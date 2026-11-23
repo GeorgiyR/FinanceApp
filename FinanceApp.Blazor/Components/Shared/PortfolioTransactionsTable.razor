@@ -58,10 +58,7 @@
                             <td class="numeric">@((transaction.Type is "Buy" or "Sell") && transaction.UnitPrice is decimal unitPrice ? FormatMoney(unitPrice) : "—")</td>
                             <td class="numeric">@((transaction.Type is "Buy" or "Sell") && transaction.Quantity is decimal quantity ? quantity.ToString("N0", RussianCulture) : "—")</td>
                             <td class="transaction-row-actions">
-                                @if (transaction.OrderId is null)
-                                {
-                                    <button type="button" class="action-icon-button" title="Редактировать" aria-label="Редактировать транзакцию" @onclick="() => OnEdit.InvokeAsync(transaction)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m3 14.8-.8 3 3-.8L16.8 5.4a1.8 1.8 0 0 0-2.6-2.6L3 14.8Zm9.9-9.9 2.6 2.6" /></svg></button>
-                                }
+                                <button type="button" class="action-icon-button" title="Редактировать" aria-label="Редактировать транзакцию" @onclick="() => OnEdit.InvokeAsync(transaction)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m3 14.8-.8 3 3-.8L16.8 5.4a1.8 1.8 0 0 0-2.6-2.6L3 14.8Zm9.9-9.9 2.6 2.6" /></svg></button>
                                 <button type="button" class="action-icon-button action-delete-button" title="Удалить" aria-label="Удалить транзакцию" @onclick="() => OnDelete.InvokeAsync(transaction)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14m-9 0V3h4v2m3 0-.8 12H5.8L5 5m3 3v6m4-6v6" /></svg></button>
                             </td>
                         </tr>
