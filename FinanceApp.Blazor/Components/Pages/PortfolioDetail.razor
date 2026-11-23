@@ -8,6 +8,7 @@
 @using FinanceApp.Blazor.Components.Models
 @inject IHttpClientFactory HttpClientFactory
 @inject IJSRuntime JS
+@inject NavigationManager Navigation
 
 <PageTitle>Stockpilot</PageTitle>
 
@@ -17,7 +18,7 @@
             <p class="portfolio-detail-name">@(_portfolio?.Name ?? "Портфель")</p>
             <h1>@PageHeading</h1>
         </div>
-        @if (SelectedSection == "positions" && !_loading)
+        @if (SelectedSection == "positions" && _positionTab == "positions" && !_loading)
         {
             <div class="portfolio-detail-actions">
                 <button class="portfolio-refresh-button" @onclick="RefreshPositionPricesAsync" disabled="@_refreshingPrices">@(_refreshingPrices ? "Обновление цен…" : "Обновить цены")</button>
@@ -32,13 +33,21 @@
         }
     </div>
 
-    @if (SelectedSection == "positions" && !string.IsNullOrWhiteSpace(_refreshMessage))
-    {
-        <div class="portfolio-refresh-notice" role="status">@_refreshMessage</div>
-    }
-
     @if (SelectedSection == "positions")
     {
+        <div class="index-tabs positions-tabs" role="tablist" aria-label="Позиции и ордера">
+            <button type="button" role="tab" class="@(_positionTab == "positions" ? "active" : "")" aria-selected="@(_positionTab == "positions")" @onclick="() => SelectPositionTab(PositionTabPositions)">Позиции</button>
+            <button type="button" role="tab" class="@(_positionTab == "orders" ? "active" : "")" aria-selected="@(_positionTab == "orders")" @onclick="() => SelectPositionTab(PositionTabOrders)">Ордера</button>
+        </div>
+    }
+
+    @if (SelectedSection == "positions" && _positionTab == "positions")
+    {
+        @if (!string.IsNullOrWhiteSpace(_refreshMessage))
+        {
+            <div class="portfolio-refresh-notice" role="status">@_refreshMessage</div>
+        }
+
         @if (_loading)
         {
             <div class="portfolio-state">Загрузка позиций…</div>
@@ -90,14 +99,14 @@
             <PortfolioPositionsTable Items="_portfolio.Items" OnFundamentals="OpenFundamentalsAsync" OnEdit="BeginEdit" OnDelete="AskDelete" />
         }
     }
+    else if (SelectedSection == "positions" && _positionTab == "orders")
+    {
+        <PortfolioOrdersPanel PortfolioId="Id" />
+    }
     else if (SelectedSection == "transactions")
     {
         <PortfolioTransactionsTable Transactions="@_transactions" StockValue="@TotalCurrentValue" Loading="@_transactionsLoading" Error="@_transactionsError"
                                     OnCreate="OpenNewTransaction" OnRefresh="LoadTransactionsAsync" OnEdit="OpenEditTransaction" OnDelete="DeleteTransactionAsync" />
-    }
-    else
-    {
-        <PortfolioOrdersPanel PortfolioId="Id" />
     }
 </div>
 
@@ -302,6 +311,8 @@
 @code {
     private static readonly CultureInfo RussianCulture = CultureInfo.GetCultureInfo("ru-RU");
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private const string PositionTabPositions = "positions";
+    private const string PositionTabOrders = "orders";
 
     [Parameter] public int Id { get; set; }
     [SupplyParameterFromQuery(Name = "section")] public string? Section { get; set; }
@@ -317,6 +328,7 @@
     private bool _transactionsLoading;
     private string? _transactionsError;
     private List<PortfolioTransactionViewModel> _transactions = [];
+    private string _positionTab = PositionTabPositions;
     private bool _transactionModalOpen;
     private bool _transactionSaving;
     private string? _transactionFormError;
@@ -349,14 +361,12 @@
     private string SelectedSection => Section?.ToLowerInvariant() switch
     {
         "transactions" => "transactions",
-        "orders" => "orders",
         _ => "positions",
     };
     private string PageHeading => SelectedSection switch
     {
         "transactions" => "Транзакции",
-        "orders" => "Ордера",
-        _ => "Позиции",
+        _ => _positionTab == PositionTabOrders ? "Ордера" : "Позиции",
     };
     private decimal TotalCurrentValue => _portfolio?.Items.Sum(item => (item.Stock?.CurrentPrice ?? 0m) * item.Quantity) ?? 0m;
     private decimal TotalCost => _portfolio?.Items.Sum(item => item.BuyPrice * item.Quantity) ?? 0m;
@@ -384,6 +394,16 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        var desiredTab = string.Equals(Section, PositionTabOrders, StringComparison.OrdinalIgnoreCase)
+            ? PositionTabOrders
+            : PositionTabPositions;
+        if (desiredTab != _positionTab)
+        {
+            _positionTab = desiredTab;
+            StateHasChanged();
+            return;
+        }
+
         if (_requestedPortfolioId != Id)
         {
             _requestedPortfolioId = Id;
@@ -434,6 +454,12 @@
             _transactionsLoading = false;
             await InvokeAsync(StateHasChanged);
         }
+    }
+
+    private void SelectPositionTab(string tab)
+    {
+        if (_positionTab == tab) return;
+        Navigation.NavigateTo($"/stockpilot/portfolios/{Id}?section={tab}");
     }
 
     private void OpenNewTransaction()
