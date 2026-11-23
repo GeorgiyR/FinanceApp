@@ -529,6 +529,154 @@ public class FinanceControllerTests
     }
 
     [Fact]
+    public async Task UpdateTransaction_LinkedToOrder_UpdatesLinkedOrder()
+    {
+        await using var context = CreateContext();
+        var stock = new Stock
+        {
+            Id = 51,
+            Ticker = "SAP",
+            Name = "SAP SE",
+            CommonName = "SAP SE",
+            Exchange = StockExchanges.Frankfurt,
+            Isin = "DE0007164600",
+            CurrentPrice = 100m,
+            UpdatedAt = DateTime.UtcNow,
+        };
+        var portfolio = new Portfolio { Id = 21, Name = "Main", UserId = 1, CreatedAt = DateTime.UtcNow };
+        var order = new Order
+        {
+            Id = 110,
+            PortfolioId = 21,
+            StockId = 51,
+            Side = OrderSide.Buy,
+            Kind = OrderKind.Limit,
+            Status = OrderStatus.Executed,
+            Quantity = 2m,
+            FilledQuantity = 2m,
+            Price = 95m,
+            AverageFillPrice = 95m,
+            CreatedAt = DateTime.UtcNow,
+            ExecutedAt = DateTime.UtcNow,
+            ExecutionSource = OrderExecutionSource.Manual,
+        };
+        var transaction = new Transaction
+        {
+            Id = 71,
+            PortfolioId = 21,
+            Type = TransactionType.Buy,
+            Amount = 190m,
+            SignedAmount = -190m,
+            StockId = 51,
+            Quantity = 2m,
+            UnitPrice = 95m,
+            OrderId = 110,
+            CreatedAt = new DateTime(2026, 8, 2, 10, 0, 0, DateTimeKind.Utc),
+        };
+
+        context.Stocks.Add(stock);
+        context.Portfolios.Add(portfolio);
+        context.Orders.Add(order);
+        context.Transactions.Add(transaction);
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context, userId: 1);
+
+        var result = await controller.UpdateTransaction(21, 71, new UpdateTransactionDto
+        {
+            Type = TransactionType.Sell,
+            Amount = 360m,
+            CreatedAt = new DateTime(2026, 8, 3, 11, 30, 0, DateTimeKind.Utc),
+            StockId = 51,
+            Quantity = 3m,
+            UnitPrice = 120m,
+        });
+
+        Assert.IsType<OkObjectResult>(result.Result);
+
+        var updatedOrder = await context.Orders.SingleAsync(o => o.Id == 110);
+        Assert.Equal(OrderSide.Sell, updatedOrder.Side);
+        Assert.Equal(OrderStatus.Executed, updatedOrder.Status);
+        Assert.Equal(3m, updatedOrder.Quantity);
+        Assert.Equal(3m, updatedOrder.FilledQuantity);
+        Assert.Equal(120m, updatedOrder.AverageFillPrice);
+        Assert.Equal(new DateTime(2026, 8, 3, 11, 30, 0, DateTimeKind.Utc), updatedOrder.ExecutedAt);
+
+        var updatedTransaction = await context.Transactions.SingleAsync(t => t.Id == 71);
+        Assert.Equal(110, updatedTransaction.OrderId);
+    }
+
+    [Fact]
+    public async Task UpdateTransaction_LinkedToOrder_NonTradeType_DetachesOrderLink()
+    {
+        await using var context = CreateContext();
+        var stock = new Stock
+        {
+            Id = 52,
+            Ticker = "SAP",
+            Name = "SAP SE",
+            CommonName = "SAP SE",
+            Exchange = StockExchanges.Frankfurt,
+            CurrentPrice = 100m,
+            UpdatedAt = DateTime.UtcNow,
+        };
+        var portfolio = new Portfolio { Id = 22, Name = "Main", UserId = 1, CreatedAt = DateTime.UtcNow };
+        var order = new Order
+        {
+            Id = 111,
+            PortfolioId = 22,
+            StockId = 52,
+            Side = OrderSide.Buy,
+            Kind = OrderKind.Limit,
+            Status = OrderStatus.Executed,
+            Quantity = 1m,
+            FilledQuantity = 1m,
+            Price = 100m,
+            AverageFillPrice = 100m,
+            CreatedAt = DateTime.UtcNow,
+            ExecutedAt = DateTime.UtcNow,
+            ExecutionSource = OrderExecutionSource.Manual,
+        };
+        var transaction = new Transaction
+        {
+            Id = 72,
+            PortfolioId = 22,
+            Type = TransactionType.Buy,
+            Amount = 100m,
+            SignedAmount = -100m,
+            StockId = 52,
+            Quantity = 1m,
+            UnitPrice = 100m,
+            OrderId = 111,
+            CreatedAt = DateTime.UtcNow,
+        };
+
+        context.Stocks.Add(stock);
+        context.Portfolios.Add(portfolio);
+        context.Orders.Add(order);
+        context.Transactions.Add(transaction);
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context, userId: 1);
+
+        var result = await controller.UpdateTransaction(22, 72, new UpdateTransactionDto
+        {
+            Type = TransactionType.Deposit,
+            Amount = 100m,
+            CreatedAt = DateTime.UtcNow,
+        });
+
+        Assert.IsType<OkObjectResult>(result.Result);
+
+        var updatedTransaction = await context.Transactions.SingleAsync(t => t.Id == 72);
+        Assert.Null(updatedTransaction.OrderId);
+
+        var untouchedOrder = await context.Orders.SingleAsync(o => o.Id == 111);
+        Assert.Equal(OrderStatus.Executed, untouchedOrder.Status);
+        Assert.Equal(1m, untouchedOrder.Quantity);
+    }
+
+    [Fact]
     public async Task UpdateBalance_PersistsCashAdjustment_AndReturnsCalculatedTotals()
     {
         await using var context = CreateContext();
