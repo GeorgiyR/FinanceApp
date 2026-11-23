@@ -139,10 +139,6 @@ public class FinanceController : ControllerBase
             .FirstOrDefaultAsync(t => t.Id == id && t.PortfolioId == portfolioId);
         if (transaction == null) return NotFound();
 
-        // Prevent editing order-linked transactions (they are auto-generated)
-        if (transaction.OrderId.HasValue)
-            return BadRequest("Order-linked transactions cannot be edited directly.");
-
         var normalizedSnapshot = await ValidateAndNormalizeTransactionAsync(
             dto.Amount,
             dto.StockId,
@@ -167,7 +163,7 @@ public class FinanceController : ControllerBase
         transaction.UnitPrice = normalizedSnapshot.UnitPrice;
 
         await _context.SaveChangesAsync();
-        await SyncOrderWithTransactionAsync(transaction);
+        await SyncEditedTransactionWithOrderAsync(transaction);
 
         if (transaction.StockId.HasValue)
             await _context.Entry(transaction).Reference(t => t.Stock).LoadAsync();
@@ -195,6 +191,59 @@ public class FinanceController : ControllerBase
         {
             await _orderExecutionService.SyncFromTransactionAsync(transaction);
         }
+    }
+
+    /// <summary>
+    /// Keeps a transaction's linked order consistent after the transaction is edited.
+    /// Transactions without a link fall back to the normal create-or-match synchronization.
+    /// </summary>
+    private async Task SyncEditedTransactionWithOrderAsync(Transaction transaction)
+    {
+        if (transaction.OrderId is not int orderId)
+        {
+            await SyncOrderWithTransactionAsync(transaction);
+            return;
+        }
+
+        var order = await _context.Orders
+            .FirstOrDefaultAsync(o => o.Id == orderId && o.PortfolioId == transaction.PortfolioId);
+
+        if (order is null)
+        {
+            transaction.OrderId = null;
+            await _context.SaveChangesAsync();
+            await SyncOrderWithTransactionAsync(transaction);
+            return;
+        }
+
+        if (transaction.Type is not (TransactionType.Buy or TransactionType.Sell) ||
+            transaction.StockId is not > 0 ||
+            transaction.Quantity.GetValueOrDefault() <= 0m)
+        {
+            // The transaction is no longer a trade: detach it and keep the order as a historical record.
+            transaction.OrderId = null;
+            await _context.SaveChangesAsync();
+            return;
+        }
+
+        var quantity = transaction.Quantity!.Value;
+
+        order.StockId = transaction.StockId.Value;
+        order.Side = transaction.Type == TransactionType.Buy ? OrderSide.Buy : OrderSide.Sell;
+        order.Status = OrderStatus.Executed;
+        order.Quantity = quantity;
+        order.FilledQuantity = quantity;
+        order.AverageFillPrice = transaction.UnitPrice;
+        if (order.Kind == OrderKind.Market && transaction.UnitPrice.HasValue)
+        {
+            order.Price = transaction.UnitPrice.Value;
+        }
+        order.ExecutedAt = transaction.CreatedAt;
+        order.UpdatedAt = DateTime.UtcNow;
+        order.ExecutionSource = OrderExecutionSource.Manual;
+        order.RejectReason = null;
+
+        await _context.SaveChangesAsync();
     }
 
     private async Task<decimal> GetTransactionCashBalance(int portfolioId)
