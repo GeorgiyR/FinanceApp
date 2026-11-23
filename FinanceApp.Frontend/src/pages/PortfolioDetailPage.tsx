@@ -1387,16 +1387,14 @@ const PortfolioDetailPage: React.FC = () => {
                           title: 'Действия', key: 'actions',
                           render: (_: unknown, t: Transaction) => (
                             <div style={{ display: 'flex', gap: 6 }}>
-                              {!t.orderId && (
-                                <Tooltip title="Редактировать">
-                                  <Button
-                                    icon={<EditOutlined />}
-                                    size="small"
-                                    aria-label="Редактировать транзакцию"
-                                    onClick={() => openEditTxModal(t)}
-                                  />
-                                </Tooltip>
-                              )}
+                              <Tooltip title="Редактировать">
+                                <Button
+                                  icon={<EditOutlined />}
+                                  size="small"
+                                  aria-label="Редактировать транзакцию"
+                                  onClick={() => openEditTxModal(t)}
+                                />
+                              </Tooltip>
                               <Popconfirm
                                 title="Удалить транзакцию?"
                                 onConfirm={() => handleDeleteTx(t.id)}
