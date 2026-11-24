@@ -68,11 +68,10 @@
                                 <th>Сторона</th>
                                 <th>Тип</th>
                                 <th>Количество</th>
-                                <th class="numeric">Ср. цена покупки</th>
                                 <th>Условие</th>
                                 <th>Статус</th>
                                 <th>Создан</th>
-                                <th></th>
+                                <th class="actions-heading">Действия</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -89,18 +88,19 @@
                                     <td class="@(order.Side == "Buy" ? "orders-side-buy" : "orders-side-sell")">@SideLabel(order.Side)</td>
                                     <td>@KindLabel(order.Kind)</td>
                                     <td>@FormatNumber(order.Quantity)</td>
-                                    <td class="numeric">@(order.AveragePurchasePrice is decimal averagePurchasePrice ? FormatMoney(averagePurchasePrice) : "—")</td>
                                     <td>@PriceCondition(order)</td>
                                     <td><span class="orders-status orders-status-@order.Status.ToLowerInvariant()">@StatusLabel(order.Status)</span></td>
                                     <td>@FormatDate(order.CreatedAt)</td>
-                                    <td>
-                                        <button type="button" class="orders-action-button" @onclick="() => CancelOrderAsync(order)" disabled="@_busy">Отменить</button>
+                                    <td class="transaction-row-actions">
+                                        <button type="button" class="action-icon-button" title="Редактировать ордер" aria-label="Редактировать ордер" @onclick="() => OpenEditDialog(order)" disabled="@_busy"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m3 14.8-.8 3 3-.8L16.8 5.4a1.8 1.8 0 0 0-2.6-2.6L3 14.8Zm9.9-9.9 2.6 2.6" /></svg></button>
+                                        <button type="button" class="action-icon-button" title="Отменить ордер" aria-label="Отменить ордер" @onclick="() => CancelOrderAsync(order)" disabled="@_busy"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15" /></svg></button>
+                                        <button type="button" class="action-icon-button action-delete-button" title="Удалить ордер" aria-label="Удалить ордер" @onclick="() => DeleteOrderAsync(order)" disabled="@_busy"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14m-9 0V3h4v2m3 0-.8 12H5.8L5 5m3 3v6m4-6v6" /></svg></button>
                                     </td>
                                 </tr>
                                 @if (_expandedOrderId == order.Id)
                                 {
                                     <tr class="orders-history-row" @key="-order.Id">
-                                        <td colspan="9">
+                                        <td colspan="8">
                                             @if (_stockDetailsLoading)
                                             {
                                                 <div class="position-history-state">Загрузка данных инструмента…</div>
@@ -146,11 +146,11 @@
                                 <th>Сторона</th>
                                 <th>Тип</th>
                                 <th>Количество</th>
-                                <th class="numeric">Ср. цена покупки</th>
                                 <th>Цена исполнения</th>
                                 <th>Статус</th>
                                 <th>Исполнен</th>
                                 <th>Источник</th>
+                                <th class="actions-heading">Действия</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -167,7 +167,6 @@
                                     <td class="@(order.Side == "Buy" ? "orders-side-buy" : "orders-side-sell")">@SideLabel(order.Side)</td>
                                     <td>@KindLabel(order.Kind)</td>
                                     <td>@FormatNumber(order.Quantity)</td>
-                                    <td class="numeric">@(order.AveragePurchasePrice is decimal averagePurchasePrice ? FormatMoney(averagePurchasePrice) : "—")</td>
                                     <td>@(order.AverageFillPrice is decimal price ? FormatMoney(price) : "—")</td>
                                     <td>
                                         <span class="orders-status orders-status-@order.Status.ToLowerInvariant()">@StatusLabel(order.Status)</span>
@@ -190,6 +189,9 @@
                                         {
                                             <span>—</span>
                                         }
+                                    </td>
+                                    <td class="transaction-row-actions">
+                                        <button type="button" class="action-icon-button action-delete-button" title="Удалить ордер" aria-label="Удалить ордер" @onclick="() => DeleteOrderAsync(order)" disabled="@_busy"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14m-9 0V3h4v2m3 0-.8 12H5.8L5 5m3 3v6m4-6v6" /></svg></button>
                                     </td>
                                 </tr>
                                 @if (_expandedOrderId == order.Id)
@@ -232,7 +234,7 @@
 {
     <div class="dialog-backdrop" role="presentation" @onclick="CloseDialog">
         <section class="action-dialog orders-dialog" role="dialog" aria-modal="true" aria-labelledby="order-dialog-title" @onclick:stopPropagation>
-            <h2 id="order-dialog-title">Новый ордер</h2>
+            <h2 id="order-dialog-title">@(_editingOrderId is null ? "Новый ордер" : "Редактировать ордер")</h2>
             @if (!string.IsNullOrWhiteSpace(_formError))
             {
                 <div class="login-error" role="alert">@_formError</div>
@@ -258,38 +260,48 @@
                         <option value="TrailingStop">Трейлинг-стоп (Trailing Stop)</option>
                     </select>
                 </div>
-                <div class="login-field stock-autocomplete-field">
-                    <label for="order-stock-search">Акция</label>
-                    <input id="order-stock-search" class="stock-search-input" type="search" role="combobox"
-                           aria-autocomplete="list" aria-controls="order-stock-results" aria-expanded="@_stockSearchOpen"
-                           autocomplete="off" placeholder="Введите тикер или название"
-                           value="@_stockSearch" @oninput="OnStockSearchChanged" />
-                    @if (_stockSearchOpen)
-                    {
-                        <div id="order-stock-results" class="stock-autocomplete-results" role="listbox">
-                            @if (_stockSearchLoading)
-                            {
-                                <div class="stock-search-message">Поиск акций…</div>
-                            }
-                            else if (_stockOptions.Count == 0)
-                            {
-                                <div class="stock-search-message">Совпадений не найдено.</div>
-                            }
-                            else
-                            {
-                                @foreach (var stock in _stockOptions)
+                @if (_editingOrderId is null)
+                {
+                    <div class="login-field stock-autocomplete-field">
+                        <label for="order-stock-search">Акция</label>
+                        <input id="order-stock-search" class="stock-search-input" type="search" role="combobox"
+                               aria-autocomplete="list" aria-controls="order-stock-results" aria-expanded="@_stockSearchOpen"
+                               autocomplete="off" placeholder="Введите тикер или название"
+                               value="@_stockSearch" @oninput="OnStockSearchChanged" />
+                        @if (_stockSearchOpen)
+                        {
+                            <div id="order-stock-results" class="stock-autocomplete-results" role="listbox">
+                                @if (_stockSearchLoading)
                                 {
-                                    <button type="button" class="stock-search-option" @onclick="() => SelectStock(stock)">
-                                        <span class="stock-search-ticker">@stock.Ticker</span>
-                                        <span class="stock-search-name">@stock.Name</span>
-                                        <span class="stock-search-exchange">@stock.Exchange</span>
-                                        <span class="stock-search-price">@FormatMoney(stock.CurrentPrice)</span>
-                                    </button>
+                                    <div class="stock-search-message">Поиск акций…</div>
                                 }
-                            }
-                        </div>
-                    }
-                </div>
+                                else if (_stockOptions.Count == 0)
+                                {
+                                    <div class="stock-search-message">Совпадений не найдено.</div>
+                                }
+                                else
+                                {
+                                    @foreach (var stock in _stockOptions)
+                                    {
+                                        <button type="button" class="stock-search-option" @onclick="() => SelectStock(stock)">
+                                            <span class="stock-search-ticker">@stock.Ticker</span>
+                                            <span class="stock-search-name">@stock.Name</span>
+                                            <span class="stock-search-exchange">@stock.Exchange</span>
+                                            <span class="stock-search-price">@FormatMoney(stock.CurrentPrice)</span>
+                                        </button>
+                                    }
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <div class="login-field">
+                        <label for="order-stock-readonly">Акция</label>
+                        <input id="order-stock-readonly" type="text" value="@_stockSearch" readonly disabled />
+                    </div>
+                }
                 <div class="login-field">
                     <label for="order-quantity">Количество</label>
                     <input id="order-quantity" type="number" step="0.01" min="0.01" @bind="_form.Quantity" />
@@ -346,7 +358,7 @@
 
                 <div class="dialog-actions">
                     <button type="button" class="portfolio-refresh-button" @onclick="CloseDialog">Отмена</button>
-                    <button type="submit" class="login-submit" disabled="@_busy">@(_busy ? "Сохранение…" : "Создать ордер")</button>
+                    <button type="submit" class="login-submit" disabled="@_busy">@(_busy ? "Сохранение…" : _editingOrderId is null ? "Создать ордер" : "Сохранить")</button>
                 </div>
             </EditForm>
         </section>
@@ -373,6 +385,7 @@
     private Timer? _pollTimer;
 
     private bool _dialogOpen;
+    private int? _editingOrderId;
     private string? _formError;
     private readonly OrderFormModel _form = new();
     private string _stockSearch = string.Empty;
@@ -620,6 +633,7 @@
     {
         _formError = null;
         _actionMessage = null;
+        _editingOrderId = null;
         _dialogOpen = true;
         _form.Side = "Buy";
         _form.Kind = "Market";
@@ -636,9 +650,33 @@
         _stockSearchOpen = false;
     }
 
+    private void OpenEditDialog(OrderListItem order)
+    {
+        _formError = null;
+        _actionMessage = null;
+        _editingOrderId = order.Id;
+        _dialogOpen = true;
+        _form.StockId = order.StockId;
+        _form.Side = order.Side;
+        _form.Kind = order.Kind;
+        _form.Quantity = order.Quantity;
+        _form.Price = order.Price;
+        _form.StopPrice = order.StopPrice;
+        _form.TakeProfitPrice = order.TakeProfitPrice;
+        _form.TrailPercentInput = order.TrailPercent;
+        _form.TrailAmountInput = order.TrailAmount;
+        _form.TrailingMode = order.TrailPercent is not null ? "Percent" : "Absolute";
+        _stockSearch = string.IsNullOrWhiteSpace(order.StockName)
+            ? order.StockTicker ?? string.Empty
+            : $"{order.StockTicker} - {order.StockName}";
+        _stockOptions = [];
+        _stockSearchOpen = false;
+    }
+
     private void CloseDialog()
     {
         _dialogOpen = false;
+        _editingOrderId = null;
         _stockSearchCancellation?.Cancel();
         _stockSearchOpen = false;
     }
@@ -653,12 +691,15 @@
 
         _busy = true;
         _formError = null;
+        var editingOrderId = _editingOrderId;
         try
         {
             using var client = await CreateAuthenticatedClientAsync();
             if (client is null)
             {
-                _formError = "Войдите в приложение, чтобы создать ордер.";
+                _formError = editingOrderId is null
+                    ? "Войдите в приложение, чтобы создать ордер."
+                    : "Войдите в приложение, чтобы сохранить ордер.";
                 return;
             }
 
@@ -697,7 +738,9 @@
                     break;
             }
 
-            using var response = await client.PostAsJsonAsync($"Portfolios/{PortfolioId}/orders", payload);
+            using var response = editingOrderId is int orderId
+                ? await client.PutAsJsonAsync($"Portfolios/{PortfolioId}/orders/{orderId}", payload)
+                : await client.PostAsJsonAsync($"Portfolios/{PortfolioId}/orders", payload);
             if (!response.IsSuccessStatusCode)
             {
                 _formError = await ReadErrorAsync(response);
@@ -705,14 +748,18 @@
             }
 
             _dialogOpen = false;
-            _actionMessage = "Ордер создан.";
-            _activeTab = _form.Kind == "Market" ? "history" : "open";
+            _actionMessage = editingOrderId is null ? "Ордер создан." : "Ордер сохранён.";
+            _editingOrderId = null;
+            if (editingOrderId is null)
+            {
+                _activeTab = _form.Kind == "Market" ? "history" : "open";
+            }
             await LoadOrdersAsync(silent: true);
             if (OnOrdersChanged.HasDelegate) await OnOrdersChanged.InvokeAsync();
         }
         catch (Exception)
         {
-            _formError = "Не удалось создать ордер.";
+            _formError = editingOrderId is null ? "Не удалось создать ордер." : "Не удалось сохранить ордер.";
         }
         finally
         {
@@ -747,6 +794,43 @@
         catch (Exception)
         {
             _actionMessage = "Не удалось отменить ордер.";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DeleteOrderAsync(OrderListItem order)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"Удалить ордер {order.StockTicker}?")) return;
+
+        _busy = true;
+        _actionMessage = null;
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null)
+            {
+                _actionMessage = "Войдите в приложение, чтобы удалить ордер.";
+                return;
+            }
+
+            using var response = await client.DeleteAsync($"Portfolios/{PortfolioId}/orders/{order.Id}");
+            if (!response.IsSuccessStatusCode)
+            {
+                _actionMessage = await ReadErrorAsync(response);
+                return;
+            }
+
+            _actionMessage = "Ордер удалён.";
+            if (_expandedOrderId == order.Id) CollapseHistory();
+            await LoadOrdersAsync(silent: true);
+            if (OnOrdersChanged.HasDelegate) await OnOrdersChanged.InvokeAsync();
+        }
+        catch (Exception)
+        {
+            _actionMessage = "Не удалось удалить ордер.";
         }
         finally
         {
@@ -910,7 +994,6 @@
         public decimal FilledQuantity { get; set; }
         public decimal Price { get; set; }
         public decimal? AverageFillPrice { get; set; }
-        public decimal? AveragePurchasePrice { get; set; }
         public decimal? StopPrice { get; set; }
         public decimal? TakeProfitPrice { get; set; }
         public decimal? TrailAmount { get; set; }
