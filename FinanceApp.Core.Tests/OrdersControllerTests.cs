@@ -360,6 +360,87 @@ public class OrdersControllerTests
         Assert.NotNull(dto.CancelledAt);
     }
 
+    [Fact]
+    public async Task Update_ExecutedOrder_CorrectsQuantityPriceAndLinkedTransaction()
+    {
+        await using var context = CreateContext();
+        context.Portfolios.Add(new Portfolio { Id = 8, Name = "Main", UserId = 1, CreatedAt = DateTime.UtcNow });
+        context.Stocks.Add(new Stock
+        {
+            Id = 18,
+            Ticker = "HPQ",
+            Name = "HP",
+            CommonName = "HP",
+            Exchange = StockExchanges.Nyse,
+            CurrentPrice = 110m,
+            UpdatedAt = DateTime.UtcNow,
+        });
+        context.Orders.Add(new Order
+        {
+            Id = 300,
+            PortfolioId = 8,
+            StockId = 18,
+            Side = OrderSide.Buy,
+            Kind = OrderKind.Limit,
+            Status = OrderStatus.Executed,
+            Quantity = 2m,
+            FilledQuantity = 2m,
+            Price = 100m,
+            AverageFillPrice = 100m,
+            CreatedAt = DateTime.UtcNow,
+        });
+        context.Transactions.Add(new Transaction
+        {
+            Id = 400,
+            PortfolioId = 8,
+            StockId = 18,
+            OrderId = 300,
+            Type = TransactionType.Buy,
+            Amount = 200m,
+            SignedAmount = TransactionDirection.DeriveSignedAmount(TransactionType.Buy, 200m),
+            Quantity = 2m,
+            UnitPrice = 100m,
+            CreatedAt = DateTime.UtcNow,
+        });
+        context.PortfolioItems.Add(new PortfolioItem
+        {
+            Id = 500,
+            PortfolioId = 8,
+            StockId = 18,
+            Quantity = 2m,
+            BuyPrice = 100m,
+            BoughtAt = DateTime.UtcNow,
+        });
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context, 1);
+        var result = await controller.Update(8, 300, new UpdateOrderDto
+        {
+            Quantity = 3m,
+            Price = 110m,
+        });
+
+        var ok = Assert.IsType<OkObjectResult>(result.Result);
+        var dto = Assert.IsType<OrderDto>(ok.Value);
+        Assert.Equal(OrderStatus.Executed, dto.Status);
+        Assert.Equal(3m, dto.Quantity);
+        Assert.Equal(110m, dto.AverageFillPrice);
+
+        var order = await context.Orders.SingleAsync();
+        Assert.Equal(OrderStatus.Executed, order.Status);
+        Assert.Equal(3m, order.FilledQuantity);
+
+        var transaction = await context.Transactions.SingleAsync();
+        Assert.Equal(3m, transaction.Quantity);
+        Assert.Equal(110m, transaction.UnitPrice);
+        Assert.Equal(330m, transaction.Amount);
+        Assert.Equal(TransactionDirection.DeriveSignedAmount(TransactionType.Buy, 330m), transaction.SignedAmount);
+
+        var item = await context.PortfolioItems.SingleAsync();
+        Assert.Equal(3m, item.Quantity);
+        Assert.Equal(110m, item.BuyPrice);
+    }
+
     private static AppDbContext CreateContext()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
