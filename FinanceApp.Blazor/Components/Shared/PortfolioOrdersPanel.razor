@@ -191,6 +191,7 @@
                                         }
                                     </td>
                                     <td class="transaction-row-actions">
+                                        <button type="button" class="action-icon-button" title="Редактировать ордер" aria-label="Редактировать ордер" @onclick="() => OpenEditDialog(order)" disabled="@_busy"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m3 14.8-.8 3 3-.8L16.8 5.4a1.8 1.8 0 0 0-2.6-2.6L3 14.8Zm9.9-9.9 2.6 2.6" /></svg></button>
                                         <button type="button" class="action-icon-button action-delete-button" title="Удалить ордер" aria-label="Удалить ордер" @onclick="() => DeleteOrderAsync(order)" disabled="@_busy"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14m-9 0V3h4v2m3 0-.8 12H5.8L5 5m3 3v6m4-6v6" /></svg></button>
                                     </td>
                                 </tr>
@@ -244,14 +245,14 @@
                 <ValidationSummary />
                 <div class="login-field">
                     <label for="order-side">Сторона</label>
-                    <select id="order-side" @bind="_form.Side">
+                    <select id="order-side" @bind="_form.Side" disabled="@_editingExecutedOrder">
                         <option value="Buy">Покупка</option>
                         <option value="Sell">Продажа</option>
                     </select>
                 </div>
                 <div class="login-field">
                     <label for="order-kind">Тип ордера</label>
-                    <select id="order-kind" @bind="_form.Kind">
+                    <select id="order-kind" @bind="_form.Kind" disabled="@_editingExecutedOrder">
                         <option value="Market">Рыночный (Market)</option>
                         <option value="Limit">Лимитный (Limit)</option>
                         <option value="StopMarket">Стоп-маркет (Stop Market)</option>
@@ -310,7 +311,7 @@
                 @if (_form.Kind is "Limit" or "StopLimit")
                 {
                     <div class="login-field">
-                        <label for="order-limit-price">Лимитная цена</label>
+                        <label for="order-limit-price">@(_editingExecutedOrder ? "Цена исполнения" : "Лимитная цена")</label>
                         <input id="order-limit-price" type="number" step="0.01" min="0" @bind="_form.Price" />
                     </div>
                 }
@@ -386,6 +387,7 @@
 
     private bool _dialogOpen;
     private int? _editingOrderId;
+    private bool _editingExecutedOrder;
     private string? _formError;
     private readonly OrderFormModel _form = new();
     private string _stockSearch = string.Empty;
@@ -634,6 +636,7 @@
         _formError = null;
         _actionMessage = null;
         _editingOrderId = null;
+        _editingExecutedOrder = false;
         _dialogOpen = true;
         _form.Side = "Buy";
         _form.Kind = "Market";
@@ -655,12 +658,15 @@
         _formError = null;
         _actionMessage = null;
         _editingOrderId = order.Id;
+        _editingExecutedOrder = order.Status is "Executed" or "PartiallyFilled";
         _dialogOpen = true;
         _form.StockId = order.StockId;
         _form.Side = order.Side;
         _form.Kind = order.Kind;
         _form.Quantity = order.Quantity;
-        _form.Price = order.Price;
+        _form.Price = order.Status is "Executed" or "PartiallyFilled"
+            ? order.AverageFillPrice ?? order.Price
+            : order.Price;
         _form.StopPrice = order.StopPrice;
         _form.TakeProfitPrice = order.TakeProfitPrice;
         _form.TrailPercentInput = order.TrailPercent;
@@ -677,6 +683,7 @@
     {
         _dialogOpen = false;
         _editingOrderId = null;
+        _editingExecutedOrder = false;
         _stockSearchCancellation?.Cancel();
         _stockSearchOpen = false;
     }
@@ -736,6 +743,12 @@
                         payload["trailAmount"] = _form.TrailAmountInput;
                     }
                     break;
+            }
+
+            // Executed orders are edited by fill price regardless of their kind.
+            if (editingOrderId is not null)
+            {
+                payload["price"] = _form.Price;
             }
 
             using var response = editingOrderId is int orderId
