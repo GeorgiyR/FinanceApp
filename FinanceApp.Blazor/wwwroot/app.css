@@ -294,6 +294,8 @@ a { color: inherit; text-decoration: none; }
 }
 
 .actions-heading { text-align: center !important; }
+.orders-table .transaction-row-actions { text-align: center; white-space: nowrap; }
+.orders-table .transaction-row-actions .action-icon-button + .action-icon-button { margin-left: 6px; }
 .positions-table .actions-cell { text-align: center; }
 .positions-table .action-buttons { display: flex; align-items: center; justify-content: center; gap: 5px; }
 .action-icon-button { display: inline-grid; width: 30px; height: 30px; place-items: center; padding: 5px; border: 1px solid #d9e0e8; border-radius: 6px; background: #fff; color: #526173; cursor: pointer; }
