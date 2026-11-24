@@ -46,7 +46,79 @@ public class OrdersController : ControllerBase
             .ThenByDescending(o => o.Id)
             .ToListAsync();
 
-        return Ok(orders.Select(OrderDto.FromEntity).ToList());
+        var averagePurchasePrices = await CalculateAveragePurchasePricesAsync(portfolioId);
+
+        return Ok(orders
+            .Select(o => OrderDto.FromEntity(o, averagePurchasePrices.GetValueOrDefault(o.StockId)))
+            .ToList());
+    }
+
+    /// <summary>
+    /// Calculates the moving-average purchase price of the shares that are still held per stock.
+    /// Buys add to the cost basis and sells reduce it proportionally, mirroring the
+    /// PortfolioItem.BuyPrice calculation used by the positions view.
+    /// </summary>
+    private async Task<Dictionary<int, decimal?>> CalculateAveragePurchasePricesAsync(int portfolioId)
+    {
+        var executedOrders = await _context.Orders
+            .AsNoTracking()
+            .Where(o => o.PortfolioId == portfolioId &&
+                (o.Status == OrderStatus.Executed || o.Status == OrderStatus.PartiallyFilled) &&
+                o.FilledQuantity > 0m)
+            .Select(o => new
+            {
+                o.Id,
+                o.StockId,
+                o.Side,
+                o.FilledQuantity,
+                o.AverageFillPrice,
+                o.Price,
+                o.ExecutedAt,
+                o.CreatedAt,
+            })
+            .ToListAsync();
+
+        var result = new Dictionary<int, decimal?>();
+
+        foreach (var group in executedOrders
+            .OrderBy(o => o.ExecutedAt ?? o.CreatedAt)
+            .ThenBy(o => o.Id)
+            .GroupBy(o => o.StockId))
+        {
+            var remainingQuantity = 0m;
+            var remainingCost = 0m;
+
+            foreach (var order in group)
+            {
+                if (order.Side == OrderSide.Buy)
+                {
+                    remainingQuantity += order.FilledQuantity;
+                    remainingCost += order.FilledQuantity * (order.AverageFillPrice ?? order.Price);
+                    continue;
+                }
+
+                if (remainingQuantity <= 0m)
+                {
+                    continue;
+                }
+
+                var soldQuantity = Math.Min(order.FilledQuantity, remainingQuantity);
+                remainingCost -= soldQuantity * (remainingCost / remainingQuantity);
+                remainingQuantity -= soldQuantity;
+
+                if (remainingQuantity <= 0m)
+                {
+                    remainingQuantity = 0m;
+                    remainingCost = 0m;
+                }
+            }
+
+            result[group.Key] = remainingQuantity > 0m
+                ? Math.Round(remainingCost / remainingQuantity, 2)
+                : null;
+        }
+
+        return result;
     }
 
     [HttpPost]
@@ -280,6 +352,8 @@ public sealed class OrderDto
     public decimal FilledQuantity { get; init; }
     public decimal Price { get; init; }
     public decimal? AverageFillPrice { get; init; }
+    /// <summary>Moving-average purchase price of the shares of this stock that are still held.</summary>
+    public decimal? AveragePurchasePrice { get; init; }
     public decimal? StopPrice { get; init; }
     public decimal? TakeProfitPrice { get; init; }
     public decimal? TrailAmount { get; init; }
@@ -297,7 +371,7 @@ public sealed class OrderDto
     public DateTime? ExpiresAt { get; init; }
     public string? RejectReason { get; init; }
 
-    public static OrderDto FromEntity(Order order) => new()
+    public static OrderDto FromEntity(Order order, decimal? averagePurchasePrice = null) => new()
     {
         Id = order.Id,
         PortfolioId = order.PortfolioId,
@@ -313,6 +387,7 @@ public sealed class OrderDto
         FilledQuantity = order.FilledQuantity,
         Price = order.Price,
         AverageFillPrice = order.AverageFillPrice,
+        AveragePurchasePrice = averagePurchasePrice,
         StopPrice = order.StopPrice,
         TakeProfitPrice = order.TakeProfitPrice,
         TrailAmount = order.TrailAmount,
