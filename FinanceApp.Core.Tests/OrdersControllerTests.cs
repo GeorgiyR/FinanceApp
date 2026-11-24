@@ -369,6 +369,135 @@ public class OrdersControllerTests
         return new AppDbContext(options);
     }
 
+    [Fact]
+    public async Task GetAll_CalculatesAveragePurchasePriceOfUnsoldShares()
+    {
+        await using var context = CreateContext();
+        context.Portfolios.Add(new Portfolio { Id = 1, Name = "Main", UserId = 1, CreatedAt = DateTime.UtcNow });
+        context.Stocks.Add(new Stock
+        {
+            Id = 10,
+            Ticker = "AAPL",
+            Name = "Apple",
+            CommonName = "Apple",
+            Exchange = StockExchanges.Nyse,
+            CurrentPrice = 100m,
+            UpdatedAt = DateTime.UtcNow,
+        });
+        context.Stocks.Add(new Stock
+        {
+            Id = 11,
+            Ticker = "MSFT",
+            Name = "Microsoft",
+            CommonName = "Microsoft",
+            Exchange = StockExchanges.Nyse,
+            CurrentPrice = 100m,
+            UpdatedAt = DateTime.UtcNow,
+        });
+
+        var day = new DateTime(2026, 11, 20, 10, 0, 0, DateTimeKind.Utc);
+        context.Orders.AddRange(
+            new Order
+            {
+                Id = 1,
+                PortfolioId = 1,
+                StockId = 10,
+                Side = OrderSide.Buy,
+                Kind = OrderKind.Market,
+                Status = OrderStatus.Executed,
+                Quantity = 10m,
+                FilledQuantity = 10m,
+                Price = 100m,
+                AverageFillPrice = 100m,
+                CreatedAt = day,
+                ExecutedAt = day,
+            },
+            new Order
+            {
+                Id = 2,
+                PortfolioId = 1,
+                StockId = 10,
+                Side = OrderSide.Buy,
+                Kind = OrderKind.Market,
+                Status = OrderStatus.Executed,
+                Quantity = 10m,
+                FilledQuantity = 10m,
+                Price = 200m,
+                AverageFillPrice = 200m,
+                CreatedAt = day.AddHours(1),
+                ExecutedAt = day.AddHours(1),
+            },
+            new Order
+            {
+                Id = 3,
+                PortfolioId = 1,
+                StockId = 10,
+                Side = OrderSide.Sell,
+                Kind = OrderKind.Market,
+                Status = OrderStatus.Executed,
+                Quantity = 10m,
+                FilledQuantity = 10m,
+                Price = 250m,
+                AverageFillPrice = 250m,
+                CreatedAt = day.AddHours(2),
+                ExecutedAt = day.AddHours(2),
+            },
+            new Order
+            {
+                Id = 4,
+                PortfolioId = 1,
+                StockId = 10,
+                Side = OrderSide.Buy,
+                Kind = OrderKind.Limit,
+                Status = OrderStatus.Pending,
+                Quantity = 5m,
+                Price = 50m,
+                CreatedAt = day.AddHours(3),
+            },
+            new Order
+            {
+                Id = 5,
+                PortfolioId = 1,
+                StockId = 11,
+                Side = OrderSide.Buy,
+                Kind = OrderKind.Market,
+                Status = OrderStatus.Executed,
+                Quantity = 1m,
+                FilledQuantity = 1m,
+                Price = 400m,
+                AverageFillPrice = 400m,
+                CreatedAt = day,
+                ExecutedAt = day,
+            },
+            new Order
+            {
+                Id = 6,
+                PortfolioId = 1,
+                StockId = 11,
+                Side = OrderSide.Sell,
+                Kind = OrderKind.Market,
+                Status = OrderStatus.Executed,
+                Quantity = 1m,
+                FilledQuantity = 1m,
+                Price = 450m,
+                AverageFillPrice = 450m,
+                CreatedAt = day.AddHours(1),
+                ExecutedAt = day.AddHours(1),
+            });
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context, 1);
+
+        var result = await controller.GetAll(1);
+        var ok = Assert.IsType<OkObjectResult>(result.Result);
+        var orders = Assert.IsAssignableFrom<IEnumerable<OrderDto>>(ok.Value).ToList();
+
+        // 10 @ 100 and 10 @ 200, then 10 sold -> remaining cost basis is 10 @ 150.
+        Assert.All(orders.Where(o => o.StockId == 10), o => Assert.Equal(150m, o.AveragePurchasePrice));
+        // The position is fully sold, so no average purchase price remains.
+        Assert.All(orders.Where(o => o.StockId == 11), o => Assert.Null(o.AveragePurchasePrice));
+    }
+
     private static OrdersController CreateController(AppDbContext context, int userId)
     {
         var executionService = new OrderExecutionService(context, TimeProvider.System);
