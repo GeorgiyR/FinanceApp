@@ -125,7 +125,10 @@ public class OrdersController : ControllerBase
             .FirstOrDefaultAsync(o => o.Id == orderId && o.PortfolioId == portfolioId);
         if (order is null) return NotFound();
 
-        if (order.Status is not (OrderStatus.Pending or OrderStatus.Triggered))
+        // A bare update (no status transition) is allowed for historical orders too:
+        // the orders view lets users correct quantity and fill price after execution.
+        var editOnly = dto.Status is null && order.Status is not (OrderStatus.Pending or OrderStatus.Triggered);
+        if (!editOnly && order.Status is not (OrderStatus.Pending or OrderStatus.Triggered))
         {
             return Conflict($"Order is already {order.Status}.");
         }
@@ -161,6 +164,16 @@ public class OrdersController : ControllerBase
             takeProfitPrice, trailAmount, trailPercent, price);
         if (validationError is not null) return BadRequest(validationError);
 
+        var isExecutedEdit = editOnly && order.Status == OrderStatus.Executed;
+        var oldQuantity = order.Quantity;
+        var oldFillPrice = order.AverageFillPrice ?? order.Price;
+        if (isExecutedEdit)
+        {
+            // Side and kind are fixed for an executed trade; only the numbers may be corrected.
+            side = order.Side;
+            kind = order.Kind;
+        }
+
         order.Side = side;
         order.Kind = kind;
         order.TimeInForce = dto.TimeInForce ?? order.TimeInForce;
@@ -185,8 +198,58 @@ public class OrdersController : ControllerBase
             order.Status = dto.Status.Value;
         }
 
+        if (isExecutedEdit)
+        {
+            order.FilledQuantity = order.Quantity;
+            order.AverageFillPrice = price;
+            await SyncExecutedOrderEditAsync(order, oldQuantity, oldFillPrice);
+        }
+
         await _context.SaveChangesAsync();
         return Ok(OrderDto.FromEntity(order));
+    }
+
+    /// <summary>
+    /// Applies a correction of an executed order's quantity/price to the linked transaction
+    /// and the portfolio position so that all three views stay consistent.
+    /// </summary>
+    private async Task SyncExecutedOrderEditAsync(Order order, decimal oldQuantity, decimal oldFillPrice)
+    {
+        var transaction = await _context.Transactions
+            .FirstOrDefaultAsync(t => t.OrderId == order.Id);
+        if (transaction is null) return;
+
+        var newQuantity = order.Quantity;
+        var newFillPrice = order.AverageFillPrice ?? order.Price;
+
+        transaction.Quantity = newQuantity;
+        transaction.UnitPrice = newFillPrice;
+        transaction.Amount = newQuantity * newFillPrice;
+        transaction.SignedAmount = TransactionDirection.DeriveSignedAmount(transaction.Type, transaction.Amount);
+
+        var item = await _context.PortfolioItems
+            .FirstOrDefaultAsync(i => i.PortfolioId == order.PortfolioId && i.StockId == order.StockId);
+        if (item is null) return;
+
+        var quantityDelta = newQuantity - oldQuantity;
+        var costDelta = newQuantity * newFillPrice - oldQuantity * oldFillPrice;
+        var newPositionQuantity = transaction.Type == TransactionType.Buy
+            ? item.Quantity + quantityDelta
+            : item.Quantity - quantityDelta;
+
+        if (newPositionQuantity <= 0m)
+        {
+            _context.PortfolioItems.Remove(item);
+            return;
+        }
+
+        if (transaction.Type == TransactionType.Buy)
+        {
+            var newCostBasis = item.BuyPrice * item.Quantity + costDelta;
+            item.BuyPrice = newCostBasis > 0m ? newCostBasis / newPositionQuantity : 0m;
+        }
+
+        item.Quantity = newPositionQuantity;
     }
 
     [HttpPost("{orderId}/cancel")]
