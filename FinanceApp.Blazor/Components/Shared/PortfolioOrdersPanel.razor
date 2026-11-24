@@ -68,6 +68,7 @@
                                 <th>Сторона</th>
                                 <th>Тип</th>
                                 <th>Количество</th>
+                                <th class="numeric">Ср. цена покупки</th>
                                 <th>Условие</th>
                                 <th>Статус</th>
                                 <th>Создан</th>
@@ -88,6 +89,7 @@
                                     <td class="@(order.Side == "Buy" ? "orders-side-buy" : "orders-side-sell")">@SideLabel(order.Side)</td>
                                     <td>@KindLabel(order.Kind)</td>
                                     <td>@FormatNumber(order.Quantity)</td>
+                                    <td class="numeric">@(order.AveragePurchasePrice is decimal averagePurchasePrice ? FormatMoney(averagePurchasePrice) : "—")</td>
                                     <td>@PriceCondition(order)</td>
                                     <td><span class="orders-status orders-status-@order.Status.ToLowerInvariant()">@StatusLabel(order.Status)</span></td>
                                     <td>@FormatDate(order.CreatedAt)</td>
@@ -98,7 +100,7 @@
                                 @if (_expandedOrderId == order.Id)
                                 {
                                     <tr class="orders-history-row" @key="-order.Id">
-                                        <td colspan="8">
+                                        <td colspan="9">
                                             @if (_stockDetailsLoading)
                                             {
                                                 <div class="position-history-state">Загрузка данных инструмента…</div>
@@ -144,6 +146,7 @@
                                 <th>Сторона</th>
                                 <th>Тип</th>
                                 <th>Количество</th>
+                                <th class="numeric">Ср. цена покупки</th>
                                 <th>Цена исполнения</th>
                                 <th>Статус</th>
                                 <th>Исполнен</th>
@@ -164,6 +167,7 @@
                                     <td class="@(order.Side == "Buy" ? "orders-side-buy" : "orders-side-sell")">@SideLabel(order.Side)</td>
                                     <td>@KindLabel(order.Kind)</td>
                                     <td>@FormatNumber(order.Quantity)</td>
+                                    <td class="numeric">@(order.AveragePurchasePrice is decimal averagePurchasePrice ? FormatMoney(averagePurchasePrice) : "—")</td>
                                     <td>@(order.AverageFillPrice is decimal price ? FormatMoney(price) : "—")</td>
                                     <td>
                                         <span class="orders-status orders-status-@order.Status.ToLowerInvariant()">@StatusLabel(order.Status)</span>
@@ -191,7 +195,7 @@
                                 @if (_expandedOrderId == order.Id)
                                 {
                                     <tr class="orders-history-row" @key="-order.Id">
-                                        <td colspan="8">
+                                        <td colspan="9">
                                             @if (_stockDetailsLoading)
                                             {
                                                 <div class="position-history-state">Загрузка данных инструмента…</div>
@@ -906,6 +910,7 @@
         public decimal FilledQuantity { get; set; }
         public decimal Price { get; set; }
         public decimal? AverageFillPrice { get; set; }
+        public decimal? AveragePurchasePrice { get; set; }
         public decimal? StopPrice { get; set; }
         public decimal? TakeProfitPrice { get; set; }
         public decimal? TrailAmount { get; set; }
