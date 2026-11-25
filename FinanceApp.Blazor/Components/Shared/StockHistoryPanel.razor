@@ -77,6 +77,10 @@
                 {
                     <line class="history-date-tick" x1="@tick.X.ToString(CultureInfo.InvariantCulture)" y1="180" x2="@tick.X.ToString(CultureInfo.InvariantCulture)" y2="184" />
                     @((MarkupString)$"<text class='history-date-label' x='{tick.X.ToString(CultureInfo.InvariantCulture)}' y='{tick.Y.ToString(CultureInfo.InvariantCulture)}' text-anchor='{tick.Anchor}'>{tick.Label}</text>")
+                    @if (tick.SubLabel is not null)
+                    {
+                        @((MarkupString)$"<text class='history-date-sub-label' x='{tick.X.ToString(CultureInfo.InvariantCulture)}' y='{(tick.Y + 12m).ToString(CultureInfo.InvariantCulture)}' text-anchor='{tick.Anchor}'>{tick.SubLabel}</text>")
+                    }
                 }
                 @foreach (var month in GetHistoryMonthLabels(_history, _historyRange))
                 {
@@ -748,19 +752,31 @@
     private static IReadOnlyList<HistoryDateTick> GetWeeklyHistoryDateTicks(IReadOnlyList<(DateTime Timestamp, decimal Price)> points, Func<DateTime, decimal> xMap)
     {
         // 1:1 weekly axis: labels are sampled by point index, not by wall-clock time.
+        // The date and the time are rendered on two lines so neighbouring labels do not collide.
         const int maxLabels = 10;
         var step = Math.Max(1, (int)Math.Ceiling((points.Count - 1) / (decimal)(maxLabels - 1)));
-        var format = "dd.MM HH:mm";
         var ticks = new List<HistoryDateTick>();
         for (var index = 0; index < points.Count; index += step)
         {
-            ticks.Add(new HistoryDateTick(xMap(points[index].Timestamp), points[index].Timestamp.ToLocalTime().ToString(format, RussianCulture), "middle"));
+            var local = points[index].Timestamp.ToLocalTime();
+            ticks.Add(new HistoryDateTick(
+                xMap(points[index].Timestamp),
+                local.ToString("dd.MM", RussianCulture),
+                "middle",
+                199m,
+                local.ToString("HH:mm", RussianCulture)));
         }
 
         var lastX = xMap(points[^1].Timestamp);
         if (ticks.Count == 0 || ticks[^1].X < lastX - 40m)
         {
-            ticks.Add(new HistoryDateTick(lastX, points[^1].Timestamp.ToLocalTime().ToString(format, RussianCulture), "middle"));
+            var lastLocal = points[^1].Timestamp.ToLocalTime();
+            ticks.Add(new HistoryDateTick(
+                lastX,
+                lastLocal.ToString("dd.MM", RussianCulture),
+                "middle",
+                199m,
+                lastLocal.ToString("HH:mm", RussianCulture)));
         }
 
         if (ticks[^1].X > 770m) ticks[^1] = ticks[^1] with { Anchor = "end" };
@@ -805,7 +821,7 @@
     private sealed class StockHistoryVolumeMetrics { public decimal? AverageVolume20 { get; set; } public decimal? AverageVolume50 { get; set; } public decimal? RelativeVolume { get; set; } public decimal? Turnover { get; set; } public string? TurnoverCurrency { get; set; } }
     private sealed class StockHistoryPoint { public DateTime Timestamp { get; set; } public decimal CloseNormalized { get; set; } public decimal? CloseEur { get; set; } public decimal HighNormalized { get; set; } public decimal LowNormalized { get; set; } public decimal? HighEur { get; set; } public decimal? LowEur { get; set; } public long Volume { get; set; } }
     private sealed record HistoryAxisTick(decimal Y, string Label);
-    private sealed record HistoryDateTick(decimal X, string Label, string Anchor, decimal Y = 205m);
+    private sealed record HistoryDateTick(decimal X, string Label, string Anchor, decimal Y = 205m, string? SubLabel = null);
     private sealed record HistoryMonthLabel(decimal X, string Label);
     private sealed record HistoryLineSegment(string Points, bool IsGap);
     private sealed record HistoryVolumeBar(DateTime Timestamp, long Volume, decimal X, decimal Y, decimal Width, decimal Height, bool IsCapped);
