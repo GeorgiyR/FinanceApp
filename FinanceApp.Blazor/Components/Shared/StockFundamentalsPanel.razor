@@ -45,7 +45,7 @@
             {
                 <div class="fundamentals-grid fundamentals-ratios">
                     <div><span>P/E</span><strong>@Number(snapshot.PeRatio, 4)</strong></div><div><span>Forward P/E</span><strong>@Number(snapshot.ForwardPeRatio, 4)</strong></div>
-                    <div><span>P/B</span><strong>@Number(snapshot.PbRatio, 4)</strong></div><div><span>Dividend Yield</span><strong>@(snapshot.DividendYield is decimal y ? $"{(y * 100m).ToString("N2", CultureInfo.GetCultureInfo("ru-RU"))}%" : "—")</strong></div>
+                    <div><span>P/B</span><strong>@Number(snapshot.PbRatio, 4)</strong></div><div><span>Dividend Yield</span><strong>@(snapshot.DividendYield is decimal y ? $"{(y * 100m).ToString("N2", RussianCulture)}%" : "—")</strong></div>
                     <div><span>Total Assets</span><strong>@Financial(snapshot.TotalAssets, snapshot.Currency)</strong></div><div><span>Total Liabilities</span><strong>@Financial(snapshot.TotalLiabilities, snapshot.Currency)</strong></div>
                 </div>
             }
@@ -82,6 +82,7 @@
     [Parameter, EditorRequired] public string Name { get; set; } = string.Empty;
     [Parameter] public EventCallback OnClose { get; set; }
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly CultureInfo RussianCulture = CultureInfo.GetCultureInfo("ru-RU");
     private FundamentalsData? _data;
     private string? _error;
     private string _tab = "summary";
@@ -119,8 +120,13 @@
     private void ShowAnnual() => _tab = "annual";
     private void ShowQuarterly() => _tab = "quarterly";
     private void ShowEarnings() => _tab = "earnings";
-    private static string Financial(decimal? value, string? currency) => value is decimal amount ? $"{amount.ToString("N2", CultureInfo.GetCultureInfo("ru-RU"))} {currency}".Trim() : "—";
-    private static string Number(decimal? value, int decimals) => value is decimal number ? number.ToString($"N{decimals}", CultureInfo.GetCultureInfo("ru-RU")) : "—";
+    private static string Financial(decimal? value, string? currency)
+    {
+        if (value is not decimal amount) return "—";
+        var billions = (amount / 1_000_000_000m).ToString("N2", RussianCulture);
+        return string.IsNullOrWhiteSpace(currency) ? $"{billions} млрд" : $"{billions} млрд {currency}";
+    }
+    private static string Number(decimal? value, int decimals) => value is decimal number ? number.ToString($"N{decimals}", RussianCulture) : "—";
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     private sealed class FundamentalsData { public string State { get; set; } = ""; public string? WarningMessage { get; set; } public FundamentalsSnapshot? Snapshot { get; set; } public List<FinancialPeriod> Periods { get; set; } = []; public List<EarningsEvent> EarningsEvents { get; set; } = []; }
