@@ -1,4 +1,5 @@
 @page "/portfolios"
+@using System.ComponentModel.DataAnnotations
 @using System.Net.Http.Headers
 @using System.Net.Http.Json
 @using System.Text.Json
@@ -13,10 +14,20 @@
             <h1>Портфели</h1>
             <p class="portfolio-page-description">Ваши инвестиционные портфели</p>
         </div>
-        <button class="portfolio-refresh-button" @onclick="LoadPortfoliosAsync" disabled="@_loading">
-            Обновить
-        </button>
+        <div class="portfolio-heading-actions">
+            <button class="portfolio-primary-button" @onclick="OpenCreateDialog" disabled="@_busy">
+                Добавить портфель
+            </button>
+            <button class="portfolio-refresh-button" @onclick="LoadPortfoliosAsync" disabled="@_loading">
+                Обновить
+            </button>
+        </div>
     </div>
+
+    @if (!string.IsNullOrWhiteSpace(_actionMessage))
+    {
+        <div class="portfolio-refresh-notice" role="status">@_actionMessage</div>
+    }
 
     @if (_loading)
     {
@@ -42,27 +53,67 @@
         <div class="portfolio-list">
             @foreach (var portfolio in _portfolios)
             {
-                <a class="portfolio-card" href="@($"/stockpilot/portfolios/{portfolio.Id}")">
-                    <div class="portfolio-card-heading">
-                        <h2>@portfolio.Name</h2>
-                        <span class="portfolio-card-arrow" aria-hidden="true">→</span>
-                    </div>
-                    <div class="portfolio-card-meta">
-                        <span>Позиции: @(portfolio.Items?.Count ?? 0)</span>
-                        <span>Ордера: @(portfolio.Orders?.Count ?? 0)</span>
-                    </div>
-                </a>
+                var canDelete = (portfolio.Items?.Count ?? 0) == 0;
+                <div class="portfolio-card">
+                    <a class="portfolio-card-link" href="@($"/stockpilot/portfolios/{portfolio.Id}")">
+                        <div class="portfolio-card-heading">
+                            <h2>@portfolio.Name</h2>
+                            <span class="portfolio-card-arrow" aria-hidden="true">→</span>
+                        </div>
+                        <div class="portfolio-card-meta">
+                            <span>Позиции: @(portfolio.Items?.Count ?? 0)</span>
+                            <span>Ордера: @(portfolio.Orders?.Count ?? 0)</span>
+                        </div>
+                    </a>
+                    <button type="button" class="action-icon-button action-delete-button portfolio-card-delete"
+                            title="@(canDelete ? "Удалить портфель" : "Нельзя удалить портфель с позициями")"
+                            aria-label="Удалить портфель"
+                            disabled="@(!canDelete || _busy)"
+                            @onclick="() => DeletePortfolioAsync(portfolio)">
+                        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14m-9 0V3h4v2m3 0-.8 12H5.8L5 5m3 3v6m4-6v6" /></svg>
+                    </button>
+                </div>
             }
         </div>
     }
 </div>
 
+@if (_createOpen)
+{
+    <div class="dialog-backdrop" role="presentation" @onclick="CloseCreateDialog">
+        <section class="action-dialog" role="dialog" aria-modal="true" aria-labelledby="create-portfolio-title" @onclick:stopPropagation>
+            <h2 id="create-portfolio-title">Новый портфель</h2>
+            @if (!string.IsNullOrWhiteSpace(_createError))
+            {
+                <div class="login-error" role="alert">@_createError</div>
+            }
+            <EditForm Model="_createForm" OnValidSubmit="CreatePortfolioAsync" FormName="portfolio-form">
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+                <div class="login-field">
+                    <label for="portfolio-name">Название</label>
+                    <input id="portfolio-name" type="text" @bind="_createForm.Name" @bind:event="oninput" disabled="@_busy" />
+                </div>
+                <div class="dialog-actions">
+                    <button type="button" class="portfolio-refresh-button" @onclick="CloseCreateDialog" disabled="@_busy">Отмена</button>
+                    <button type="submit" class="login-submit" disabled="@_busy">@(_busy ? "Сохранение…" : "Создать")</button>
+                </div>
+            </EditForm>
+        </section>
+    </div>
+}
+
 @code {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private List<PortfolioSummary> _portfolios = [];
     private bool _loading = true;
+    private bool _busy;
     private string? _error;
+    private string? _actionMessage;
     private bool _requiresLogin;
+    private bool _createOpen;
+    private string? _createError;
+    private readonly CreatePortfolioForm _createForm = new();
     private IJSObjectReference? _apiModule;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -121,6 +172,102 @@
         }
     }
 
+    private void OpenCreateDialog()
+    {
+        _createError = null;
+        _createForm.Name = string.Empty;
+        _createOpen = true;
+    }
+
+    private void CloseCreateDialog()
+    {
+        if (_busy) return;
+        _createOpen = false;
+    }
+
+    private async Task CreatePortfolioAsync()
+    {
+        if (_busy) return;
+
+        _busy = true;
+        _createError = null;
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null)
+            {
+                _createError = "Войдите в приложение, чтобы создать портфель.";
+                return;
+            }
+
+            using var response = await client.PostAsJsonAsync("Portfolios", new { name = _createForm.Name.Trim() });
+            if (!response.IsSuccessStatusCode)
+            {
+                _createError = $"Не удалось создать портфель (HTTP {(int)response.StatusCode}).";
+                return;
+            }
+
+            _createOpen = false;
+            _actionMessage = "Портфель создан.";
+            await LoadPortfoliosAsync();
+        }
+        catch (Exception)
+        {
+            _createError = "Не удалось создать портфель.";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DeletePortfolioAsync(PortfolioSummary portfolio)
+    {
+        if (_busy || (portfolio.Items?.Count ?? 0) > 0) return;
+        if (!await JS.InvokeAsync<bool>("confirm", $"Удалить портфель «{portfolio.Name}»?")) return;
+
+        _busy = true;
+        _actionMessage = null;
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null)
+            {
+                _actionMessage = "Войдите в приложение, чтобы удалить портфель.";
+                return;
+            }
+
+            using var response = await client.DeleteAsync($"Portfolios/{portfolio.Id}");
+            if (!response.IsSuccessStatusCode)
+            {
+                _actionMessage = "Не удалось удалить портфель.";
+                return;
+            }
+
+            _actionMessage = "Портфель удалён.";
+            await LoadPortfoliosAsync();
+        }
+        catch (Exception)
+        {
+            _actionMessage = "Не удалось удалить портфель.";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task<HttpClient?> CreateAuthenticatedClientAsync()
+    {
+        _apiModule ??= await JS.InvokeAsync<IJSObjectReference>("import", "./portfolioApi.js");
+        var token = await _apiModule.InvokeAsync<string?>("getToken");
+        if (string.IsNullOrWhiteSpace(token)) return null;
+
+        var client = HttpClientFactory.CreateClient("FinanceApi");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        return client;
+    }
+
     private sealed class PortfolioSummary
     {
         public PortfolioSummary() { }
@@ -128,6 +275,13 @@
         public string Name { get; set; } = string.Empty;
         public List<JsonElement>? Items { get; set; } = [];
         public List<JsonElement>? Orders { get; set; } = [];
+    }
+
+    private sealed class CreatePortfolioForm
+    {
+        [Required(ErrorMessage = "Укажите название портфеля.")]
+        [StringLength(100, ErrorMessage = "Название не должно превышать 100 символов.")]
+        public string Name { get; set; } = string.Empty;
     }
 }
 
