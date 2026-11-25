@@ -359,6 +359,16 @@ a { color: inherit; text-decoration: none; }
 .orders-table .transaction-row-actions .action-icon-button + .action-icon-button { margin-left: 6px; }
 .positions-table .actions-cell { text-align: center; }
 .positions-table .action-buttons { display: flex; align-items: center; justify-content: center; gap: 5px; }
+.portfolio-positions-table .actions-heading,
+.portfolio-positions-table .actions-cell {
+    position: sticky;
+    right: 0;
+    background: #fff;
+    box-shadow: -6px 0 10px -8px #10182840;
+}
+.portfolio-positions-table .actions-heading { z-index: 3; background: #f8fafc; }
+.portfolio-positions-table .actions-cell { z-index: 2; }
+.portfolio-positions-table tbody tr:hover .actions-cell { background: #fafcff; }
 .action-icon-button { display: inline-grid; width: 30px; height: 30px; place-items: center; padding: 5px; border: 1px solid #d9e0e8; border-radius: 6px; background: #fff; color: #526173; cursor: pointer; }
 .action-icon-button:hover:not(:disabled) { border-color: #1677ff; color: #1677ff; }
 .action-icon-button:disabled { cursor: not-allowed; opacity: .4; }
