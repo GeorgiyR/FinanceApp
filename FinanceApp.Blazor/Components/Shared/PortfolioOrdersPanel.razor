@@ -28,6 +28,17 @@
         </div>
     </div>
 
+    <div class="transactions-toolbar orders-filters">
+        <select aria-label="Фильтр по стороне ордера" @bind="_sideFilter" @bind:after="OnFiltersChanged">
+            <option value="all">Все стороны</option>
+            <option value="Buy">Покупка</option>
+            <option value="Sell">Продажа</option>
+        </select>
+        <input type="date" aria-label="Дата от" value="@_dateFrom" @onchange="OnDateFromChanged" />
+        <input type="date" aria-label="Дата до" value="@_dateTo" @onchange="OnDateToChanged" />
+        <input type="search" placeholder="Поиск по тикеру, названию, статусу…" aria-label="Поиск по ордерам" value="@_search" @oninput="OnSearchChanged" />
+    </div>
+
     @if (!string.IsNullOrWhiteSpace(_error))
     {
         <div class="portfolio-state portfolio-state-error" role="alert">@_error</div>
@@ -56,7 +67,7 @@
         {
             @if (OpenOrders.Count == 0)
             {
-                <div class="portfolio-state">Нет открытых ордеров.</div>
+                <div class="portfolio-state">@(HasActiveFilters ? "Ордера не найдены." : "Нет открытых ордеров.")</div>
             }
             else
             {
@@ -134,7 +145,7 @@
         {
             @if (HistoryOrders.Count == 0)
             {
-                <div class="portfolio-state">История пуста.</div>
+                <div class="portfolio-state">@(HasActiveFilters ? "Ордера не найдены." : "История пуста.")</div>
             }
             else
             {
@@ -401,6 +412,10 @@
     private int _openPage = 1;
     private int _historyPage = 1;
     private string _activeTab = "open";
+    private string _sideFilter = "all";
+    private string _dateFrom = string.Empty;
+    private string _dateTo = string.Empty;
+    private string _search = string.Empty;
 
     private int? _expandedOrderId;
     private PortfolioStockViewModel? _expandedStock;
@@ -408,13 +423,42 @@
     private string? _stockDetailsError;
     private readonly Dictionary<int, PortfolioStockViewModel> _stockDetailsCache = [];
 
-    private List<OrderListItem> OpenOrders => _orders
+    private List<OrderListItem> FilteredOrders => _orders.Where(MatchesFilters).ToList();
+
+    private List<OrderListItem> OpenOrders => FilteredOrders
         .Where(o => o.Status is "Pending" or "Triggered")
         .ToList();
 
-    private List<OrderListItem> HistoryOrders => _orders
+    private List<OrderListItem> HistoryOrders => FilteredOrders
         .Where(o => o.Status is not ("Pending" or "Triggered"))
         .ToList();
+
+    private bool HasActiveFilters => _sideFilter != "all"
+        || !string.IsNullOrWhiteSpace(_dateFrom)
+        || !string.IsNullOrWhiteSpace(_dateTo)
+        || !string.IsNullOrWhiteSpace(_search);
+
+    private bool MatchesFilters(OrderListItem order)
+    {
+        if (_sideFilter != "all" && order.Side != _sideFilter) return false;
+
+        var localDate = DateOnly.FromDateTime((order.ExecutedAt ?? order.CreatedAt).ToLocalTime());
+        if (DateOnly.TryParse(_dateFrom, out var from) && localDate < from) return false;
+        if (DateOnly.TryParse(_dateTo, out var to) && localDate > to) return false;
+
+        if (string.IsNullOrWhiteSpace(_search)) return true;
+
+        var query = _search.Trim();
+        return Contains(order.StockTicker, query)
+            || Contains(order.StockName, query)
+            || Contains(StatusLabel(order.Status), query)
+            || Contains(KindLabel(order.Kind), query)
+            || Contains(SideLabel(order.Side), query)
+            || Contains(order.ExecutionSource, query);
+
+        static bool Contains(string? value, string query) =>
+            value?.Contains(query, StringComparison.CurrentCultureIgnoreCase) ?? false;
+    }
 
     private int OpenPageCount => Math.Max(1, (int)Math.Ceiling(OpenOrders.Count / (double)_pageSize));
 
@@ -438,6 +482,10 @@
         _openPage = 1;
         _historyPage = 1;
         _activeTab = "open";
+        _sideFilter = "all";
+        _dateFrom = string.Empty;
+        _dateTo = string.Empty;
+        _search = string.Empty;
         EnsurePolling();
         await LoadOrdersAsync();
     }
@@ -524,6 +572,31 @@
     {
         _activeTab = tab == "history" ? "history" : "open";
         CollapseHistory();
+    }
+
+    private void OnFiltersChanged()
+    {
+        _openPage = 1;
+        _historyPage = 1;
+        CollapseHistory();
+    }
+
+    private void OnSearchChanged(ChangeEventArgs args)
+    {
+        _search = args.Value?.ToString() ?? string.Empty;
+        OnFiltersChanged();
+    }
+
+    private void OnDateFromChanged(ChangeEventArgs args)
+    {
+        _dateFrom = args.Value?.ToString() ?? string.Empty;
+        OnFiltersChanged();
+    }
+
+    private void OnDateToChanged(ChangeEventArgs args)
+    {
+        _dateTo = args.Value?.ToString() ?? string.Empty;
+        OnFiltersChanged();
     }
 
     private void GoToOpenPage(int page)
