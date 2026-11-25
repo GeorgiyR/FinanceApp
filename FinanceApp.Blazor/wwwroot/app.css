@@ -285,6 +285,9 @@ a { color: inherit; text-decoration: none; }
 .transactions-toolbar select { min-width: 160px; }
 .transactions-toolbar input[type="date"] { width: 150px; }
 .transactions-toolbar input[type="search"] { flex: 1 1 220px; min-width: 190px; }
+.transactions-toolbar .transactions-page-size { display: flex; align-items: center; gap: 6px; color: #4b5563; white-space: nowrap; }
+.transactions-toolbar .transactions-page-size select { min-width: 70px; }
+.transactions-pagination { margin-top: 14px; }
 .transactions-table-wrap {
     overflow-x: auto;
     border: 1px solid #00327F;
