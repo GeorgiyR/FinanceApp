@@ -20,13 +20,22 @@
         </div>
     }
     <div class="transactions-toolbar">
-        <select aria-label="Фильтр по типу транзакции" @bind="_typeFilter">
+        <label class="transactions-page-size">
+            На странице:
+            <select value="@_pageSize" aria-label="Записей на странице" @onchange="OnPageSizeChanged">
+                @foreach (var size in PageSizeOptions)
+                {
+                    <option value="@size">@size</option>
+                }
+            </select>
+        </label>
+        <select aria-label="Фильтр по типу транзакции" @bind="_typeFilter" @bind:after="OnFiltersChanged">
             <option value="all">Все типы</option><option value="Deposit">Пополнение</option><option value="Withdrawal">Вывод</option>
             <option value="Buy">Покупка</option><option value="Sell">Продажа</option><option value="Dividend">Дивиденды</option>
         </select>
-        <input type="date" aria-label="Дата от" value="@_dateFrom" @onchange="args => _dateFrom = args.Value?.ToString() ?? string.Empty" />
-        <input type="date" aria-label="Дата до" value="@_dateTo" @onchange="args => _dateTo = args.Value?.ToString() ?? string.Empty" />
-        <input type="search" placeholder="Поиск по описанию, тикеру…" aria-label="Поиск по транзакциям" @bind="_search" @bind:event="oninput" />
+        <input type="date" aria-label="Дата от" value="@_dateFrom" @onchange="OnDateFromChanged" />
+        <input type="date" aria-label="Дата до" value="@_dateTo" @onchange="OnDateToChanged" />
+        <input type="search" placeholder="Поиск по описанию, тикеру…" aria-label="Поиск по транзакциям" value="@_search" @oninput="OnSearchChanged" />
         <button class="portfolio-primary-button" @onclick="OnCreate">Новая транзакция</button>
     </div>
     @if (Loading)
@@ -47,7 +56,7 @@
             <table class="transactions-table">
                 <thead><tr><th>Тип</th><th>Дата</th><th class="numeric">Сумма</th><th>Акция</th><th>ISIN</th><th class="numeric">Цена за единицу (€)</th><th class="numeric">Количество</th><th class="actions-heading">Действия</th></tr></thead>
                 <tbody>
-                    @foreach (var transaction in FilteredTransactions)
+                    @foreach (var transaction in PagedTransactions)
                     {
                         <tr>
                             <td><button type="button" class="transaction-type-toggle" @onclick="() => ToggleDescription(transaction.Id)" aria-expanded="@(_expandedId == transaction.Id)"><span class="transaction-type-tag transaction-@transaction.Type.ToLowerInvariant()">@TypeLabel(transaction.Type)</span><span class="transaction-description-caret @(_expandedId == transaction.Id ? "expanded" : "")">›</span></button></td>
@@ -70,15 +79,26 @@
                 </tbody>
             </table>
         </div>
+        @if (PageCount > 1)
+        {
+            <div class="catalog-pagination transactions-pagination">
+                <button type="button" class="stocks-toolbar-button" @onclick="() => GoToPage(_page - 1)" disabled="@(_page <= 1)">← Назад</button>
+                <span>Страница @_page из @PageCount</span>
+                <button type="button" class="stocks-toolbar-button" @onclick="() => GoToPage(_page + 1)" disabled="@(_page >= PageCount)">Вперёд →</button>
+            </div>
+        }
     }
 </section>
 
 @code {
     private static readonly CultureInfo RussianCulture = CultureInfo.GetCultureInfo("ru-RU");
+    private static readonly int[] PageSizeOptions = [10, 25, 50];
     private string _typeFilter = "all";
     private string _dateFrom = string.Empty;
     private string _dateTo = string.Empty;
     private string _search = string.Empty;
+    private int _pageSize = 25;
+    private int _page = 1;
     private int? _expandedId;
 
     [Parameter, EditorRequired] public IReadOnlyList<PortfolioTransactionViewModel> Transactions { get; set; } = [];
@@ -91,6 +111,11 @@
     [Parameter] public EventCallback<PortfolioTransactionViewModel> OnDelete { get; set; }
 
     private List<PortfolioTransactionViewModel> FilteredTransactions => Transactions.Where(MatchesFilters).OrderByDescending(transaction => transaction.CreatedAt).ToList();
+    private int PageCount => Math.Max(1, (int)Math.Ceiling(FilteredTransactions.Count / (double)_pageSize));
+    private List<PortfolioTransactionViewModel> PagedTransactions => FilteredTransactions
+        .Skip((_page - 1) * _pageSize)
+        .Take(_pageSize)
+        .ToList();
     private decimal CashRemainder => Transactions.Sum(EffectiveAmount);
     private decimal TypeTotal(string type) => Transactions.Where(transaction => transaction.Type == type).Sum(transaction => transaction.Amount);
     private bool MatchesFilters(PortfolioTransactionViewModel transaction)
@@ -108,6 +133,50 @@
             || (transaction.Stock?.CommonName?.Contains(query, StringComparison.CurrentCultureIgnoreCase) ?? false)
             || (transaction.InstrumentCode?.Contains(query, StringComparison.CurrentCultureIgnoreCase) ?? false);
     }
+    private void OnFiltersChanged()
+    {
+        _page = 1;
+        _expandedId = null;
+    }
+
+    private void OnSearchChanged(ChangeEventArgs args)
+    {
+        _search = args.Value?.ToString() ?? string.Empty;
+        OnFiltersChanged();
+    }
+
+    private void OnDateFromChanged(ChangeEventArgs args)
+    {
+        _dateFrom = args.Value?.ToString() ?? string.Empty;
+        OnFiltersChanged();
+    }
+
+    private void OnDateToChanged(ChangeEventArgs args)
+    {
+        _dateTo = args.Value?.ToString() ?? string.Empty;
+        OnFiltersChanged();
+    }
+
+    private void OnPageSizeChanged(ChangeEventArgs args)
+    {
+        if (!int.TryParse(args.Value?.ToString(), out var size) || size <= 0) return;
+        _pageSize = size;
+        _page = 1;
+        _expandedId = null;
+    }
+
+    private void GoToPage(int page)
+    {
+        _page = Math.Clamp(page, 1, PageCount);
+        _expandedId = null;
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (_page > PageCount) _page = PageCount;
+        if (_page < 1) _page = 1;
+    }
+
     private void ToggleDescription(int id) => _expandedId = _expandedId == id ? null : id;
     private static string TypeLabel(string type) => type switch { "Deposit" => "Пополнение", "Withdrawal" => "Вывод", "Buy" => "Покупка", "Sell" => "Продажа", "Dividend" => "Дивиденды", _ => type };
     private static decimal EffectiveAmount(PortfolioTransactionViewModel transaction) => transaction.SignedAmount != 0m || transaction.Amount == 0m ? transaction.SignedAmount : transaction.Type is "Deposit" or "Sell" or "Dividend" ? transaction.Amount : -transaction.Amount;
