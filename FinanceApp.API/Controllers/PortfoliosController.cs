@@ -135,6 +135,12 @@ public class PortfoliosController : ControllerBase
         var portfolio = await _context.Portfolios
             .FirstOrDefaultAsync(p => p.Id == id && p.UserId == userId);
         if (portfolio == null) return NotFound();
+
+        if (await _context.PortfolioItems.AnyAsync(i => i.PortfolioId == id))
+        {
+            return Conflict("Нельзя удалить портфель, в котором есть позиции.");
+        }
+
         _context.Portfolios.Remove(portfolio);
         await _context.SaveChangesAsync();
         return NoContent();
