@@ -103,6 +103,53 @@ public class PortfoliosControllerTests
         Assert.Empty(context.PortfolioItems);
     }
 
+    [Fact]
+    public async Task Delete_PortfolioWithPositions_ReturnsConflictAndKeepsPortfolio()
+    {
+        await using var context = CreateContext();
+        context.Portfolios.Add(new Portfolio { Id = 12, Name = "Main", UserId = 1, CreatedAt = DateTime.UtcNow });
+        context.Stocks.Add(new Stock
+        {
+            Id = 21,
+            Ticker = "MSFT",
+            Name = "Microsoft",
+            CommonName = "Microsoft",
+            Exchange = StockExchanges.Nasdaq,
+            CurrentPrice = 300m,
+            UpdatedAt = DateTime.UtcNow,
+        });
+        context.PortfolioItems.Add(new PortfolioItem
+        {
+            Id = 31,
+            PortfolioId = 12,
+            StockId = 21,
+            Quantity = 1m,
+            BuyPrice = 250m,
+            BoughtAt = DateTime.UtcNow,
+        });
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context, 1);
+        var result = await controller.Delete(12);
+
+        Assert.IsType<ConflictObjectResult>(result);
+        Assert.Single(context.Portfolios);
+    }
+
+    [Fact]
+    public async Task Delete_EmptyPortfolio_RemovesPortfolio()
+    {
+        await using var context = CreateContext();
+        context.Portfolios.Add(new Portfolio { Id = 13, Name = "Empty", UserId = 1, CreatedAt = DateTime.UtcNow });
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context, 1);
+        var result = await controller.Delete(13);
+
+        Assert.IsType<NoContentResult>(result);
+        Assert.Empty(context.Portfolios);
+    }
+
     private static AppDbContext CreateContext()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
