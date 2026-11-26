@@ -346,20 +346,22 @@
         await InvokeAsync(StateHasChanged);
         var failed = 0;
         var delayed = 0;
+        var marketClosed = 0;
         foreach (var stock in _stocks.ToArray())
         {
             if (string.IsNullOrWhiteSpace(stock.Ticker)) { _refreshProgress++; continue; }
             var result = await RefreshStockPriceCoreAsync(stock, silent: true);
             if (result == QuoteRefreshResult.Failed) failed++;
-            if (result == QuoteRefreshResult.Delayed) delayed++;
+            else if (result == QuoteRefreshResult.Delayed) delayed++;
+            else if (result == QuoteRefreshResult.MarketClosed) marketClosed++;
             _refreshProgress++;
             await InvokeAsync(StateHasChanged);
         }
-        _refreshMessage = failed == 0 && delayed == 0
+        _refreshMessage = failed == 0 && delayed == 0 && marketClosed == 0
             ? "Цены обновлены."
-            : delayed > 0 && failed == 0
-                ? $"Цены обновлены; задержанных котировок: {delayed}."
-                : $"Цены обновлены частично: ошибок — {failed}, задержанных — {delayed}.";
+            : failed == 0
+                ? $"Цены обновлены; задержанных котировок: {delayed}, рынок закрыт: {marketClosed}."
+                : $"Цены обновлены частично: ошибок — {failed}, задержанных — {delayed}, рынок закрыт — {marketClosed}.";
         _refreshingAll = false;
     }
 
@@ -368,6 +370,10 @@
         var result = await RefreshStockPriceCoreAsync(stock, silent: false);
         if (result == QuoteRefreshResult.Success) _refreshMessage = $"Цена {stock.Ticker} обновлена.";
         else if (result == QuoteRefreshResult.Delayed) _refreshMessage = $"Для {stock.Ticker} получена задержанная котировка.";
+        else if (result == QuoteRefreshResult.MarketClosed)
+            _refreshMessage = stock.CurrentPriceAt is DateTime closedAt
+                ? $"Рынок закрыт: для {stock.Ticker} показана последняя цена от {closedAt.ToLocalTime():dd.MM.yy HH:mm}."
+                : $"Рынок закрыт: для {stock.Ticker} показана последняя доступная цена.";
         else if (result == QuoteRefreshResult.NoEuroPrice) _refreshMessage = $"Для {stock.Ticker} не удалось получить цену в EUR.";
         else _refreshMessage = $"Не удалось обновить цену {stock.Ticker}.";
     }
@@ -408,7 +414,11 @@
                 stock.CurrentPriceIsDelayed = snapshot.CurrentPriceIsDelayed;
                 stock.CurrentPriceDelayWarning = snapshot.CurrentPriceDelayWarning;
             }
-            return quote.IsStale || !string.IsNullOrWhiteSpace(quote.DelayWarning) ? QuoteRefreshResult.Delayed : QuoteRefreshResult.Success;
+            return quote.IsStale || !string.IsNullOrWhiteSpace(quote.DelayWarning)
+                ? QuoteRefreshResult.Delayed
+                : string.Equals(quote.MarketState, "CLOSED", StringComparison.OrdinalIgnoreCase)
+                    ? QuoteRefreshResult.MarketClosed
+                    : QuoteRefreshResult.Success;
         }
         catch
         {
@@ -891,7 +901,7 @@
         _autoRefreshCancellation.Dispose();
     }
 
-    private enum QuoteRefreshResult { Success, Delayed, NoEuroPrice, Failed }
+    private enum QuoteRefreshResult { Success, Delayed, MarketClosed, NoEuroPrice, Failed }
     private sealed class StockEditFormModel
     {
         [Required(ErrorMessage = "Укажите тикер.")]
