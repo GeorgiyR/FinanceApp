@@ -150,6 +150,27 @@ public class PortfoliosControllerTests
         Assert.Empty(context.Portfolios);
     }
 
+    [Fact]
+    public async Task GetAll_IncludesOnlyActiveOrders()
+    {
+        await using var context = CreateContext();
+        context.Portfolios.Add(new Portfolio { Id = 14, Name = "Main", UserId = 1, CreatedAt = DateTime.UtcNow });
+        context.Orders.AddRange(
+            new Order { Id = 41, PortfolioId = 14, StockId = 21, Side = OrderSide.Buy, Status = OrderStatus.Pending, Quantity = 1m, Price = 100m, CreatedAt = DateTime.UtcNow },
+            new Order { Id = 42, PortfolioId = 14, StockId = 21, Side = OrderSide.Buy, Status = OrderStatus.Triggered, Quantity = 1m, Price = 100m, CreatedAt = DateTime.UtcNow },
+            new Order { Id = 43, PortfolioId = 14, StockId = 21, Side = OrderSide.Buy, Status = OrderStatus.Executed, Quantity = 1m, Price = 100m, CreatedAt = DateTime.UtcNow });
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+
+        var controller = CreateController(context, 1);
+        var result = await controller.GetAll();
+
+        var portfolios = Assert.IsAssignableFrom<IEnumerable<Portfolio>>(result.Value).ToList();
+        var portfolio = Assert.Single(portfolios);
+        Assert.Equal(2, portfolio.Orders.Count);
+        Assert.All(portfolio.Orders, order => Assert.True(order.Status is OrderStatus.Pending or OrderStatus.Triggered));
+    }
+
     private static AppDbContext CreateContext()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
