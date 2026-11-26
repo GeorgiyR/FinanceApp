@@ -48,6 +48,7 @@
                                     else if (stock.LiveQuote is { } quote) { <span>@FormatApiPrice(quote)</span> }
                                     else { <span>—</span> }
                                     @if (stock.LiveQuote is { IsStale: true }) { <span class="tracked-stock-delayed" title="@(stock.LiveQuote.DelayWarning ?? "Задержанная котировка")">Задержано</span> }
+                                    else if (stock.LiveQuote is { MarketState: "CLOSED" }) { <span class="tracked-stock-delayed" title="Рынок закрыт — показана последняя цена">Рынок закрыт</span> }
                                 </td>
                                 <td class="tracked-stock-time">@(stock.CurrentPriceAt is DateTime priceAt ? priceAt.ToLocalTime().ToString("dd.MM.yy HH:mm", RussianCulture) : "—")</td>
                                 <td class="tracked-stock-actions @(isProtected ? "portfolio-stock-actions" : "")">
