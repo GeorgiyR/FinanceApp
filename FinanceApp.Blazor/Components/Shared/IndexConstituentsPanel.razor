@@ -116,10 +116,6 @@
                                     {
                                         <span class="tracked-stock-common-name">@constituent.CommonName</span>
                                     }
-                                    @if (!string.IsNullOrWhiteSpace(constituent.Isin))
-                                    {
-                                        <span class="tracked-stock-common-name">@constituent.Isin</span>
-                                    }
                                     <span class="index-constituent-classification">@(string.Join(" · ", new[] { constituent.Sector, constituent.Industry }.Where(value => !string.IsNullOrWhiteSpace(value))))</span>
                                 </div>
                             </td>
