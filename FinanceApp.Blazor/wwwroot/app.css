@@ -815,7 +815,14 @@ a { color: inherit; text-decoration: none; }
     font: inherit;
 }
 .constituents-sort-label { display: flex; align-items: center; gap: 6px; color: #595959; white-space: nowrap; }
-.constituents-sort-label select { min-height: 34px; padding: 4px 8px; border: 1px solid #cbd5e1; border-radius: 7px; background: #fff; font: inherit; }
+    .constituents-sort-label select {
+        min-height: 34px;
+        padding: 4px 8px;
+        border: 1px solid #00327F;
+        border-radius: 7px;
+        background: #fff;
+        font: inherit;
+    }
 .constituents-alert { margin-bottom: 12px; padding: 9px 12px; border: 1px solid #d9e0e8; border-radius: 7px; background: #f8fafc; color: #344054; }
 .constituents-alert--info { border-color: #91caff; background: #e6f4ff; color: #0958d9; }
 .constituents-alert--warning { border-color: #ffe58f; background: #fffbe6; color: #ad6800; }
