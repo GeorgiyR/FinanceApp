@@ -23,6 +23,7 @@ public class PortfoliosController : ControllerBase
             .Where(p => p.UserId == userId)
             .Include(p => p.Items)
             .ThenInclude(i => i.Stock)
+            .Include(p => p.Orders.Where(o => o.Status == OrderStatus.Pending || o.Status == OrderStatus.Triggered))
             .ToListAsync();
     }
 
