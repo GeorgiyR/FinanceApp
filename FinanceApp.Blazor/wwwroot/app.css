@@ -11,11 +11,18 @@ a { color: inherit; text-decoration: none; }
 .app-shell { display: flex; min-height: 100vh; }
 .app-sidebar {
     position: sticky; top: 0; display: flex; flex: 0 0 260px; flex-direction: column;
-    height: 100vh; padding: 20px 14px; overflow-y: auto; background: #10243a; color: #d9e2ec;
+    height: 100vh; height: 100dvh; padding: 20px 14px; overflow: hidden; background: #10243a; color: #d9e2ec;
     transition: flex-basis 0.2s ease, padding 0.2s ease;
 }
-.brand { display: block; padding: 0 12px 24px; color: #fff; font-size: 21px; font-weight: 700; white-space: nowrap; }
-.sidebar-nav { display: flex; flex: 1; flex-direction: column; gap: 5px; min-width: 0; }
+.brand { display: block; flex: 0 0 auto; padding: 0 12px 24px; color: #fff; font-size: 21px; font-weight: 700; white-space: nowrap; }
+.sidebar-nav { display: flex; flex: 1 1 auto; flex-direction: column; gap: 5px; min-width: 0; min-height: 0; }
+.sidebar-scroll {
+    display: flex; flex: 1 1 auto; flex-direction: column; gap: 5px;
+    min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+    padding-right: 2px; scrollbar-width: thin; scrollbar-color: #3d5875 transparent;
+}
+.sidebar-scroll::-webkit-scrollbar { width: 6px; }
+.sidebar-scroll::-webkit-scrollbar-thumb { border-radius: 3px; background: #3d5875; }
 .nav-link, .nav-group > summary {
     display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; border: 0; border-radius: 7px;
     color: #d9e2ec; font: inherit; line-height: 1.35; cursor: pointer;
@@ -32,7 +39,7 @@ a { color: inherit; text-decoration: none; }
 .nav-children { display: grid; gap: 3px; padding: 3px 0 5px 12px; }
 .nav-children .nav-link, .nav-group-nested > summary { padding: 8px 10px; font-size: 14px; }
 .nav-group-nested > summary { color: #c1cfdd; }
-.sidebar-bottom { margin-top: auto; padding-top: 16px; border-top: 1px solid #294158; }
+.sidebar-bottom { flex: 0 0 auto; margin-top: 0; padding-top: 16px; border-top: 1px solid #294158; }
 .sidebar-collapse-button {
     display: inline-flex; align-items: center; justify-content: center; align-self: flex-end;
     width: 32px; height: 32px; margin-top: 10px; padding: 0; flex-shrink: 0;
