@@ -740,7 +740,7 @@
         quote is not null && quote.QuoteUnitMultiplier != 1m && !string.IsNullOrWhiteSpace(quote.NormalizedQuoteCurrency)
             ? $"Нормализовано: {quote.NormalizedCurrentPrice.ToString("N3", RussianCulture)} {quote.NormalizedQuoteCurrency}"
             : null;
-    private static PortfolioStockViewModel ToHistoryStock(TrackedStockViewModel stock) => new() { Id = stock.Id, Ticker = stock.Ticker, Name = stock.Name, CommonName = stock.CommonName, Exchange = stock.Exchange, Isin = stock.Isin, CurrentPrice = stock.CurrentPrice, CurrentPriceChange = stock.CurrentPriceChange, CurrentPriceChangePercent = stock.CurrentPriceChangePercent, CurrentPriceAt = stock.CurrentPriceAt };
+    private static PortfolioStockViewModel ToHistoryStock(TrackedStockViewModel stock) => new() { Id = stock.Id, Ticker = stock.Ticker, Name = stock.Name, CommonName = stock.CommonName, Exchange = stock.Exchange, Isin = stock.Isin, FinanzenNetSlug = stock.FinanzenNetSlug, CurrentPrice = stock.CurrentPrice, CurrentPriceChange = stock.CurrentPriceChange, CurrentPriceChangePercent = stock.CurrentPriceChangePercent, CurrentPriceAt = stock.CurrentPriceAt };
     private sealed class CatalogStockEditModel
     {
         [Required(ErrorMessage = "Укажите тикер.")]
