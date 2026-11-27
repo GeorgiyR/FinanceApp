@@ -314,6 +314,19 @@
                         <input id="order-stock-readonly" type="text" value="@_stockSearch" readonly disabled />
                     </div>
                 }
+                @if (_editingOrderId is not null && _canEditStatus)
+                {
+                    <div class="login-field">
+                        <label for="order-status">Статус</label>
+                        <select id="order-status" @bind="_form.Status">
+                            <option value="">Без изменения</option>
+                            @foreach (var status in EditableStatuses)
+                            {
+                                <option value="@status.Value">@status.Label</option>
+                            }
+                        </select>
+                    </div>
+                }
                 <div class="login-field">
                     <label for="order-quantity">Количество</label>
                     <input id="order-quantity" type="number" step="0.01" min="0.01" @bind="_form.Quantity" />
@@ -399,6 +412,18 @@
     private bool _dialogOpen;
     private int? _editingOrderId;
     private bool _editingExecutedOrder;
+    private bool _canEditStatus;
+    private string? _editingStatus;
+    private static readonly (string Value, string Label)[] EditableStatuses =
+    [
+        ("Pending", "Ожидает"),
+        ("Triggered", "Активирован"),
+        ("Executed", "Исполнен"),
+        ("Cancelled", "Отменён"),
+        ("Rejected", "Отклонён"),
+        ("Expired", "Истёк"),
+        ("PartiallyFilled", "Частично исполнен"),
+    ];
     private string? _formError;
     private readonly OrderFormModel _form = new();
     private string _stockSearch = string.Empty;
@@ -711,6 +736,9 @@
         _actionMessage = null;
         _editingOrderId = null;
         _editingExecutedOrder = false;
+        _canEditStatus = false;
+        _editingStatus = null;
+        _form.Status = null;
         _dialogOpen = true;
         _form.Side = "Buy";
         _form.Kind = "Market";
@@ -733,6 +761,9 @@
         _actionMessage = null;
         _editingOrderId = order.Id;
         _editingExecutedOrder = order.Status is "Executed" or "PartiallyFilled";
+        _editingStatus = order.Status;
+        _canEditStatus = order.Status is "Pending" or "Triggered";
+        _form.Status = null;
         _dialogOpen = true;
         _form.StockId = order.StockId;
         _form.Side = order.Side;
@@ -758,6 +789,8 @@
         _dialogOpen = false;
         _editingOrderId = null;
         _editingExecutedOrder = false;
+        _canEditStatus = false;
+        _editingStatus = null;
         _stockSearchCancellation?.Cancel();
         _stockSearchOpen = false;
     }
@@ -823,6 +856,10 @@
             if (editingOrderId is not null)
             {
                 payload["price"] = _form.Price;
+                if (_canEditStatus && !string.IsNullOrWhiteSpace(_form.Status))
+                {
+                    payload["status"] = _form.Status;
+                }
             }
 
             using var response = editingOrderId is int orderId
@@ -1098,6 +1135,7 @@
         public int? StockId { get; set; }
         public string Side { get; set; } = "Buy";
         public string Kind { get; set; } = "Market";
+        public string? Status { get; set; }
 
         [Range(typeof(decimal), "0.01", "1000000000", ParseLimitsInInvariantCulture = true, ErrorMessage = "Количество должно быть больше нуля.")]
         public decimal Quantity { get; set; } = 1m;
