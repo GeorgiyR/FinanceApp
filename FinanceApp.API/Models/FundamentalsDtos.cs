@@ -62,6 +62,7 @@ public sealed class EarningsEventDto
 {
     public int Id { get; init; }
     public DateTime? ReportDate { get; init; }
+    public DateTime? FiscalPeriodEnd { get; init; }
     public DateTime? ReportDateEnd { get; init; }
     public string DateStatus { get; init; } = string.Empty;
     public decimal? EpsEstimate { get; init; }

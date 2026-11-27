@@ -546,12 +546,13 @@ public sealed class YahooFundamentalsService : IYahooFundamentalsService
         {
             foreach (var entry in earningsHistory.Value.EnumerateArray())
             {
-                var reportDate = GetRawDateTime(entry, "quarter");
+                var periodEnd = GetRawDateTime(entry, "quarter")?.Date;
                 var fiscalPeriod = GetOptionalString(entry, "quarter", "fmt");
-                var key = CreateEarningsKey(reportDate, fiscalPeriod);
+                var key = CreateEarningsKey(periodEnd, fiscalPeriod);
                 earnings[key] = new EarningsEvent
                 {
-                    ReportDate = reportDate?.Date,
+                    FiscalPeriodEnd = periodEnd,
+                    ReportDate = null,
                     DateStatus = GetRawDecimal(entry, "epsActual").HasValue ? EarningsDateStatus.Confirmed : EarningsDateStatus.Unknown,
                     EpsEstimate = GetRawDecimal(entry, "epsEstimate"),
                     EpsReported = GetRawDecimal(entry, "epsActual"),
@@ -575,13 +576,14 @@ public sealed class YahooFundamentalsService : IYahooFundamentalsService
                     continue;
                 }
 
-                var reportDate = GetRawDateTime(entry, "endDate");
-                var key = CreateEarningsKey(reportDate, fiscalPeriod);
+                var periodEnd = GetRawDateTime(entry, "endDate")?.Date;
+                var key = CreateEarningsKey(periodEnd, fiscalPeriod);
                 if (!earnings.TryGetValue(key, out var existing))
                 {
                     existing = new EarningsEvent
                     {
-                        ReportDate = reportDate?.Date,
+                        FiscalPeriodEnd = periodEnd,
+                        ReportDate = null,
                         FiscalPeriod = fiscalPeriod,
                         Source = ProviderName,
                         FetchedAtUtc = fetchedAtUtc
@@ -610,19 +612,32 @@ public sealed class YahooFundamentalsService : IYahooFundamentalsService
 
             if (dates.Count > 0)
             {
-                var key = CreateEarningsKey(dates[0], null);
-                if (!earnings.TryGetValue(key, out var existing))
+                var reportDate = dates[0];
+
+                // Yahoo reports the fiscal period end in history/trend and the actual release
+                // date in calendarEvents. Attach the release date to the most recent period
+                // that ends before it instead of creating a second, unrelated row.
+                var existing = earnings.Values
+                    .Where(x => x.FiscalPeriodEnd is DateTime periodEnd && periodEnd <= reportDate)
+                    .OrderByDescending(x => x.FiscalPeriodEnd)
+                    .FirstOrDefault();
+
+                if (existing is null)
                 {
-                    existing = new EarningsEvent
+                    var key = CreateEarningsKey(reportDate, null);
+                    if (!earnings.TryGetValue(key, out existing))
                     {
-                        ReportDate = dates[0],
-                        Source = ProviderName,
-                        FetchedAtUtc = fetchedAtUtc
-                    };
-                    earnings[key] = existing;
+                        existing = new EarningsEvent
+                        {
+                            ReportDate = reportDate,
+                            Source = ProviderName,
+                            FetchedAtUtc = fetchedAtUtc
+                        };
+                        earnings[key] = existing;
+                    }
                 }
 
-                existing.ReportDate = dates[0];
+                existing.ReportDate = reportDate;
                 existing.ReportDateEnd = dates[^1];
                 if (existing.DateStatus != EarningsDateStatus.Confirmed)
                 {
@@ -632,7 +647,7 @@ public sealed class YahooFundamentalsService : IYahooFundamentalsService
         }
 
         return earnings.Values
-            .OrderBy(x => x.ReportDate ?? DateTime.MaxValue)
+            .OrderBy(x => x.ReportDate ?? x.FiscalPeriodEnd ?? DateTime.MaxValue)
             .ThenBy(x => x.FiscalPeriod)
             .ToList();
     }
@@ -789,9 +804,9 @@ public sealed class YahooFundamentalsService : IYahooFundamentalsService
             .PeriodEndDate;
 
         var earningsDate = earningsEvents
-            .Where(x => x.ReportDate.HasValue)
-            .MaxBy(x => x.ReportDate)?
-            .ReportDate;
+            .Select(x => x.ReportDate ?? x.FiscalPeriodEnd)
+            .Where(x => x.HasValue)
+            .Max();
 
         if (periodDate is null)
         {

@@ -125,12 +125,13 @@ public class FundamentalsController : ControllerBase
             EarningsEvents = snapshot is null
                 ? Array.Empty<EarningsEventDto>()
                 : snapshot.EarningsEvents
-                    .OrderBy(x => x.ReportDate ?? DateTime.MaxValue)
+                    .OrderBy(x => x.ReportDate ?? x.FiscalPeriodEnd ?? DateTime.MaxValue)
                     .ThenBy(x => x.FiscalPeriod)
                     .Select(x => new EarningsEventDto
                     {
                         Id = x.Id,
                         ReportDate = x.ReportDate,
+                        FiscalPeriodEnd = x.FiscalPeriodEnd,
                         ReportDateEnd = x.ReportDateEnd,
                         DateStatus = x.DateStatus.ToString(),
                         EpsEstimate = x.EpsEstimate,

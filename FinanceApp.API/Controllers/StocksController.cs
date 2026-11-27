@@ -134,7 +134,8 @@ public class StocksController : ControllerBase
             join stock in _context.Stocks.AsNoTracking() on snapshot.StockId equals stock.Id
             where stockIds.Contains(stock.Id)
             from earnings in snapshot.EarningsEvents
-            where earnings.ReportDate >= rangeStart && earnings.ReportDate <= rangeEnd
+            let effectiveDate = earnings.ReportDate ?? earnings.FiscalPeriodEnd
+            where effectiveDate >= rangeStart && effectiveDate <= rangeEnd
             select new
             {
                 stock.Id,
@@ -142,13 +143,14 @@ public class StocksController : ControllerBase
                 stock.Name,
                 stock.TrackingStatus,
                 earnings.ReportDate,
+                earnings.FiscalPeriodEnd,
                 earnings.DateStatus,
                 earnings.FiscalPeriod,
                 earnings.EpsEstimate,
                 earnings.EpsReported,
                 snapshot.FetchedAtUtc,
             })
-            .OrderBy(x => x.ReportDate).ThenBy(x => x.Ticker)
+            .OrderBy(x => x.ReportDate ?? x.FiscalPeriodEnd).ThenBy(x => x.Ticker)
             .ToListAsync(cancellationToken);
 
         var items = rows.Select(row => new EarningsCalendarItemDto
@@ -158,6 +160,7 @@ public class StocksController : ControllerBase
             Name = row.Name,
             IsTracked = row.TrackingStatus == StockTrackingStatus.Tracked,
             ReportDate = row.ReportDate,
+            FiscalPeriodEnd = row.FiscalPeriodEnd,
             DateStatus = row.DateStatus.ToString(),
             FiscalPeriod = row.FiscalPeriod,
             EpsEstimate = row.EpsEstimate,
@@ -1838,6 +1841,7 @@ public sealed class EarningsCalendarItemDto
     public string Name { get; set; } = string.Empty;
     public bool IsTracked { get; set; }
     public DateTime? ReportDate { get; set; }
+    public DateTime? FiscalPeriodEnd { get; set; }
     public string DateStatus { get; set; } = string.Empty;
     public string? FiscalPeriod { get; set; }
     public decimal? EpsEstimate { get; set; }
