@@ -194,19 +194,21 @@ a { color: inherit; text-decoration: none; }
 .tracked-stocks-table-wrap::-webkit-scrollbar-thumb,
 .index-constituents-table-wrap::-webkit-scrollbar-thumb,
 .indices-table-wrap::-webkit-scrollbar-thumb { border-radius: 5px; background: #9fb3c8; }
-@media (max-width: 1100px) {
-    .positions-table-wrap.table-scroll-y {
-        max-height: max(220px, calc(100dvh - 360px));
-        overflow: auto;
-    }
-    .positions-table-wrap.table-scroll-y thead th {
-        position: sticky;
-        top: 0;
-        z-index: 4;
-        border-top: 1px solid #00327F;
-    }
-    .portfolio-positions-table .actions-heading { z-index: 5; }
+
+.table-hscroll {
+    overflow-x: auto;
+    overflow-y: hidden;
+    height: 13px;
+    margin-bottom: 1px;
+    scrollbar-width: thin;
+    scrollbar-color: #9fb3c8 #eef2f7;
 }
+.table-hscroll[hidden] { display: none; }
+.table-hscroll::-webkit-scrollbar { height: 10px; }
+.table-hscroll::-webkit-scrollbar-track { background: #eef2f7; border-radius: 5px; }
+.table-hscroll::-webkit-scrollbar-thumb { border-radius: 5px; background: #9fb3c8; }
+.table-hscroll::-webkit-scrollbar-thumb:hover { background: #7d94ab; }
+.table-hscroll-inner { height: 1px; }
 .positions-table { width: 100%; min-width: 1180px; border-collapse: collapse; font-size: 15px; }
     .positions-table th, .positions-table td {
         padding: 13px 14px;
