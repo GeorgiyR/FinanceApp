@@ -1,9 +1,22 @@
 @inherits LayoutComponentBase
+@inject IJSRuntime JS
 
-<div class="app-shell">
+<div class="app-shell @(_sidebarCollapsed ? "sidebar-collapsed" : "")">
     <aside class="app-sidebar">
         <a class="brand" href="/stockpilot/">FinanceApp</a>
-        <SidebarNav />
+        <SidebarNav Collapsed="_sidebarCollapsed" OnExpandRequested="ExpandSidebar" />
+        <button type="button" class="sidebar-collapse-button" title="@(_sidebarCollapsed ? "Развернуть навигацию" : "Свернуть навигацию")" aria-label="@(_sidebarCollapsed ? "Развернуть навигацию" : "Свернуть навигацию")" aria-expanded="@(!_sidebarCollapsed)" @onclick="ToggleSidebar">
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+                @if (_sidebarCollapsed)
+                {
+                    <path d="M7.5 4.5 13 10l-5.5 5.5" />
+                }
+                else
+                {
+                    <path d="M12.5 4.5 7 10l5.5 5.5" />
+                }
+            </svg>
+        </button>
     </aside>
 
     <main class="app-main">
@@ -21,3 +34,50 @@
     <a href="/stockpilot/" class="reload">Перезагрузить</a>
     <span class="dismiss">🗙</span>
 </div>
+
+@code {
+    private const string SidebarCollapsedStorageKey = "financeapp.sidebar.collapsed";
+    private bool _sidebarCollapsed;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        try
+        {
+            var stored = await JS.InvokeAsync<string?>("localStorage.getItem", SidebarCollapsedStorageKey);
+            if (stored == "1" && !_sidebarCollapsed)
+            {
+                _sidebarCollapsed = true;
+                StateHasChanged();
+            }
+        }
+        catch (JSException)
+        {
+        }
+    }
+
+    private async Task ToggleSidebar()
+    {
+        _sidebarCollapsed = !_sidebarCollapsed;
+        await PersistSidebarStateAsync();
+    }
+
+    private async Task ExpandSidebar()
+    {
+        if (!_sidebarCollapsed) return;
+        _sidebarCollapsed = false;
+        await PersistSidebarStateAsync();
+    }
+
+    private async Task PersistSidebarStateAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("localStorage.setItem", SidebarCollapsedStorageKey, _sidebarCollapsed ? "1" : "0");
+        }
+        catch (JSException)
+        {
+        }
+    }
+}
