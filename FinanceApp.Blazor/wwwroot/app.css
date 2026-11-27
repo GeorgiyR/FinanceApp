@@ -125,6 +125,39 @@ a { color: inherit; text-decoration: none; }
 .portfolio-state { padding: 24px; border: 1px solid #e3e8ef; border-radius: 10px; background: #fff; color: #697586; }
 .portfolio-state-error { border-color: #ffd6d6; color: #a12828; }
 .portfolio-state-error p { margin: 0 0 14px; }
+.earnings-calendar-page { display: grid; gap: 18px; max-width: 1400px; margin: 0 auto; }
+.earnings-calendar-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.earnings-calendar-heading h1 { margin: 0; font-size: 24px; }
+.earnings-calendar-description { margin: 5px 0 0; color: #697586; }
+.earnings-calendar-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.earnings-calendar-controls label { display: flex; align-items: center; gap: 6px; color: #566477; font-size: 14px; }
+.earnings-calendar-controls select { min-height: 34px; padding: 4px 8px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; font: inherit; }
+.earnings-calendar-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; align-items: start; }
+.earnings-calendar-section { min-width: 0; padding: 16px 18px; border: 1px solid #d9e2ec; border-radius: 10px; background: #fff; }
+.earnings-calendar-section h2 { margin: 0 0 12px; font-size: 18px; }
+.earnings-date-group + .earnings-date-group { margin-top: 14px; }
+.earnings-date-heading { margin-bottom: 6px; color: #697586; font-size: 13px; font-weight: 600; }
+.earnings-event-row {
+    display: grid; grid-template-columns: 70px minmax(0, 1fr) 70px 100px 78px auto auto;
+    align-items: center; gap: 8px; padding: 8px 10px;
+    border: 1px solid #e3e8ef; border-radius: 7px; background: #fff; color: inherit;
+    font-size: 14px;
+}
+.earnings-event-row + .earnings-event-row { margin-top: 4px; }
+.earnings-event-row:hover { border-color: #91caff; background: #fafcff; }
+.earnings-event-ticker { color: #1677ff; font-weight: 700; }
+.earnings-event-name, .earnings-event-period, .earnings-event-status, .earnings-event-est, .earnings-event-rep, .earnings-event-surprise { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.earnings-event-name { color: #344054; }
+.earnings-event-period, .earnings-event-est, .earnings-event-rep { color: #697586; font-variant-numeric: tabular-nums; }
+.earnings-event-status { font-size: 12px; }
+.earnings-event-status--Confirmed { color: #3f8600; }
+.earnings-event-status--Estimated { color: #ad6800; }
+.earnings-event-surprise { font-variant-numeric: tabular-nums; font-weight: 600; }
+.earnings-calendar-source { margin: 0; color: #8c8c8c; font-size: 12px; }
+@media (max-width: 760px) {
+    .earnings-event-row { grid-template-columns: 62px minmax(0, 1fr) auto auto; }
+    .earnings-event-period, .earnings-event-est { display: none; }
+}
 
 .login-page { display: grid; min-height: calc(100vh - 64px); place-items: center; }
 .login-card { width: min(100%, 420px); padding: 32px; border: 1px solid #e3e8ef; border-radius: 12px; background: #fff; box-shadow: 0 8px 28px #193b5c0d; }
