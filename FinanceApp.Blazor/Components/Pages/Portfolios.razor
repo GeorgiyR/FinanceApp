@@ -57,7 +57,7 @@
                 <div class="portfolio-card">
                     <a class="portfolio-card-link" href="@($"/stockpilot/portfolios/{portfolio.Id}")">
                         <div class="portfolio-card-heading">
-                            <h2>@portfolio.Name</h2>
+                            <h2>@portfolio.Name @if (portfolio.IsDemo) { <span class="portfolio-demo-tag" title="Демо-портфель">Демо</span> }</h2>
                             <span class="portfolio-card-arrow" aria-hidden="true">→</span>
                         </div>
                         <div class="portfolio-card-meta">
@@ -65,13 +65,18 @@
                             <span>Ордера: @(portfolio.Orders?.Count ?? 0)</span>
                         </div>
                     </a>
-                    <button type="button" class="action-icon-button action-delete-button portfolio-card-delete"
+                    <div class="portfolio-card-actions">
+                        <button type="button" class="action-icon-button" title="Редактировать портфель" aria-label="Редактировать портфель" disabled="@_busy" @onclick="() => OpenEditDialog(portfolio)">
+                            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m3 14.8-.8 3 3-.8L16.8 5.4a1.8 1.8 0 0 0-2.6-2.6L3 14.8Zm9.9-9.9 2.6 2.6" /></svg>
+                        </button>
+                        <button type="button" class="action-icon-button action-delete-button portfolio-card-delete"
                             title="@(canDelete ? "Удалить портфель" : "Нельзя удалить портфель с позициями")"
                             aria-label="Удалить портфель"
                             disabled="@(!canDelete || _busy)"
                             @onclick="() => DeletePortfolioAsync(portfolio)">
                         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14m-9 0V3h4v2m3 0-.8 12H5.8L5 5m3 3v6m4-6v6" /></svg>
-                    </button>
+                        </button>
+                    </div>
                 </div>
             }
         </div>
@@ -94,9 +99,42 @@
                     <label for="portfolio-name">Название</label>
                     <input id="portfolio-name" type="text" @bind="_createForm.Name" @bind:event="oninput" disabled="@_busy" />
                 </div>
+                <label class="portfolio-demo-checkbox">
+                    <input type="checkbox" @bind="_createForm.IsDemo" disabled="@_busy" />
+                    Демо-портфель
+                </label>
                 <div class="dialog-actions">
                     <button type="button" class="portfolio-refresh-button" @onclick="CloseCreateDialog" disabled="@_busy">Отмена</button>
                     <button type="submit" class="login-submit" disabled="@_busy">@(_busy ? "Сохранение…" : "Создать")</button>
+                </div>
+            </EditForm>
+        </section>
+    </div>
+}
+
+@if (_editOpen && _editingPortfolio is not null)
+{
+    <div class="dialog-backdrop" role="presentation" @onclick="CloseEditDialog">
+        <section class="action-dialog" role="dialog" aria-modal="true" aria-labelledby="edit-portfolio-title" @onclick:stopPropagation>
+            <h2 id="edit-portfolio-title">Редактировать портфель</h2>
+            @if (!string.IsNullOrWhiteSpace(_editError))
+            {
+                <div class="login-error" role="alert">@_editError</div>
+            }
+            <EditForm Model="_editForm" OnValidSubmit="UpdatePortfolioAsync" FormName="portfolio-edit-form">
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+                <div class="login-field">
+                    <label for="edit-portfolio-name">Название</label>
+                    <input id="edit-portfolio-name" type="text" @bind="_editForm.Name" @bind:event="oninput" disabled="@_busy" />
+                </div>
+                <label class="portfolio-demo-checkbox">
+                    <input type="checkbox" @bind="_editForm.IsDemo" disabled="@_busy" />
+                    Демо-портфель
+                </label>
+                <div class="dialog-actions">
+                    <button type="button" class="portfolio-refresh-button" @onclick="CloseEditDialog" disabled="@_busy">Отмена</button>
+                    <button type="submit" class="login-submit" disabled="@_busy">@(_busy ? "Сохранение…" : "Сохранить")</button>
                 </div>
             </EditForm>
         </section>
@@ -114,6 +152,10 @@
     private bool _createOpen;
     private string? _createError;
     private readonly CreatePortfolioForm _createForm = new();
+    private bool _editOpen;
+    private string? _editError;
+    private PortfolioSummary? _editingPortfolio;
+    private readonly PortfolioEditForm _editForm = new();
     private IJSObjectReference? _apiModule;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -200,7 +242,7 @@
                 return;
             }
 
-            using var response = await client.PostAsJsonAsync("Portfolios", new { name = _createForm.Name.Trim() });
+            using var response = await client.PostAsJsonAsync("Portfolios", new { name = _createForm.Name.Trim(), isDemo = _createForm.IsDemo });
             if (!response.IsSuccessStatusCode)
             {
                 _createError = $"Не удалось создать портфель (HTTP {(int)response.StatusCode}).";
@@ -214,6 +256,64 @@
         catch (Exception)
         {
             _createError = "Не удалось создать портфель.";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void OpenEditDialog(PortfolioSummary portfolio)
+    {
+        if (_busy) return;
+        _editError = null;
+        _editingPortfolio = portfolio;
+        _editForm.Name = portfolio.Name;
+        _editForm.IsDemo = portfolio.IsDemo;
+        _editOpen = true;
+    }
+
+    private void CloseEditDialog()
+    {
+        if (_busy) return;
+        _editOpen = false;
+        _editingPortfolio = null;
+    }
+
+    private async Task UpdatePortfolioAsync()
+    {
+        if (_busy || _editingPortfolio is null) return;
+
+        _busy = true;
+        _editError = null;
+        try
+        {
+            using var client = await CreateAuthenticatedClientAsync();
+            if (client is null)
+            {
+                _editError = "Войдите в приложение, чтобы изменить портфель.";
+                return;
+            }
+
+            using var response = await client.PutAsJsonAsync(
+                $"Portfolios/{_editingPortfolio.Id}",
+                new { name = _editForm.Name.Trim(), isDemo = _editForm.IsDemo });
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _editError = $"Не удалось сохранить портфель (HTTP {(int)response.StatusCode}).";
+                return;
+            }
+
+            _editingPortfolio.Name = _editForm.Name.Trim();
+            _editingPortfolio.IsDemo = _editForm.IsDemo;
+            _editOpen = false;
+            _editingPortfolio = null;
+            _actionMessage = "Портфель обновлён.";
+        }
+        catch (Exception)
+        {
+            _editError = "Не удалось сохранить портфель.";
         }
         finally
         {
@@ -273,6 +373,7 @@
         public PortfolioSummary() { }
         public int Id { get; set; }
         public string Name { get; set; } = string.Empty;
+        public bool IsDemo { get; set; }
         public List<JsonElement>? Items { get; set; } = [];
         public List<JsonElement>? Orders { get; set; } = [];
     }
@@ -282,6 +383,15 @@
         [Required(ErrorMessage = "Укажите название портфеля.")]
         [StringLength(100, ErrorMessage = "Название не должно превышать 100 символов.")]
         public string Name { get; set; } = string.Empty;
+        public bool IsDemo { get; set; }
+    }
+
+    private sealed class PortfolioEditForm
+    {
+        [Required(ErrorMessage = "Укажите название портфеля.")]
+        [StringLength(100, ErrorMessage = "Название не должно превышать 100 символов.")]
+        public string Name { get; set; } = string.Empty;
+        public bool IsDemo { get; set; }
     }
 }
 

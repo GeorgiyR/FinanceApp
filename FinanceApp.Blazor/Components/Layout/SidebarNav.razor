@@ -28,7 +28,7 @@
         @foreach (var portfolio in _portfolios)
         {
             <details class="nav-group nav-portfolio-group">
-                <summary>@portfolio.Name</summary>
+                <summary><span class="nav-label">@portfolio.Name @if (portfolio.IsDemo) { <span class="nav-demo-tag" title="Демо-портфель">Демо</span> }</span></summary>
                 <div class="nav-children">
                     <NavLink class="nav-link" href="@($"/stockpilot/portfolios/{portfolio.Id}?section=positions")">Позиции</NavLink>
                     <NavLink class="nav-link" href="@($"/stockpilot/portfolios/{portfolio.Id}?section=transactions")">Транзакции</NavLink>
@@ -220,6 +220,7 @@
         public PortfolioNavigationItem() { }
         public int Id { get; set; }
         public string Name { get; set; } = string.Empty;
+        public bool IsDemo { get; set; }
     }
 
     private sealed class MarketIndexNavigationItem
