@@ -287,6 +287,16 @@ a { color: inherit; text-decoration: none; }
 .history-summary-grid { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(280px, 1fr); gap: 12px; margin: 4px 0 14px; }
 .history-summary-card { min-width: 0; padding: 10px 12px; border: 1px solid #d0e8ff; border-radius: 8px; background: #fff; }
 .history-summary-card h3 { margin: 0 0 10px; color: #697586; font-size: 15px; font-weight: 500; }
+.history-summary-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.history-summary-heading h3 { margin: 0; }
+.finanzen-link-button {
+    display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto;
+    padding: 0 2px; border: 0; background: none; color: #1677ff;
+    font: inherit; font-size: 15px; cursor: pointer;
+}
+.finanzen-link-button:hover { color: #0958d9; text-decoration: underline; }
+.finanzen-link-button:disabled { color: #bfbfbf; cursor: not-allowed; text-decoration: none; }
+.finanzen-link-button svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .history-performance-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: end; gap: 12px; }
 .history-performance-metrics > div, .history-volume-metrics > div { display: grid; gap: 3px; min-width: 0; }
 .history-performance-metrics span, .history-volume-metrics span { color: #697586; font-size: 13px; }
