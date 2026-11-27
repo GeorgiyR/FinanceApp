@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using FinanceApp.Data.Data;
 using FinanceApp.Core.Models;
 using System.Security.Claims;
+using System.ComponentModel.DataAnnotations;
 
 namespace FinanceApp.API.Controllers;
 
@@ -47,11 +48,26 @@ public class PortfoliosController : ControllerBase
         {
             Name = dto.Name,
             UserId = userId,
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = DateTime.UtcNow,
+            IsDemo = dto.IsDemo
         };
         _context.Portfolios.Add(portfolio);
         await _context.SaveChangesAsync();
         return CreatedAtAction(nameof(GetById), new { id = portfolio.Id }, portfolio);
+    }
+
+    [HttpPut("{id}")]
+    public async Task<IActionResult> Update(int id, UpdatePortfolioDto dto)
+    {
+        var userId = int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        var portfolio = await _context.Portfolios
+            .FirstOrDefaultAsync(p => p.Id == id && p.UserId == userId);
+        if (portfolio is null) return NotFound();
+
+        portfolio.Name = dto.Name;
+        portfolio.IsDemo = dto.IsDemo;
+        await _context.SaveChangesAsync();
+        return NoContent();
     }
 
     [HttpPost("{id}/items")]
@@ -188,6 +204,15 @@ public class PortfoliosController : ControllerBase
 public class CreatePortfolioDto
 {
     public string Name { get; set; } = string.Empty;
+    public bool IsDemo { get; set; }
+}
+
+public class UpdatePortfolioDto
+{
+    [Required]
+    [StringLength(100)]
+    public string Name { get; set; } = string.Empty;
+    public bool IsDemo { get; set; }
 }
 
 public class AddItemDto
