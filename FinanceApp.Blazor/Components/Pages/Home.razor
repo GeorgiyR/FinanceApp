@@ -13,6 +13,7 @@
         <div>
             <h1>Главная</h1>
             <p class="earnings-calendar-description">Даты отчётов по отслеживаемым акциям и портфелям</p>
+            <p class="earnings-calendar-hint">Дата — публикация отчёта, если известна; «период» — конец фискального периода.</p>
         </div>
         <div class="earnings-calendar-controls">
             <label for="earnings-upcoming">Вперёд:
@@ -123,8 +124,8 @@
             _events.Clear();
             _events.AddRange(await response.Content.ReadFromJsonAsync<List<EarningsEventList.EarningsCalendarItem>>(JsonOptions) ?? []);
             var today = DateTime.UtcNow.Date;
-            _upcoming = _events.Where(x => x.ReportDate is DateTime date && date >= today).ToList();
-            _past = _events.Where(x => x.ReportDate is DateTime date && date < today).OrderByDescending(x => x.ReportDate).ToList();
+            _upcoming = _events.Where(x => x.EffectiveDate is DateTime date && date >= today).ToList();
+            _past = _events.Where(x => x.EffectiveDate is DateTime date && date < today).OrderByDescending(x => x.EffectiveDate).ToList();
             _fetchedAtUtc = _events.Count == 0 ? null : _events.Max(x => x.SourceFetchedAtUtc);
         }
         catch (Exception)

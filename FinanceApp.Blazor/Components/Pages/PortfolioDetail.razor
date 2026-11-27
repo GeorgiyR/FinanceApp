@@ -1112,10 +1112,15 @@ private static string FormatFinancial(decimal? value, string? currency = null)
     private static string FormatDate(DateTime? value) => value?.ToLocalTime().ToString("dd.MM.yyyy", RussianCulture) ?? "—";
     private static string FormatEarningsDate(EarningsEvent item)
     {
-        if (item.ReportDate is null) return "—";
-        var start = FormatDate(item.ReportDate);
+        var report = item.ReportDate is DateTime reportDate ? FormatDate(reportDate) : null;
+        var periodEnd = item.FiscalPeriodEnd is DateTime periodEndDate ? FormatDate(periodEndDate) : null;
+        var date = report ?? periodEnd;
+        if (date is null) return "—";
         var end = item.ReportDateEnd is null ? null : FormatDate(item.ReportDateEnd);
-        return !string.IsNullOrWhiteSpace(end) && end != start ? $"{start} – {end}" : start;
+        var withRange = !string.IsNullOrWhiteSpace(end) && end != date ? $"{date} – {end}" : date;
+        return report is not null && periodEnd is not null && periodEnd != date
+            ? $"{withRange} (период {periodEnd})"
+            : withRange;
     }
     private static string FormatEarningsStatus(string status) => status switch
     {
@@ -1227,6 +1232,7 @@ private static string FormatFinancial(decimal? value, string? currency = null)
     {
         public EarningsEvent() { }
         public DateTime? ReportDate { get; set; }
+        public DateTime? FiscalPeriodEnd { get; set; }
         public DateTime? ReportDateEnd { get; set; }
         public string DateStatus { get; set; } = string.Empty;
         public decimal? EpsEstimate { get; set; }

@@ -7,7 +7,7 @@
 }
 else
 {
-    @foreach (var group in Items.GroupBy(x => x.ReportDate?.Date).OrderBy(g => g.Key))
+    @foreach (var group in Items.GroupBy(x => x.EffectiveDate?.Date).OrderBy(g => g.Key))
     {
         <div class="earnings-date-group">
             <div class="earnings-date-heading">@(group.Key is DateTime date ? date.ToString("dd.MM.yyyy", RussianCulture) : "дата не указана")</div>
@@ -16,7 +16,7 @@ else
                 <a class="earnings-event-row" href="@Href(item)">
                     <span class="earnings-event-ticker">@item.Ticker</span>
                     <span class="earnings-event-name">@item.Name</span>
-                    <span class="earnings-event-period">@(item.FiscalPeriod ?? "—")</span>
+                    <span class="earnings-event-period" title="@item.FiscalPeriod">@(item.FiscalPeriodEnd?.ToString("dd.MM.yy", RussianCulture) ?? "—")</span>
                     <span class="earnings-event-status earnings-event-status--@item.DateStatus">@StatusLabel(item.DateStatus)</span>
                     <span class="earnings-event-est">est @Number(item.EpsEstimate)</span>
                     @if (item.EpsReported is not null)
@@ -63,6 +63,8 @@ else
         public string Name { get; set; } = string.Empty;
         public bool IsTracked { get; set; }
         public DateTime? ReportDate { get; set; }
+        public DateTime? FiscalPeriodEnd { get; set; }
+        public DateTime? EffectiveDate => ReportDate ?? FiscalPeriodEnd;
         public string DateStatus { get; set; } = string.Empty;
         public string? FiscalPeriod { get; set; }
         public decimal? EpsEstimate { get; set; }
