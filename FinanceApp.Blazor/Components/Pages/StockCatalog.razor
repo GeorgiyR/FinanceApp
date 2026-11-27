@@ -61,14 +61,14 @@
         @if (!string.IsNullOrWhiteSpace(_performanceError)) { <div class="tracked-stocks-performance-error">@_performanceError</div> }
         <div class="positions-table-wrap catalog-table-wrap">
             <table class="positions-table catalog-stocks-table">
-                <thead><tr><th>Тикер</th><th>Название</th><th>Индексы</th>@if (_sortMode != "name") { <th class="numeric">Рост за период</th> }<th class="numeric">Текущая цена</th><th class="numeric">Изменение (€)</th><th class="numeric">(%)</th><th class="numeric">Цена API</th><th>Время</th><th class="actions-heading">Действия</th></tr></thead>
+                <thead><tr><th class="catalog-ticker-col">Тикер</th><th>Название</th><th>Индексы</th>@if (_sortMode != "name") { <th class="numeric">Рост за период</th> }<th class="numeric catalog-price-col">Текущая<br />цена</th><th class="numeric catalog-change-col">Изм. (€)</th><th class="numeric catalog-percent-col">(%)</th><th class="numeric">Цена API</th><th>Время</th><th class="actions-heading">Действия</th></tr></thead>
                 <tbody>
                     @foreach (var stock in PagedStocks)
                     {
                         var isTracked = stock.TrackingStatus == 1;
                         var expanded = _expandedStockId == stock.Id;
                         <tr>
-                            <td class="ticker-cell">
+                            <td class="ticker-cell catalog-ticker-col">
                                 <button type="button" class="ticker-chart-toggle" aria-expanded="@expanded" aria-controls="catalog-history-@stock.Id" @onclick="() => ToggleHistory(stock.Id)"><span class="ticker-chart-caret @(expanded ? "expanded" : "")">›</span>@stock.Ticker</button>
                                 <span class="ticker-exchange-abbreviation" title="@stock.Exchange">@ExchangeAbbreviation(stock.Exchange)</span>
                             </td>
@@ -88,9 +88,9 @@
                                     else { <span class="catalog-stock-status" title="Недостаточно исторических данных">—</span> }
                                 </td>
                             }
-                            <td class="numeric">@FormatMoney(stock.CurrentPrice)</td>
-                            <td class="numeric @ProfitClass(stock.CurrentPriceChange)">@(stock.CurrentPriceChange is decimal change ? FormatSignedMoney(change) : "—")</td>
-                            <td class="numeric @ProfitClass(stock.CurrentPriceChangePercent)">@(stock.CurrentPriceChangePercent is decimal percent ? FormatSignedPercent(percent) : "—")</td>
+                            <td class="numeric catalog-price-col">@FormatMoney(stock.CurrentPrice)</td>
+                            <td class="numeric catalog-change-col @ProfitClass(stock.CurrentPriceChange)">@(stock.CurrentPriceChange is decimal change ? FormatSignedMoney(change) : "—")</td>
+                            <td class="numeric catalog-percent-col @ProfitClass(stock.CurrentPriceChangePercent)">@(stock.CurrentPriceChangePercent is decimal percent ? FormatSignedPercent(percent) : "—")</td>
                             <td class="numeric" title="@FormatApiPriceTooltip(stock.LiveQuote)">
                                 @if (_refreshingStockId == stock.Id) { <span>…</span> }
                                 else if (stock.LiveQuote is { } quote) { <span>@FormatApiPrice(quote)</span> }
