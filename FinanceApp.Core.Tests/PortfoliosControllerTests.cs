@@ -171,6 +171,52 @@ public class PortfoliosControllerTests
         Assert.All(portfolio.Orders, order => Assert.True(order.Status is OrderStatus.Pending or OrderStatus.Triggered));
     }
 
+    [Fact]
+    public async Task Create_PersistsIsDemoFlag()
+    {
+        await using var context = CreateContext();
+        var controller = CreateController(context, 1);
+
+        var result = await controller.Create(new CreatePortfolioDto { Name = "Demo", IsDemo = true });
+
+        var created = Assert.IsType<CreatedAtActionResult>(result.Result);
+        var portfolio = Assert.IsType<Portfolio>(created.Value);
+        Assert.True(portfolio.IsDemo);
+        Assert.True(await context.Portfolios.AnyAsync(x => x.Id == portfolio.Id && x.IsDemo));
+    }
+
+    [Fact]
+    public async Task Update_ChangesNameAndDemoFlagForOwnedPortfolio()
+    {
+        await using var context = CreateContext();
+        context.Portfolios.Add(new Portfolio { Id = 15, Name = "Old", UserId = 1, CreatedAt = DateTime.UtcNow });
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context, 1);
+        var result = await controller.Update(15, new UpdatePortfolioDto { Name = "New", IsDemo = true });
+
+        Assert.IsType<NoContentResult>(result);
+        var portfolio = await context.Portfolios.AsNoTracking().SingleAsync(x => x.Id == 15);
+        Assert.Equal("New", portfolio.Name);
+        Assert.True(portfolio.IsDemo);
+    }
+
+    [Fact]
+    public async Task Update_OtherUsersPortfolio_ReturnsNotFound()
+    {
+        await using var context = CreateContext();
+        context.Portfolios.Add(new Portfolio { Id = 16, Name = "Foreign", UserId = 2, CreatedAt = DateTime.UtcNow });
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context, 1);
+        var result = await controller.Update(16, new UpdatePortfolioDto { Name = "Changed", IsDemo = true });
+
+        Assert.IsType<NotFoundResult>(result);
+        var portfolio = await context.Portfolios.AsNoTracking().SingleAsync(x => x.Id == 16);
+        Assert.Equal("Foreign", portfolio.Name);
+        Assert.False(portfolio.IsDemo);
+    }
+
     private static AppDbContext CreateContext()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
