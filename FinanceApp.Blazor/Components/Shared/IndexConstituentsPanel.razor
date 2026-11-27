@@ -883,6 +883,7 @@
     private static PortfolioStockViewModel ToHistoryStock(IndexConstituentDto constituent) => new()
     {
         Id = constituent.StockId, Ticker = constituent.Ticker, Name = constituent.Name, CommonName = constituent.CommonName, Exchange = constituent.Exchange, Isin = constituent.Isin,
+        FinanzenNetSlug = constituent.FinanzenNetSlug,
         CurrentPrice = constituent.CurrentPrice ?? 0m, CurrentPriceChange = constituent.CurrentPriceChange, CurrentPriceChangePercent = constituent.CurrentPriceChangePercent, CurrentPriceAt = constituent.CurrentPriceAt
     };
 

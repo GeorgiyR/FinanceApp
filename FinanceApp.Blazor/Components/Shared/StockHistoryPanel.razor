@@ -47,7 +47,13 @@
     {
         <div class="history-summary-grid">
             <section class="history-summary-card">
-                <h3>Изменение за период (к текущей цене)</h3>
+                <div class="history-summary-heading">
+                    <h3>Изменение за период (к текущей цене)</h3>
+                    <button type="button" class="finanzen-link-button" title="@FinanzenNetTooltip" aria-label="Открыть на finanzen.net" disabled="@(FinanzenNetUrl is null)" @onclick="OpenFinanzenNetAsync">
+                        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.8 12.2a4 4 0 0 1 0-5.66l2.12-2.12a4 4 0 0 1 5.66 5.66l-1.42 1.42M12.2 7.8a4 4 0 0 1 0 5.66l-2.12 2.12a4 4 0 0 1-5.66-5.66l1.42-1.42" /></svg>
+                        finanzen.net
+                    </button>
+                </div>
                 <div class="history-performance-metrics">
                     <div><span>Тек. цена</span><strong>@FormatHistoryMoney(Stock.CurrentPrice)</strong></div>
                     <div><span>Мин.–макс. за @GetHistoryRangeLabel(_historyRange)</span><strong>@FormatHistoryMoney(GetHistoryLow(_history)) → @FormatHistoryMoney(GetHistoryHigh(_history))</strong></div>
@@ -210,6 +216,43 @@
             var normalized = _hardResetConfirmation.Trim();
             return string.Equals(normalized, "УДАЛИТЬ", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(normalized, Stock.Ticker?.Trim(), StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    private string? FinanzenNetUrl
+    {
+        get
+        {
+            var slug = Stock.FinanzenNetSlug;
+            if (string.IsNullOrWhiteSpace(slug)
+                || !System.Text.RegularExpressions.Regex.IsMatch(slug, "^[a-z0-9][a-z0-9_-]{0,119}$"))
+            {
+                return null;
+            }
+
+            return $"https://www.finanzen.net/aktien/{Uri.EscapeDataString(slug)}";
+        }
+    }
+
+    private string FinanzenNetTooltip => FinanzenNetUrl is not null
+        ? "Открыть страницу инструмента на finanzen.net"
+        : "Для открытия finanzen.net укажите finanzen.net Slug в настройках акции";
+
+    private async Task OpenFinanzenNetAsync()
+    {
+        var url = FinanzenNetUrl;
+        if (url is null) return;
+
+        try
+        {
+            await JS.InvokeVoidAsync(
+                "open",
+                url,
+                "finanzen_net_popup",
+                "noopener,noreferrer,width=1200,height=800,resizable=yes,scrollbars=yes");
+        }
+        catch (JSException)
+        {
         }
     }
 

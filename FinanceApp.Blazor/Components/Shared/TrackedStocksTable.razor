@@ -159,6 +159,7 @@
     private static PortfolioStockViewModel ToHistoryStock(TrackedStockViewModel stock) => new()
     {
         Id = stock.Id, Ticker = stock.Ticker, Name = stock.Name, CommonName = stock.CommonName, Exchange = stock.Exchange, Isin = stock.Isin,
+        FinanzenNetSlug = stock.FinanzenNetSlug,
         CurrentPrice = stock.CurrentPrice, CurrentPriceChange = stock.CurrentPriceChange, CurrentPriceChangePercent = stock.CurrentPriceChangePercent, CurrentPriceAt = stock.CurrentPriceAt
     };
     private static string ExchangeAbbreviation(string exchange) => exchange.Trim().ToUpperInvariant() switch { "FRANKFURT" => "F", "NASDAQ" or "NYSE" => "N", _ => exchange };
