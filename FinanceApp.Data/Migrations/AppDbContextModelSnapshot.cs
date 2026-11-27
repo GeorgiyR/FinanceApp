@@ -410,6 +410,9 @@ namespace FinanceApp.Data.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("varchar(32)");
 
+                    b.Property<DateTime?>("FiscalPeriodEnd")
+                        .HasColumnType("datetime(6)");
+
                     b.Property<DateTime?>("ReportDate")
                         .HasColumnType("datetime(6)");
 
