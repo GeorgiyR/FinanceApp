@@ -12,23 +12,47 @@ a { color: inherit; text-decoration: none; }
 .app-sidebar {
     position: sticky; top: 0; display: flex; flex: 0 0 260px; flex-direction: column;
     height: 100vh; padding: 20px 14px; overflow-y: auto; background: #10243a; color: #d9e2ec;
+    transition: flex-basis 0.2s ease, padding 0.2s ease;
 }
-.brand { display: block; padding: 0 12px 24px; color: #fff; font-size: 21px; font-weight: 700; }
-.sidebar-nav { display: flex; flex: 1; flex-direction: column; gap: 5px; }
+.brand { display: block; padding: 0 12px 24px; color: #fff; font-size: 21px; font-weight: 700; white-space: nowrap; }
+.sidebar-nav { display: flex; flex: 1; flex-direction: column; gap: 5px; min-width: 0; }
 .nav-link, .nav-group > summary {
-    display: block; width: 100%; padding: 10px 12px; border: 0; border-radius: 7px;
+    display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; border: 0; border-radius: 7px;
     color: #d9e2ec; font: inherit; line-height: 1.35; cursor: pointer;
 }
 .nav-group > summary { list-style: none; }
 .nav-group > summary::-webkit-details-marker { display: none; }
-.nav-group > summary::after { float: right; content: "›"; transform: rotate(90deg); }
+.nav-group > summary::after { content: "›"; margin-left: auto; transform: rotate(90deg); }
 .nav-group[open] > summary::after { transform: rotate(-90deg); }
+.nav-icon { display: inline-flex; flex: 0 0 20px; align-items: center; justify-content: center; }
+.nav-icon svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.nav-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nav-link:hover, .nav-group > summary:hover { background: #1d3855; color: #fff; }
 .nav-link.active { background: #244a70; color: #fff; }
 .nav-children { display: grid; gap: 3px; padding: 3px 0 5px 12px; }
 .nav-children .nav-link, .nav-group-nested > summary { padding: 8px 10px; font-size: 14px; }
 .nav-group-nested > summary { color: #c1cfdd; }
 .sidebar-bottom { margin-top: auto; padding-top: 16px; border-top: 1px solid #294158; }
+.sidebar-collapse-button {
+    display: inline-flex; align-items: center; justify-content: center; align-self: flex-end;
+    width: 32px; height: 32px; margin-top: 10px; padding: 0; flex-shrink: 0;
+    border: 1px solid #b0bec5; border-radius: 10px; background: #fff; color: #073f86; cursor: pointer;
+}
+.sidebar-collapse-button:hover, .sidebar-collapse-button:focus-visible { border-color: #073f86; background: #e8eaf6; color: #073f86; }
+.sidebar-collapse-button svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+@media (min-width: 761px) {
+    .sidebar-collapsed .app-sidebar { flex-basis: 68px; padding: 20px 8px; }
+    .sidebar-collapsed .brand { padding: 0 0 24px; text-align: center; font-size: 0; }
+    .sidebar-collapsed .brand::before { content: "F"; font-size: 21px; }
+    .sidebar-collapsed .nav-label,
+    .sidebar-collapsed .nav-portfolio-items,
+    .sidebar-collapsed .nav-children,
+    .sidebar-collapsed .nav-group > summary::after,
+    .sidebar-collapsed .nav-placeholder { display: none; }
+    .sidebar-collapsed .nav-link,
+    .sidebar-collapsed .nav-group > summary { justify-content: center; padding: 10px 0; }
+    .sidebar-collapsed .sidebar-collapse-button { align-self: center; }
+}
 .app-main { flex: 1; min-width: 0; }
 .app-header {
     display: flex; align-items: center; height: 64px; padding: 0 28px;
@@ -44,6 +68,7 @@ a { color: inherit; text-decoration: none; }
 #blazor-error-ui .dismiss { position: absolute; top: 8px; right: 12px; cursor: pointer; }
 @media (max-width: 760px) {
     .app-sidebar { flex-basis: 210px; padding: 16px 10px; }
+    .sidebar-collapse-button { display: none; }
     .app-header { padding: 0 18px; }
     .page-content { padding: 20px 18px; }
 }
