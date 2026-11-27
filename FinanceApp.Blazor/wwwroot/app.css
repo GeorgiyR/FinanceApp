@@ -11,7 +11,7 @@ a { color: inherit; text-decoration: none; }
 .app-shell { display: flex; min-height: 100vh; }
 .app-sidebar {
     position: sticky; top: 0; display: flex; flex: 0 0 260px; flex-direction: column;
-    height: 100vh; height: 100dvh; padding: 20px 14px; overflow: hidden; background: #10243a; color: #d9e2ec;
+    height: 100vh; height: 100dvh; padding: 20px 14px; overflow: hidden; overflow: clip; background: #10243a; color: #d9e2ec;
     transition: flex-basis 0.2s ease, padding 0.2s ease;
 }
 .brand { display: block; flex: 0 0 auto; padding: 0 12px 24px; color: #fff; font-size: 21px; font-weight: 700; white-space: nowrap; }
@@ -65,7 +65,7 @@ a { color: inherit; text-decoration: none; }
     display: flex; align-items: center; height: 64px; padding: 0 28px;
     background: #fff; border-bottom: 1px solid #e5eaf0; font-weight: 600;
 }
-.page-content { padding: 28px; }
+.page-content { padding: 28px 28px 48px; }
 .page-content h1 { margin: 0; font-size: 24px; font-weight: 600; }
 .bare-layout { min-height: 100vh; padding: 32px; background: #f5f7fa; }
 #blazor-error-ui {
@@ -77,8 +77,9 @@ a { color: inherit; text-decoration: none; }
     .app-sidebar { flex-basis: 210px; padding: 16px 10px; }
     .sidebar-collapse-button { display: none; }
     .app-header { padding: 0 18px; }
-    .page-content { padding: 20px 18px; }
+    .page-content { padding: 20px 18px calc(44px + env(safe-area-inset-bottom, 0px)); }
 }
+
 
 .nav-placeholder { padding: 8px 10px; color: #91a4b7; font-size: 13px; }
 
@@ -209,6 +210,17 @@ a { color: inherit; text-decoration: none; }
 .table-hscroll::-webkit-scrollbar-thumb { border-radius: 5px; background: #9fb3c8; }
 .table-hscroll::-webkit-scrollbar-thumb:hover { background: #7d94ab; }
 .table-hscroll-inner { height: 1px; }
+.positions-table-wrap,
+.tracked-stocks-table-wrap,
+.transactions-table-wrap,
+.orders-table-wrap,
+.index-constituents-table-wrap,
+.indices-table-wrap,
+.financial-metrics-table-wrap,
+.system-runs-table-wrap,
+.help-page__table-wrap {
+    overflow-y: hidden;
+}
 .positions-table { width: 100%; min-width: 1180px; border-collapse: collapse; font-size: 15px; }
     .positions-table th, .positions-table td {
         padding: 13px 14px;
