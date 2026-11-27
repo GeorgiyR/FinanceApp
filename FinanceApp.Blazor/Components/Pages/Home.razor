@@ -1,3 +1,142 @@
 @page "/"
+@using System.Globalization
+@using System.Net.Http.Headers
+@using System.Net.Http.Json
+@using System.Text.Json
+@inject IHttpClientFactory HttpClientFactory
+@inject IJSRuntime JS
+
 <PageTitle>Stockpilot</PageTitle>
-<h1>Главная</h1>
+
+<div class="earnings-calendar-page">
+    <div class="earnings-calendar-heading">
+        <div>
+            <h1>Главная</h1>
+            <p class="earnings-calendar-description">Даты отчётов по отслеживаемым акциям и портфелям</p>
+        </div>
+        <div class="earnings-calendar-controls">
+            <label for="earnings-upcoming">Вперёд:
+                <select id="earnings-upcoming" @bind="_upcomingDays" @bind:after="LoadAsync">
+                    <option value="30">30 дней</option>
+                    <option value="90">90 дней</option>
+                </select>
+            </label>
+            <label for="earnings-past">Назад:
+                <select id="earnings-past" @bind="_pastDays" @bind:after="LoadAsync">
+                    <option value="14">14 дней</option>
+                    <option value="30">30 дней</option>
+                </select>
+            </label>
+            <button type="button" class="portfolio-refresh-button" @onclick="LoadAsync" disabled="@_loading">Обновить</button>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(_error))
+    {
+        <div class="portfolio-state portfolio-state-error" role="alert">
+            <p>@_error</p>
+            @if (_requiresLogin) { <a class="portfolio-login-link" href="/stockpilot/login">Войти</a> }
+            <button type="button" class="portfolio-refresh-button" @onclick="LoadAsync">Повторить</button>
+        </div>
+    }
+    else if (_loading)
+    {
+        <div class="portfolio-state">Загрузка дат отчётов…</div>
+    }
+    else if (_events.Count == 0)
+    {
+        <div class="portfolio-state">В выбранном интервале отчётов нет.</div>
+    }
+    else
+    {
+        <div class="earnings-calendar-grid">
+            <section class="earnings-calendar-section">
+                <h2>Ближайшие отчёты</h2>
+                <EarningsEventList Items="_upcoming" EmptyText="На ближайшие дни отчётов нет." />
+            </section>
+            <section class="earnings-calendar-section">
+                <h2>Прошедшие отчёты</h2>
+                <EarningsEventList Items="_past" EmptyText="За выбранный период отчётов нет." />
+            </section>
+        </div>
+        @if (_fetchedAtUtc is DateTime fetchedAt)
+        {
+            <p class="earnings-calendar-source">Обновлено: @fetchedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm", RussianCulture)</p>
+        }
+    }
+</div>
+
+@code {
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
+    private static readonly CultureInfo RussianCulture = CultureInfo.GetCultureInfo("ru-RU");
+    private readonly List<EarningsEventList.EarningsCalendarItem> _events = [];
+    private List<EarningsEventList.EarningsCalendarItem> _upcoming = [];
+    private List<EarningsEventList.EarningsCalendarItem> _past = [];
+    private int _upcomingDays = 30;
+    private int _pastDays = 14;
+    private bool _loading = true;
+    private bool _requiresLogin;
+    private string? _error;
+    private DateTime? _fetchedAtUtc;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender) await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = null;
+        _requiresLogin = false;
+        StateHasChanged();
+
+        try
+        {
+            var module = await JS.InvokeAsync<IJSObjectReference>("import", "./portfolioApi.js");
+            string? token;
+            try { token = await module.InvokeAsync<string?>("getToken"); }
+            finally { await module.DisposeAsync(); }
+
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                _error = "Войдите в приложение, чтобы увидеть даты отчётов.";
+                _requiresLogin = true;
+                return;
+            }
+
+            using var client = HttpClientFactory.CreateClient("FinanceApi");
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            using var response = await client.GetAsync($"Stocks/earnings-calendar?upcomingDays={_upcomingDays}&pastDays={_pastDays}");
+            if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+            {
+                _error = "Сессия истекла. Войдите и попробуйте снова.";
+                _requiresLogin = true;
+                return;
+            }
+            if (!response.IsSuccessStatusCode)
+            {
+                _error = $"Не удалось загрузить даты отчётов (HTTP {(int)response.StatusCode}).";
+                return;
+            }
+
+            _events.Clear();
+            _events.AddRange(await response.Content.ReadFromJsonAsync<List<EarningsEventList.EarningsCalendarItem>>(JsonOptions) ?? []);
+            var today = DateTime.UtcNow.Date;
+            _upcoming = _events.Where(x => x.ReportDate is DateTime date && date >= today).ToList();
+            _past = _events.Where(x => x.ReportDate is DateTime date && date < today).OrderByDescending(x => x.ReportDate).ToList();
+            _fetchedAtUtc = _events.Count == 0 ? null : _events.Max(x => x.SourceFetchedAtUtc);
+        }
+        catch (Exception)
+        {
+            _error = "Не удалось связаться с API. Проверьте адрес и попробуйте снова.";
+        }
+        finally
+        {
+            _loading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+}
+
+

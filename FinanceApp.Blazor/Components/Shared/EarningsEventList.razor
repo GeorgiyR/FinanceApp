@@ -1,0 +1,73 @@
+@using System.Globalization
+@using FinanceApp.Blazor.Components.Models
+
+@if (Items.Count == 0)
+{
+    <div class="portfolio-state">@EmptyText</div>
+}
+else
+{
+    @foreach (var group in Items.GroupBy(x => x.ReportDate?.Date).OrderBy(g => g.Key))
+    {
+        <div class="earnings-date-group">
+            <div class="earnings-date-heading">@(group.Key is DateTime date ? date.ToString("dd.MM.yyyy", RussianCulture) : "дата не указана")</div>
+            @foreach (var item in group.OrderBy(x => x.Ticker))
+            {
+                <a class="earnings-event-row" href="@Href(item)">
+                    <span class="earnings-event-ticker">@item.Ticker</span>
+                    <span class="earnings-event-name">@item.Name</span>
+                    <span class="earnings-event-period">@(item.FiscalPeriod ?? "—")</span>
+                    <span class="earnings-event-status earnings-event-status--@item.DateStatus">@StatusLabel(item.DateStatus)</span>
+                    <span class="earnings-event-est">est @Number(item.EpsEstimate)</span>
+                    @if (item.EpsReported is not null)
+                    {
+                        <span class="earnings-event-rep">rep @Number(item.EpsReported)</span>
+                    }
+                    @if (item.SurprisePercent is decimal surprise)
+                    {
+                        <span class="earnings-event-surprise @(surprise >= 0m ? "positive" : "negative")">@Surprise(surprise)</span>
+                    }
+                </a>
+            }
+        </div>
+    }
+}
+
+@code {
+    private static readonly CultureInfo RussianCulture = CultureInfo.GetCultureInfo("ru-RU");
+
+    [Parameter] public List<EarningsCalendarItem> Items { get; set; } = [];
+    [Parameter] public string EmptyText { get; set; } = "Отчётов нет.";
+
+    private static string StatusLabel(string status) => status switch
+    {
+        "Confirmed" => "подтверждена",
+        "Estimated" => "ожидаемая",
+        _ => "статус неизвестен",
+    };
+
+    private static string Href(EarningsCalendarItem item) => item.IsTracked
+        ? $"/stockpilot/stocks?tq={Uri.EscapeDataString(item.Ticker)}"
+        : $"/stockpilot/stocks/catalog?cq={Uri.EscapeDataString(item.Ticker)}";
+
+    private static string Number(decimal? value) => value is decimal number
+        ? number.ToString("N2", RussianCulture)
+        : "—";
+
+    private static string Surprise(decimal value) => $"{(value >= 0m ? "+" : "−")}{Math.Abs(value).ToString("N1", RussianCulture)} %";
+
+    public sealed class EarningsCalendarItem
+    {
+        public int StockId { get; set; }
+        public string Ticker { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public bool IsTracked { get; set; }
+        public DateTime? ReportDate { get; set; }
+        public string DateStatus { get; set; } = string.Empty;
+        public string? FiscalPeriod { get; set; }
+        public decimal? EpsEstimate { get; set; }
+        public decimal? EpsReported { get; set; }
+        public decimal? SurprisePercent { get; set; }
+        public DateTime SourceFetchedAtUtc { get; set; }
+    }
+}
