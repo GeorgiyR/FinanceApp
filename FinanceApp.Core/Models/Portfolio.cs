@@ -10,6 +10,7 @@ public class Portfolio
     public string Name { get; set; } = string.Empty;
     public int UserId { get; set; }
     public DateTime CreatedAt { get; set; }
+    public bool IsDemo { get; set; } = false;
     [Column(TypeName = "decimal(18,2)")]
     public decimal BrokerCredit { get; set; } = 0;
     [Column(TypeName = "decimal(18,2)")]
