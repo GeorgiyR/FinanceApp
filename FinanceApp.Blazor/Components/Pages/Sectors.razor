@@ -19,7 +19,10 @@
     </div>
 
     <div class="tracked-stocks-toolbar">
-        <input type="search" placeholder="Поиск по сектору или отрасли..." aria-label="Поиск по сектору или отрасли" value="@_search" @oninput="OnSearchChanged" />
+        <div class="search-field">
+            <input type="search" placeholder="Поиск по сектору или отрасли..." aria-label="Поиск по сектору или отрасли" value="@_search" @oninput="OnSearchChanged" />
+            @if (!string.IsNullOrEmpty(_search)) { <SearchClearButton OnClick="ClearSearch" /> }
+        </div>
         <span>Найдено: @FilteredSectors.Count() из @_sectors.Count</span>
     </div>
 
@@ -311,6 +314,8 @@
         _expandedSectorIds.Clear();
         foreach (var sector in FilteredSectors) _expandedSectorIds.Add(sector.Sector.Id);
     }
+
+    private void ClearSearch() => OnSearchChanged(new ChangeEventArgs { Value = string.Empty });
 
     private void ToggleSector(int sectorId)
     {

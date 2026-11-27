@@ -35,7 +35,10 @@
         </select>
         <input type="date" aria-label="Дата от" value="@_dateFrom" @onchange="OnDateFromChanged" />
         <input type="date" aria-label="Дата до" value="@_dateTo" @onchange="OnDateToChanged" />
-        <input type="search" placeholder="Поиск по описанию, тикеру…" aria-label="Поиск по транзакциям" value="@_search" @oninput="OnSearchChanged" />
+        <div class="search-field">
+            <input type="search" placeholder="Поиск по описанию, тикеру…" aria-label="Поиск по транзакциям" value="@_search" @oninput="OnSearchChanged" />
+            @if (!string.IsNullOrEmpty(_search)) { <SearchClearButton OnClick="ClearSearch" /> }
+        </div>
         <button class="portfolio-primary-button" @onclick="OnCreate">Новая транзакция</button>
     </div>
     @if (Loading)
@@ -144,6 +147,8 @@
         _search = args.Value?.ToString() ?? string.Empty;
         OnFiltersChanged();
     }
+
+    private void ClearSearch() => OnSearchChanged(new ChangeEventArgs { Value = string.Empty });
 
     private void OnDateFromChanged(ChangeEventArgs args)
     {

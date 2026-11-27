@@ -86,7 +86,10 @@
     else
     {
         <div class="tracked-stocks-toolbar">
-            <input type="search" placeholder="Поиск по коду, названию, стране/региону или описанию..." aria-label="Поиск по мировым индексам" value="@_search" @oninput="OnSearchChanged" />
+            <div class="search-field">
+                <input type="search" placeholder="Поиск по коду, названию, стране/региону или описанию..." aria-label="Поиск по мировым индексам" value="@_search" @oninput="OnSearchChanged" />
+                @if (!string.IsNullOrEmpty(_search)) { <SearchClearButton OnClick="ClearSearch" /> }
+            </div>
         </div>
 
         @if (!FilteredIndices.Any())
@@ -328,6 +331,7 @@
     private static string GetPanelId(int indexId) => $"index-chart-panel-{indexId}";
 
     private void OnSearchChanged(ChangeEventArgs args) => _search = args.Value?.ToString() ?? string.Empty;
+    private void ClearSearch() => OnSearchChanged(new ChangeEventArgs { Value = string.Empty });
 
     private void ToggleExpand(MarketIndexDto index)
     {

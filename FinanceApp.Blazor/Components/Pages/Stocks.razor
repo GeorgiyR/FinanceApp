@@ -32,7 +32,10 @@
     </div>
 
     <div class="tracked-stocks-toolbar">
-        <input type="search" placeholder="Поиск: тикер, название, биржа, индекс" aria-label="Поиск отслеживаемых акций" value="@_search" @oninput="OnSearchChanged" />
+        <div class="search-field">
+            <input type="search" placeholder="Поиск: тикер, название, биржа, индекс" aria-label="Поиск отслеживаемых акций" value="@_search" @oninput="OnSearchChanged" />
+            @if (!string.IsNullOrEmpty(_search)) { <SearchClearButton OnClick="ClearSearch" /> }
+        </div>
         <div class="tracked-stocks-filter-controls">
             <button type="button" class="stocks-toolbar-button" @onclick="OpenFilters" aria-label="Открыть расширенные фильтры">@(_activeFilterCount > 0 ? $"Фильтры ({_activeFilterCount})" : "Фильтры")</button>
             <button type="button" class="stocks-toolbar-button" @onclick="ResetFilters" disabled="@(_activeFilterCount == 0)" aria-label="Сбросить расширенные фильтры">Сбросить</button>
@@ -512,6 +515,8 @@
         _search = args.Value?.ToString() ?? string.Empty;
         CommitQueryState(replace: true);
     }
+
+    private void ClearSearch() => OnSearchChanged(new ChangeEventArgs { Value = string.Empty });
 
     private async Task OnSortModeChanged(ChangeEventArgs args)
     {

@@ -68,7 +68,10 @@
             <input type="datetime-local" value="@_toLocal" @onchange="OnToChanged" aria-label="Конец периода" />
         </label>
 
-        <input type="search" class="system-runs-search" placeholder="Поиск" aria-label="Поиск по журналу процессов" value="@_searchDraft" @oninput="OnSearchInput" @onkeydown="OnSearchKeyDown" />
+        <div class="search-field">
+            <input type="search" class="system-runs-search" placeholder="Поиск" aria-label="Поиск по журналу процессов" value="@_searchDraft" @oninput="OnSearchInput" @onkeydown="OnSearchKeyDown" />
+            @if (!string.IsNullOrEmpty(_searchDraft)) { <SearchClearButton OnClick="ClearSearchAsync" /> }
+        </div>
         <button type="button" class="stocks-toolbar-button" @onclick="ApplySearchAsync" disabled="@_loading">Найти</button>
 
         <label class="system-runs-active-filter">
@@ -463,6 +466,12 @@
     private void OnSearchInput(ChangeEventArgs args)
     {
         _searchDraft = args.Value?.ToString() ?? string.Empty;
+    }
+
+    private async Task ClearSearchAsync()
+    {
+        _searchDraft = string.Empty;
+        await ApplySearchAsync();
     }
 
     private async Task OnSearchKeyDown(KeyboardEventArgs args)

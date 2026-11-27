@@ -22,7 +22,10 @@
     }
 
     <div class="constituents-toolbar">
-        <input type="search" class="constituents-search" placeholder="Поиск по тикеру, названию, WKN, ISIN…" aria-label="Поиск по составу индекса" value="@_search" @oninput="OnSearchInput" />
+        <div class="search-field">
+            <input type="search" class="constituents-search" placeholder="Поиск по тикеру, названию, WKN, ISIN…" aria-label="Поиск по составу индекса" value="@_search" @oninput="OnSearchInput" />
+            @if (!string.IsNullOrEmpty(_search)) { <SearchClearButton OnClick="ClearSearch" /> }
+        </div>
         <label class="constituents-sort-label">
             Сортировка:
             <select value="@_sortMode" @onchange="OnSortModeChanged" aria-label="Сортировка">
@@ -454,6 +457,8 @@
         _search = args.Value?.ToString() ?? string.Empty;
         _page = 1;
     }
+
+    private void ClearSearch() => OnSearchInput(new ChangeEventArgs { Value = string.Empty });
 
     private void PreviousPage() { if (_page > 1) _page--; }
     private void NextPage() { if (_page < PageCount) _page++; }

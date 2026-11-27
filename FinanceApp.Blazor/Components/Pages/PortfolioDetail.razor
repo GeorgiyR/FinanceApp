@@ -128,10 +128,13 @@
                 <ValidationSummary />
                 <div class="login-field stock-autocomplete-field">
                     <label for="add-stock-search">Акция</label>
-                    <input id="add-stock-search" class="stock-search-input" type="search" role="combobox"
-                           aria-autocomplete="list" aria-controls="stock-search-results" aria-expanded="@_stockSearchOpen"
-                           autocomplete="off" placeholder="Введите тикер или название"
-                           value="@_stockSearch" @oninput="OnStockSearchChanged" />
+                    <div class="search-field">
+                        <input id="add-stock-search" class="stock-search-input" type="search" role="combobox"
+                               aria-autocomplete="list" aria-controls="stock-search-results" aria-expanded="@_stockSearchOpen"
+                               autocomplete="off" placeholder="Введите тикер или название"
+                               value="@_stockSearch" @oninput="OnStockSearchChanged" />
+                        @if (!string.IsNullOrEmpty(_stockSearch)) { <SearchClearButton OnClick="ClearStockSearch" /> }
+                    </div>
                     @if (_stockSearchOpen)
                     {
                         <div id="stock-search-results" class="stock-autocomplete-results" role="listbox">
@@ -267,7 +270,10 @@
                 </div>
                 <div class="login-field stock-autocomplete-field">
                     <label for="transaction-stock-search">Акция</label>
-                    <input id="transaction-stock-search" class="stock-search-input" type="search" autocomplete="off" placeholder="Необязательно: введите тикер или название" value="@_transactionStockSearch" @oninput="OnTransactionStockSearchChanged" />
+                    <div class="search-field">
+                        <input id="transaction-stock-search" class="stock-search-input" type="search" autocomplete="off" placeholder="Необязательно: введите тикер или название" value="@_transactionStockSearch" @oninput="OnTransactionStockSearchChanged" />
+                        @if (!string.IsNullOrEmpty(_transactionStockSearch)) { <SearchClearButton OnClick="ClearTransactionStock" /> }
+                    </div>
                     @if (_transactionStockSearchOpen)
                     {
                         <div class="stock-autocomplete-results" role="listbox">
@@ -889,6 +895,8 @@
             }
         }
     }
+
+    private Task ClearStockSearch() => OnStockSearchChanged(new ChangeEventArgs { Value = string.Empty });
 
     private async Task AddPositionAsync()
     {

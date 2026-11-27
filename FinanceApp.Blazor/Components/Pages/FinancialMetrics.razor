@@ -11,7 +11,10 @@
 
     <div class="directories-typography financial-metrics-content">
         <div class="tracked-stocks-toolbar">
-            <input type="search" placeholder="Поиск по названию, описанию, формуле, alias..." aria-label="Поиск финансовых показателей" value="@_search" @oninput="OnSearchChanged" />
+            <div class="search-field">
+                <input type="search" placeholder="Поиск по названию, описанию, формуле, alias..." aria-label="Поиск финансовых показателей" value="@_search" @oninput="OnSearchChanged" />
+                @if (!string.IsNullOrEmpty(_search)) { <SearchClearButton OnClick="ClearSearch" /> }
+            </div>
             <span>@CountText</span>
         </div>
 
@@ -114,6 +117,8 @@
     {
         _search = args.Value?.ToString() ?? string.Empty;
     }
+
+    private void ClearSearch() => OnSearchChanged(new ChangeEventArgs { Value = string.Empty });
 
     private static string? FormatAliasesLine(FinancialMetric metric) =>
         metric.Aliases is { Count: > 0 } aliases ? string.Join(", ", aliases) : null;

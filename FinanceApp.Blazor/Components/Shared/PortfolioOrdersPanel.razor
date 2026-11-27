@@ -36,7 +36,10 @@
         </select>
         <input type="date" aria-label="Дата от" value="@_dateFrom" @onchange="OnDateFromChanged" />
         <input type="date" aria-label="Дата до" value="@_dateTo" @onchange="OnDateToChanged" />
-        <input type="search" placeholder="Поиск по тикеру, названию, статусу…" aria-label="Поиск по ордерам" value="@_search" @oninput="OnSearchChanged" />
+        <div class="search-field">
+            <input type="search" placeholder="Поиск по тикеру, названию, статусу…" aria-label="Поиск по ордерам" value="@_search" @oninput="OnSearchChanged" />
+            @if (!string.IsNullOrEmpty(_search)) { <SearchClearButton OnClick="ClearSearch" /> }
+        </div>
     </div>
 
     @if (!string.IsNullOrWhiteSpace(_error))
@@ -276,10 +279,13 @@
                 {
                     <div class="login-field stock-autocomplete-field">
                         <label for="order-stock-search">Акция</label>
-                        <input id="order-stock-search" class="stock-search-input" type="search" role="combobox"
-                               aria-autocomplete="list" aria-controls="order-stock-results" aria-expanded="@_stockSearchOpen"
-                               autocomplete="off" placeholder="Введите тикер или название"
-                               value="@_stockSearch" @oninput="OnStockSearchChanged" />
+                        <div class="search-field">
+                            <input id="order-stock-search" class="stock-search-input" type="search" role="combobox"
+                                   aria-autocomplete="list" aria-controls="order-stock-results" aria-expanded="@_stockSearchOpen"
+                                   autocomplete="off" placeholder="Введите тикер или название"
+                                   value="@_stockSearch" @oninput="OnStockSearchChanged" />
+                            @if (!string.IsNullOrEmpty(_stockSearch)) { <SearchClearButton OnClick="ClearStockSearch" /> }
+                        </div>
                         @if (_stockSearchOpen)
                         {
                             <div id="order-stock-results" class="stock-autocomplete-results" role="listbox">
@@ -611,6 +617,8 @@
         _search = args.Value?.ToString() ?? string.Empty;
         OnFiltersChanged();
     }
+
+    private void ClearSearch() => OnSearchChanged(new ChangeEventArgs { Value = string.Empty });
 
     private void OnDateFromChanged(ChangeEventArgs args)
     {
@@ -1001,6 +1009,8 @@
             }
         }
     }
+
+    private Task ClearStockSearch() => OnStockSearchChanged(new ChangeEventArgs { Value = string.Empty });
 
     private void SelectStock(StockOption stock)
     {

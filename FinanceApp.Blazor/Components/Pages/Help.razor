@@ -15,7 +15,10 @@
         <aside class="help-page__sidebar" aria-label="Навигация по справке">
             <div class="help-sidebar-stack">
                 <p class="help-page__sidebar-intro">Руководство по возможностям приложения, аналитике, качеству данных и типичным вопросам.</p>
-                <input type="search" placeholder="Поиск по разделам и тексту" aria-label="Поиск по справке" value="@_search" @oninput="OnSearchChanged" />
+                <div class="search-field">
+                    <input type="search" placeholder="Поиск по разделам и тексту" aria-label="Поиск по справке" value="@_search" @oninput="OnSearchChanged" />
+                    @if (!string.IsNullOrEmpty(_search)) { <SearchClearButton OnClick="ClearSearch" /> }
+                </div>
 
                 @if (string.IsNullOrWhiteSpace(_search))
                 {
@@ -254,6 +257,8 @@
     {
         _search = args.Value?.ToString() ?? string.Empty;
     }
+
+    private void ClearSearch() => OnSearchChanged(new ChangeEventArgs { Value = string.Empty });
 
     private static bool MatchesQuery(HelpArticle article, string query)
     {

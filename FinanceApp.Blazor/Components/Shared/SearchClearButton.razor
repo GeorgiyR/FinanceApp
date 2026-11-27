@@ -1,0 +1,7 @@
+<button type="button" class="search-field-clear" title="Очистить поиск" aria-label="Очистить поиск" @onclick="OnClick">
+    <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5 5 15" /></svg>
+</button>
+
+@code {
+    [Parameter] public EventCallback OnClick { get; set; }
+}
