@@ -618,7 +618,14 @@ a { color: inherit; text-decoration: none; }
     border-radius: 9px;
     background: #fff;
 }
-.catalog-stocks-table { min-width: 1280px; }
+.catalog-stocks-table { min-width: 1120px; }
+    .catalog-stocks-table .catalog-ticker-col { width: 110px; min-width: 110px; }
+    .catalog-stocks-table .catalog-price-col { width: 90px; min-width: 90px; }
+    .catalog-stocks-table .catalog-change-col { width: 84px; min-width: 84px; }
+    .catalog-stocks-table .catalog-percent-col { width: 68px; min-width: 68px; }
+    .catalog-stocks-table .catalog-price-col,
+    .catalog-stocks-table .catalog-change-col,
+    .catalog-stocks-table .catalog-percent-col { padding-left: 7px !important; padding-right: 7px !important; }
 .catalog-stock-name { display: grid; gap: 3px; }
 .catalog-stock-name small { color: #697586; font-size: 12px; }
 .catalog-index-tags { display: flex; flex-wrap: wrap; gap: 4px; max-width: 260px; }
