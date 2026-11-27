@@ -772,6 +772,7 @@ a { color: inherit; text-decoration: none; }
     .tracked-stocks-toolbar input { width: 100%; }
 }
 .indices-page { max-width: 1500px; margin: 0 auto; }
+.indices-table-wrap { min-width: 0; max-width: 100%; }
 .indices-table th:nth-child(1), .indices-table td:nth-child(1) { width: 160px; }
 .indices-table th:nth-child(2), .indices-table td:nth-child(2) { width: 240px; }
 .indices-table th:nth-child(3), .indices-table td:nth-child(3) { width: 180px; }
@@ -787,7 +788,8 @@ a { color: inherit; text-decoration: none; }
 .index-tabs button { padding: 8px 14px; border: 0; border-bottom: 2px solid transparent; background: none; color: #566477; font: inherit; font-weight: 500; cursor: pointer; }
 .index-tabs button:hover { color: #1677ff; }
 .index-tabs button.active { border-bottom-color: #1677ff; color: #1677ff; }
-.index-tab-panel { padding-top: 4px; }
+.index-tab-panel { padding-top: 4px; min-width: 0; }
+.index-chart-panel-content { min-width: 0; }
 .index-dialog { width: min(100%, 540px); }
 .index-checkbox-field { display: flex; align-items: center; gap: 8px; margin: 4px 0 2px; color: #344054; cursor: pointer; }
 .index-checkbox-field input { accent-color: #1677ff; }
@@ -812,7 +814,7 @@ a { color: inherit; text-decoration: none; }
 .market-index-line.positive { stroke: #389e0d; }
 .market-index-line.negative { stroke: #cf1322; }
 .market-index-point { fill: #1677ff; stroke: #fff; stroke-width: 1; }
-.index-constituents-panel { padding: 8px 0; }
+.index-constituents-panel { padding: 8px 0; min-width: 0; }
 .constituents-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .constituents-search {
     min-height: 34px;
@@ -836,7 +838,7 @@ a { color: inherit; text-decoration: none; }
 .constituents-alert--warning { border-color: #ffe58f; background: #fffbe6; color: #ad6800; }
 .constituents-alert--error { border-color: #ffccc7; background: #fff2f0; color: #b42318; }
 .constituents-source-alert { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; padding: 9px 12px; border: 1px solid #d9e0e8; border-radius: 7px; }
-.index-constituents-table-wrap { margin-bottom: 12px; }
+.index-constituents-table-wrap { margin-bottom: 12px; max-width: 100%; }
 .index-constituents-table { min-width: 1230px; }
 .index-constituents-table th:nth-child(1), .index-constituents-table td:nth-child(1) { width: 150px; }
 .index-constituents-table th:nth-child(2), .index-constituents-table td:nth-child(2) { width: 280px; white-space: normal; }
