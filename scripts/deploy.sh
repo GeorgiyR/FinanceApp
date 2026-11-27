@@ -1,6 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
+# Keep MSBuild worker nodes from surviving the build: they inherit the deploy
+# flock file descriptor and keep /var/lock/financeapp-deploy.lock locked.
+export MSBUILDDISABLENODEREUSE=1
+
 APP_DIR="/var/FinanceApp"
 
 API_PROJECT="$APP_DIR/FinanceApp.API"

@@ -10,6 +10,10 @@
 
 set -Eeuo pipefail
 
+# Keep MSBuild worker nodes from surviving the build: they inherit the deploy
+# flock file descriptor and keep /var/lock/financeapp-deploy.lock locked.
+export MSBUILDDISABLENODEREUSE=1
+
 REPO="/var/FinanceApp"
 FRONTEND_TARGET="/var/www/html/financeapp"
 MERGE_COMMIT="a2ac62d79085c4d0bbfaf6808a7bf40b6d08bbbd"
