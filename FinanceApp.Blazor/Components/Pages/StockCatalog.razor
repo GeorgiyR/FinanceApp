@@ -59,7 +59,7 @@
     else
     {
         @if (!string.IsNullOrWhiteSpace(_performanceError)) { <div class="tracked-stocks-performance-error">@_performanceError</div> }
-        <div class="positions-table-wrap catalog-table-wrap table-scroll-y">
+        <div class="positions-table-wrap catalog-table-wrap">
             <table class="positions-table catalog-stocks-table">
                 <thead><tr><th>Тикер</th><th>Название</th><th>Индексы</th>@if (_sortMode != "name") { <th class="numeric">Рост за период</th> }<th class="numeric">Текущая цена</th><th class="numeric">Изменение (€)</th><th class="numeric">(%)</th><th class="numeric">Цена API</th><th>Время</th><th class="actions-heading">Действия</th></tr></thead>
                 <tbody>
