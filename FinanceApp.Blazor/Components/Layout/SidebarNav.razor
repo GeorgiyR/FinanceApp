@@ -4,6 +4,7 @@
 @implements IDisposable
 
 <nav class="sidebar-nav" aria-label="Основная навигация">
+    <div class="sidebar-scroll">
     <NavLink class="nav-link" href="/stockpilot/" Match="NavLinkMatch.All" title="Главная">
         <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="M3.5 9 10 3.5 16.5 9v7a1 1 0 0 1-1 1H4.5a1 1 0 0 1-1-1Z" /><path d="M8 17v-4.5h4V17" /></svg></span><span class="nav-label">Главная</span>
     </NavLink>
@@ -84,6 +85,8 @@
             <NavLink class="nav-link" href="/stockpilot/system/processes">Журнал процессов</NavLink>
         </div>
     </details>
+
+    </div>
 
     <div class="sidebar-bottom">
         <NavLink class="nav-link" href="/stockpilot/profile" title="@(_userName ?? "Профиль")">
