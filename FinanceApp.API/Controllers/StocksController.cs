@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -104,6 +105,70 @@ public class StocksController : ControllerBase
         if (isin != null && !StockIdentifiers.IsValidIsin(isin))
             return BadRequest("ISIN должен содержать ровно 12 символов: 2 буквы страны и 10 буквенно-цифровых символов (A–Z, 0–9).");
         return null;
+    }
+
+    [HttpGet("earnings-calendar")]
+    public async Task<ActionResult<IReadOnlyList<EarningsCalendarItemDto>>> GetEarningsCalendar(
+        [FromQuery] int upcomingDays = 30,
+        [FromQuery] int pastDays = 14,
+        CancellationToken cancellationToken = default)
+    {
+        upcomingDays = Math.Clamp(upcomingDays, 1, 365);
+        pastDays = Math.Clamp(pastDays, 0, 365);
+
+        var userId = int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        var trackedIds = _context.Stocks
+            .Where(s => s.TrackingStatus == StockTrackingStatus.Tracked)
+            .Select(s => s.Id);
+        var portfolioStockIds = _context.PortfolioItems
+            .Where(i => i.Portfolio.UserId == userId)
+            .Select(i => i.StockId);
+        var stockIds = await trackedIds.Union(portfolioStockIds).ToListAsync(cancellationToken);
+
+        var today = DateTime.UtcNow.Date;
+        var rangeStart = today.AddDays(-pastDays);
+        var rangeEnd = today.AddDays(upcomingDays);
+
+        var rows = await (
+            from snapshot in _context.FundamentalsSnapshots.AsNoTracking()
+            join stock in _context.Stocks.AsNoTracking() on snapshot.StockId equals stock.Id
+            where stockIds.Contains(stock.Id)
+            from earnings in snapshot.EarningsEvents
+            where earnings.ReportDate >= rangeStart && earnings.ReportDate <= rangeEnd
+            select new
+            {
+                stock.Id,
+                stock.Ticker,
+                stock.Name,
+                stock.TrackingStatus,
+                earnings.ReportDate,
+                earnings.DateStatus,
+                earnings.FiscalPeriod,
+                earnings.EpsEstimate,
+                earnings.EpsReported,
+                snapshot.FetchedAtUtc,
+            })
+            .OrderBy(x => x.ReportDate).ThenBy(x => x.Ticker)
+            .ToListAsync(cancellationToken);
+
+        var items = rows.Select(row => new EarningsCalendarItemDto
+        {
+            StockId = row.Id,
+            Ticker = row.Ticker,
+            Name = row.Name,
+            IsTracked = row.TrackingStatus == StockTrackingStatus.Tracked,
+            ReportDate = row.ReportDate,
+            DateStatus = row.DateStatus.ToString(),
+            FiscalPeriod = row.FiscalPeriod,
+            EpsEstimate = row.EpsEstimate,
+            EpsReported = row.EpsReported,
+            SurprisePercent = row.EpsEstimate is decimal estimate && estimate != 0m && row.EpsReported is decimal reported
+                ? (reported - estimate) / Math.Abs(estimate) * 100m
+                : null,
+            SourceFetchedAtUtc = row.FetchedAtUtc,
+        }).ToList();
+
+        return Ok(items);
     }
 
     [HttpGet("search")]
@@ -1764,6 +1829,21 @@ public class StocksController : ControllerBase
     private sealed record UpdatePurchaseCandidatePriorityMutationResult(
         ActionResult<UpdateStockPurchaseCandidatePriorityResponse>? ActionResult = null,
         UpdateStockPurchaseCandidatePriorityResponse? Response = null);
+}
+
+public sealed class EarningsCalendarItemDto
+{
+    public int StockId { get; set; }
+    public string Ticker { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public bool IsTracked { get; set; }
+    public DateTime? ReportDate { get; set; }
+    public string DateStatus { get; set; } = string.Empty;
+    public string? FiscalPeriod { get; set; }
+    public decimal? EpsEstimate { get; set; }
+    public decimal? EpsReported { get; set; }
+    public decimal? SurprisePercent { get; set; }
+    public DateTime SourceFetchedAtUtc { get; set; }
 }
 
 
