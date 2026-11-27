@@ -129,6 +129,7 @@ a { color: inherit; text-decoration: none; }
 .earnings-calendar-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .earnings-calendar-heading h1 { margin: 0; font-size: 24px; }
 .earnings-calendar-description { margin: 5px 0 0; color: #697586; }
+.earnings-calendar-hint { margin: 3px 0 0; color: #8c8c8c; font-size: 12px; }
 .earnings-calendar-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .earnings-calendar-controls label { display: flex; align-items: center; gap: 6px; color: #566477; font-size: 14px; }
 .earnings-calendar-controls select { min-height: 34px; padding: 4px 8px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; font: inherit; }
