@@ -8,14 +8,14 @@
             <div class="tracked-stock-group-heading"><strong>@group.Title</strong><span>@group.Items.Count</span></div>
             <div class="tracked-stocks-table-wrap">
                 <table class="tracked-stocks-table">
-                    <thead><tr><th>Тикер</th><th>Название</th>@if (SortMode != "name") { <th class="numeric">Рост за период</th> }<th class="numeric">Текущая цена</th><th class="numeric">Изменение (€)</th><th class="numeric">(%)</th><th class="numeric">Цена API</th><th>Время</th><th>Действия</th></tr></thead>
+                    <thead><tr><th class="tracked-ticker-col">Тикер</th><th>Название</th>@if (SortMode != "name") { <th class="numeric">Рост за период</th> }<th class="numeric tracked-price-col">Текущая<br />цена</th><th class="numeric tracked-change-col">Изм. (€)</th><th class="numeric tracked-percent-col">(%)</th><th class="numeric">Цена API</th><th>Время</th><th>Действия</th></tr></thead>
                     <tbody>
                         @foreach (var stock in group.Items)
                         {
                             var expanded = _expandedStockId == stock.Id;
                             var isProtected = PortfolioStockIds.Contains(stock.Id);
                             <tr class="@(isProtected ? "tracked-stock-in-portfolio" : "")">
-                                <td class="tracked-stock-ticker-cell">
+                                <td class="tracked-stock-ticker-cell tracked-ticker-col">
                                     <button type="button" class="ticker-chart-toggle" @onclick="() => ToggleHistory(stock.Id)" aria-expanded="@expanded" aria-controls="tracked-stock-history-@stock.Id">
                                         <span class="ticker-chart-caret @(expanded ? "expanded" : "")">›</span>@stock.Ticker
                                     </button>
@@ -40,9 +40,9 @@
                                         else { <span class="tracked-stock-muted" title="Недостаточно исторических данных">—</span> }
                                     </td>
                                 }
-                                <td class="numeric">@FormatMoney(stock.CurrentPrice)</td>
-                                <td class="numeric @ProfitClass(stock.CurrentPriceChange)">@(stock.CurrentPriceChange is decimal change ? FormatSignedMoney(change) : "—")</td>
-                                <td class="numeric @ProfitClass(stock.CurrentPriceChangePercent)">@(stock.CurrentPriceChangePercent is decimal percent ? FormatSignedPercent(percent) : "—")</td>
+                                <td class="numeric tracked-price-col">@FormatMoney(stock.CurrentPrice)</td>
+                                <td class="numeric tracked-change-col @ProfitClass(stock.CurrentPriceChange)">@(stock.CurrentPriceChange is decimal change ? FormatSignedMoney(change) : "—")</td>
+                                <td class="numeric tracked-percent-col @ProfitClass(stock.CurrentPriceChangePercent)">@(stock.CurrentPriceChangePercent is decimal percent ? FormatSignedPercent(percent) : "—")</td>
                                 <td class="numeric" title="@stock.LiveQuote?.ConversionWarning">
                                     @if (_refreshingStockId == stock.Id) { <span>…</span> }
                                     else if (stock.LiveQuote is { } quote) { <span>@FormatApiPrice(quote)</span> }
