@@ -68,7 +68,7 @@
                 <tbody>
                     @foreach (var stock in PagedStocks)
                     {
-                        var isTracked = stock.TrackingStatus == 1;
+                        var isTracked = stock.IsTrackedByUser ?? stock.TrackingStatus == 1;
                         var expanded = _expandedStockId == stock.Id;
                         <tr>
                             <td class="ticker-cell catalog-ticker-col">
@@ -349,7 +349,7 @@
 
     private async Task TrackStockAsync(TrackedStockViewModel stock)
     {
-        if (stock.TrackingStatus == 1 || _trackingStockId is not null) return;
+        if ((stock.IsTrackedByUser ?? stock.TrackingStatus == 1) || _trackingStockId is not null) return;
         _trackingStockId = stock.Id; _notice = null;
         try
         {
@@ -363,6 +363,7 @@
                 return;
             }
             stock.TrackingStatus = 1;
+            stock.IsTrackedByUser = true;
             _notice = $"{stock.Ticker} добавлена в отслеживаемые акции.";
         }
         catch { _notice = "Не удалось связаться с API."; }

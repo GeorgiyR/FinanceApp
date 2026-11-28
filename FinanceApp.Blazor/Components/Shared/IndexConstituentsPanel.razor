@@ -171,7 +171,7 @@
                                 <div class="index-constituent-actions">
                                     <button type="button" class="action-icon-button" title="Обновить цену" aria-label="Обновить цену @constituent.Ticker" @onclick="() => RefreshLivePriceAsync(constituent)" disabled="@(_quoteLoadingId is not null || _batchHistoryRefreshing)">⟳</button>
                                     <button type="button" class="action-icon-button" title="Редактировать акцию" aria-label="Редактировать акцию @constituent.Ticker" @onclick="() => OpenEditAsync(constituent)" disabled="@_editLoading">✎</button>
-                                    @if (string.Equals(constituent.TrackingStatus, "Tracked", StringComparison.OrdinalIgnoreCase))
+                                    @if (constituent.IsTrackedByUser || string.Equals(constituent.TrackingStatus, "Tracked", StringComparison.OrdinalIgnoreCase))
                                     {
                                         <span class="index-constituent-tracked" title="Уже в списке акций">✓</span>
                                     }
@@ -681,6 +681,7 @@
                 return;
             }
             constituent.TrackingStatus = "Tracked";
+            constituent.IsTrackedByUser = true;
             _infoNotice = $"«{constituent.Name}» добавлена в отслеживаемые акции";
             _infoNoticeLevel = "info";
         }
@@ -1042,6 +1043,7 @@
         public bool CurrentPriceIsDelayed { get; set; }
         public string? CurrentPriceDelayWarning { get; set; }
         public string TrackingStatus { get; set; } = string.Empty;
+        public bool IsTrackedByUser { get; set; }
         public bool IsArchived { get; set; }
     }
 

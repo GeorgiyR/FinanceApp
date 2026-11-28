@@ -23,6 +23,7 @@ public sealed class TrackedStockViewModel
     public TrackedStockSectorViewModel? Sector { get; set; }
     public TrackedStockIndustryViewModel? Industry { get; set; }
     public int TrackingStatus { get; set; }
+    public bool? IsTrackedByUser { get; set; }
     public int PurchaseCandidatePriority { get; set; }
     public StockLiveQuoteViewModel? LiveQuote { get; set; }
 }
