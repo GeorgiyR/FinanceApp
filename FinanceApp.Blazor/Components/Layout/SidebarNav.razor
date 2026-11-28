@@ -1,53 +1,54 @@
 @inject IHttpClientFactory HttpClientFactory
 @inject IJSRuntime JS
 @inject FinanceApp.Blazor.Components.Services.MarketIndexNavigationService MarketIndexNavigation
+@inject UiLanguageService L
 @implements IDisposable
 
-<nav class="sidebar-nav" aria-label="Основная навигация">
+<nav class="sidebar-nav" aria-label="@L.T("nav.aria")">
     <div class="sidebar-scroll">
-    <NavLink class="nav-link" href="/stockpilot/" Match="NavLinkMatch.All" title="Главная">
-        <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="M3.5 9 10 3.5 16.5 9v7a1 1 0 0 1-1 1H4.5a1 1 0 0 1-1-1Z" /><path d="M8 17v-4.5h4V17" /></svg></span><span class="nav-label">Главная</span>
+    <NavLink class="nav-link" href="/stockpilot/" Match="NavLinkMatch.All" title="@L.T("nav.home")">
+        <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="M3.5 9 10 3.5 16.5 9v7a1 1 0 0 1-1 1H4.5a1 1 0 0 1-1-1Z" /><path d="M8 17v-4.5h4V17" /></svg></span><span class="nav-label">@L.T("nav.home")</span>
     </NavLink>
 
-    <NavLink class="nav-link nav-link-section" href="/stockpilot/portfolios" Match="NavLinkMatch.All" title="Портфели">
-        <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20"><rect x="3" y="6.5" width="14" height="10" rx="1.5" /><path d="M7.5 6.5V5a1.5 1.5 0 0 1 1.5-1.5h2A1.5 1.5 0 0 1 12.5 5v1.5" /><path d="M3 10.5h14" /></svg></span><span class="nav-label">Портфели</span>
+    <NavLink class="nav-link nav-link-section" href="/stockpilot/portfolios" Match="NavLinkMatch.All" title="@L.T("nav.portfolios")">
+        <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20"><rect x="3" y="6.5" width="14" height="10" rx="1.5" /><path d="M7.5 6.5V5a1.5 1.5 0 0 1 1.5-1.5h2A1.5 1.5 0 0 1 12.5 5v1.5" /><path d="M3 10.5h14" /></svg></span><span class="nav-label">@L.T("nav.portfolios")</span>
     </NavLink>
-    <div class="nav-portfolio-items" aria-label="Ваши портфели">
+    <div class="nav-portfolio-items" aria-label="@L.T("nav.yourPortfolios")">
         @if (_loading)
         {
-            <span class="nav-placeholder">Загрузка…</span>
+            <span class="nav-placeholder">@L.T("nav.loading")</span>
         }
         else if (_portfolios.Count == 0 && _isAuthenticated)
         {
-            <span class="nav-placeholder">Нет портфелей</span>
+            <span class="nav-placeholder">@L.T("nav.noPortfolios")</span>
         }
         else if (!_isAuthenticated)
         {
-            <NavLink class="nav-link nav-portfolio-link" href="/stockpilot/login">Войти</NavLink>
+            <NavLink class="nav-link nav-portfolio-link" href="/stockpilot/login">@L.T("nav.login")</NavLink>
         }
         @foreach (var portfolio in _portfolios)
         {
             <details class="nav-group nav-portfolio-group">
-                <summary><span class="nav-label">@portfolio.Name @if (portfolio.IsDemo) { <span class="nav-demo-tag" title="Демо-портфель">Демо</span> }</span></summary>
+                <summary><span class="nav-label">@portfolio.Name @if (portfolio.IsDemo) { <span class="nav-demo-tag" title="@L.T("common.demo")">@L.T("nav.demo")</span> }</span></summary>
                 <div class="nav-children">
-                    <NavLink class="nav-link" href="@($"/stockpilot/portfolios/{portfolio.Id}?section=positions")">Позиции</NavLink>
-                    <NavLink class="nav-link" href="@($"/stockpilot/portfolios/{portfolio.Id}?section=transactions")">Транзакции</NavLink>
+                    <NavLink class="nav-link" href="@($"/stockpilot/portfolios/{portfolio.Id}?section=positions")">@L.T("portfolios.positions")</NavLink>
+                    <NavLink class="nav-link" href="@($"/stockpilot/portfolios/{portfolio.Id}?section=transactions")">@L.T("portfolios.transactions")</NavLink>
                 </div>
             </details>
         }
     </div>
 
     <details class="nav-group" open>
-        <summary title="Акции" @onclick="OnGroupSummaryClick">
-            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="M3 16V4" /><path d="M3 16h14" /><path d="M5.5 12.5 9 9l2.5 2.5L16 6.5" /><path d="M13 6.5h3v3" /></svg></span><span class="nav-label">Акции</span>
+        <summary title="@L.T("nav.stocks")" @onclick="OnGroupSummaryClick">
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="M3 16V4" /><path d="M3 16h14" /><path d="M5.5 12.5 9 9l2.5 2.5L16 6.5" /><path d="M13 6.5h3v3" /></svg></span><span class="nav-label">@L.T("nav.stocks")</span>
         </summary>
         <div class="nav-children">
-            <NavLink class="nav-link" href="/stockpilot/stocks" Match="NavLinkMatch.All">Отслеживаемые акции</NavLink>
-            <NavLink class="nav-link" href="/stockpilot/stocks/catalog">Список акций</NavLink>
+            <NavLink class="nav-link" href="/stockpilot/stocks" Match="NavLinkMatch.All">@L.T("nav.tracked")</NavLink>
+            <NavLink class="nav-link" href="/stockpilot/stocks/catalog">@L.T("nav.catalog")</NavLink>
             <details class="nav-group nav-group-nested">
-                <summary>Мировые индексы</summary>
+                <summary>@L.T("nav.indices")</summary>
                 <div class="nav-children">
-                    <NavLink class="nav-link" href="/stockpilot/market-indices" Match="NavLinkMatch.All">Управление</NavLink>
+                    <NavLink class="nav-link" href="/stockpilot/market-indices" Match="NavLinkMatch.All">@L.T("nav.manage")</NavLink>
                     @foreach (var index in _marketIndices)
                     {
                         var tooltip = index.Name == index.Code ? index.Name : $"{index.Name} ({index.Code})";
@@ -59,8 +60,8 @@
     </details>
 
     <details class="nav-group">
-        <summary title="Справочники" @onclick="OnGroupSummaryClick">
-            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="M4 4.5A1.5 1.5 0 0 1 5.5 3H8v14H5.5A1.5 1.5 0 0 1 4 15.5Z" /><path d="M8 3h6.5A1.5 1.5 0 0 1 16 4.5v11a1.5 1.5 0 0 1-1.5 1.5H8" /><path d="M11 6.5h2.5M11 9.5h2.5" /></svg></span><span class="nav-label">Справочники</span>
+        <summary title="@L.T("nav.directories")" @onclick="OnGroupSummaryClick">
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="M4 4.5A1.5 1.5 0 0 1 5.5 3H8v14H5.5A1.5 1.5 0 0 1 4 15.5Z" /><path d="M8 3h6.5A1.5 1.5 0 0 1 16 4.5v11a1.5 1.5 0 0 1-1.5 1.5H8" /><path d="M11 6.5h2.5M11 9.5h2.5" /></svg></span><span class="nav-label">@L.T("nav.directories")</span>
         </summary>
         <div class="nav-children">
             <NavLink class="nav-link" href="/stockpilot/sectors">Секторы и отрасли</NavLink>
@@ -78,8 +79,8 @@
     </details>
 
     <details class="nav-group">
-        <summary title="Система" @onclick="OnGroupSummaryClick">
-            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="2.5" /><path d="M10 3.2v2.1M10 14.7v2.1M3.2 10h2.1M14.7 10h2.1M5.2 5.2l1.5 1.5M13.3 13.3l1.5 1.5M14.8 5.2l-1.5 1.5M6.7 13.3l-1.5 1.5" /></svg></span><span class="nav-label">Система</span>
+        <summary title="@L.T("nav.system")" @onclick="OnGroupSummaryClick">
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="2.5" /><path d="M10 3.2v2.1M10 14.7v2.1M3.2 10h2.1M14.7 10h2.1M5.2 5.2l1.5 1.5M13.3 13.3l1.5 1.5M14.8 5.2l-1.5 1.5M6.7 13.3l-1.5 1.5" /></svg></span><span class="nav-label">@L.T("nav.system")</span>
         </summary>
         <div class="nav-children">
             <NavLink class="nav-link" href="/stockpilot/system/processes">Журнал процессов</NavLink>
@@ -89,11 +90,11 @@
     </div>
 
     <div class="sidebar-bottom">
-        <NavLink class="nav-link" href="/stockpilot/profile" title="@(_userName ?? "Профиль")">
-            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20"><circle cx="10" cy="7" r="3" /><path d="M4.5 16.5c0-2.8 2.5-4.5 5.5-4.5s5.5 1.7 5.5 4.5" /></svg></span><span class="nav-label">@(_userName ?? "Профиль")</span>
+        <NavLink class="nav-link" href="/stockpilot/profile" title="@(_userName ?? L.T("nav.profile"))">
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20"><circle cx="10" cy="7" r="3" /><path d="M4.5 16.5c0-2.8 2.5-4.5 5.5-4.5s5.5 1.7 5.5 4.5" /></svg></span><span class="nav-label">@(_userName ?? L.T("nav.profile"))</span>
         </NavLink>
-        <NavLink class="nav-link nav-link-logout" href="/stockpilot/logout" title="Выйти">
-            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="M8 3.5H5.5A1.5 1.5 0 0 0 4 5v10a1.5 1.5 0 0 0 1.5 1.5H8" /><path d="M12 6.5 15.5 10 12 13.5" /><path d="M15.5 10H8" /></svg></span><span class="nav-label">Выйти</span>
+        <NavLink class="nav-link nav-link-logout" href="/stockpilot/logout" title="@L.T("nav.logout")">
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="M8 3.5H5.5A1.5 1.5 0 0 0 4 5v10a1.5 1.5 0 0 0 1.5 1.5H8" /><path d="M12 6.5 15.5 10 12 13.5" /><path d="M15.5 10H8" /></svg></span><span class="nav-label">@L.T("nav.logout")</span>
         </NavLink>
     </div>
 </nav>
@@ -112,7 +113,10 @@
     protected override void OnInitialized()
     {
         MarketIndexNavigation.Changed += OnMarketIndexNavigationChanged;
+        L.Changed += OnLanguageChanged;
     }
+
+    private void OnLanguageChanged() => InvokeAsync(StateHasChanged);
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -242,5 +246,6 @@
     public void Dispose()
     {
         MarketIndexNavigation.Changed -= OnMarketIndexNavigationChanged;
+        L.Changed -= OnLanguageChanged;
     }
 }

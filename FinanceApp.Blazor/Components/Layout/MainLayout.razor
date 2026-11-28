@@ -1,10 +1,16 @@
 @inherits LayoutComponentBase
 @inject IJSRuntime JS
+@inject UiLanguageService L
+@implements IDisposable
 
 <div class="app-shell @(_sidebarCollapsed ? "sidebar-collapsed" : "")">
     <aside class="app-sidebar">
         <a class="brand" href="/stockpilot/">FinanceApp</a>
         <SidebarNav Collapsed="_sidebarCollapsed" OnExpandRequested="ExpandSidebar" />
+        <div class="sidebar-language-switch" role="group" aria-label="Язык / Sprache">
+            <button type="button" class="@(L.Language == UiLanguageService.Russian ? "active" : "")" @onclick="() => SetLanguageAsync(UiLanguageService.Russian)">RU</button>
+            <button type="button" class="@(L.Language == UiLanguageService.German ? "active" : "")" @onclick="() => SetLanguageAsync(UiLanguageService.German)">DE</button>
+        </div>
         <button type="button" class="sidebar-collapse-button" title="@(_sidebarCollapsed ? "Развернуть навигацию" : "Свернуть навигацию")" aria-label="@(_sidebarCollapsed ? "Развернуть навигацию" : "Свернуть навигацию")" aria-expanded="@(!_sidebarCollapsed)" @onclick="ToggleSidebar">
             <svg viewBox="0 0 20 20" aria-hidden="true">
                 @if (_sidebarCollapsed)
@@ -37,7 +43,15 @@
 
 @code {
     private const string SidebarCollapsedStorageKey = "financeapp.sidebar.collapsed";
+    private const string LanguageStorageKey = "financeapp.language";
     private bool _sidebarCollapsed;
+
+    protected override void OnInitialized()
+    {
+        L.Changed += OnLanguageChanged;
+    }
+
+    private void OnLanguageChanged() => InvokeAsync(StateHasChanged);
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -51,6 +65,21 @@
                 _sidebarCollapsed = true;
                 StateHasChanged();
             }
+
+            var language = await JS.InvokeAsync<string?>("localStorage.getItem", LanguageStorageKey);
+            L.SetLanguage(UiLanguageService.Normalize(language));
+        }
+        catch (JSException)
+        {
+        }
+    }
+
+    private async Task SetLanguageAsync(string language)
+    {
+        L.SetLanguage(language);
+        try
+        {
+            await JS.InvokeVoidAsync("localStorage.setItem", LanguageStorageKey, language);
         }
         catch (JSException)
         {
@@ -79,5 +108,10 @@
         catch (JSException)
         {
         }
+    }
+
+    public void Dispose()
+    {
+        L.Changed -= OnLanguageChanged;
     }
 }

@@ -11,20 +11,21 @@
 @inject IHttpClientFactory HttpClientFactory
 @inject IJSRuntime JS
 @inject NavigationManager Navigation
+@inject UiLanguageService L
 
 <PageTitle>Stockpilot</PageTitle>
 
 <div class="tracked-stocks-page">
     <div class="tracked-stocks-heading">
         <div>
-            <h1>Отслеживаемые акции</h1>
-            <p>Рабочий список акций с актуальными ценами и графиками.</p>
+            <h1>@L.T("stocks.title")</h1>
+            <p>@L.T("stocks.subtitle")</p>
         </div>
         <div class="tracked-stocks-heading-actions">
             <div class="tracked-stocks-header-buttons">
-                <button type="button" class="portfolio-primary-button stocks-add-button" @onclick="OpenStockCreate">＋ Добавить акцию</button>
+                <button type="button" class="portfolio-primary-button stocks-add-button" @onclick="OpenStockCreate">＋ @L.T("stocks.add")</button>
                 <button type="button" class="portfolio-refresh-button" @onclick="RefreshAllPricesAsync" disabled="@(_refreshingAll || _loading || _stocks.Count == 0)">
-                    @(_refreshingAll ? $"Обновление {_refreshProgress}/{_stocks.Count}…" : "Обновить цены")
+                    @(_refreshingAll ? $"Обновление {_refreshProgress}/{_stocks.Count}…" : L.T("stocks.refreshPrices"))
                 </button>
             </div>
             <span class="tracked-stocks-refresh-caption" role="timer" aria-live="off">@AutoRefreshCaption</span>
@@ -33,14 +34,14 @@
 
     <div class="tracked-stocks-toolbar">
         <div class="search-field">
-            <input type="search" placeholder="Поиск: тикер, название, биржа, индекс" aria-label="Поиск отслеживаемых акций" value="@_search" @oninput="OnSearchChanged" />
+            <input type="search" placeholder="@L.T("stocks.search")" aria-label="@L.T("nav.tracked")" value="@_search" @oninput="OnSearchChanged" />
             @if (!string.IsNullOrEmpty(_search)) { <SearchClearButton OnClick="ClearSearch" /> }
         </div>
         <div class="tracked-stocks-filter-controls">
-            <button type="button" class="stocks-toolbar-button" @onclick="OpenFilters" aria-label="Открыть расширенные фильтры">@(_activeFilterCount > 0 ? $"Фильтры ({_activeFilterCount})" : "Фильтры")</button>
-            <button type="button" class="stocks-toolbar-button" @onclick="ResetFilters" disabled="@(_activeFilterCount == 0)" aria-label="Сбросить расширенные фильтры">Сбросить</button>
+            <button type="button" class="stocks-toolbar-button" @onclick="OpenFilters" aria-label="@L.T("common.filters")">@(_activeFilterCount > 0 ? $"{L.T("common.filters")} ({_activeFilterCount})" : L.T("common.filters"))</button>
+            <button type="button" class="stocks-toolbar-button" @onclick="ResetFilters" disabled="@(_activeFilterCount == 0)" aria-label="@L.T("common.reset")">@L.T("common.reset")</button>
         </div>
-        <label class="tracked-stocks-sort-label" for="tracked-stock-sort">Сортировка:</label>
+        <label class="tracked-stocks-sort-label" for="tracked-stock-sort">@L.T("stocks.sort")</label>
         <select id="tracked-stock-sort" value="@_sortMode" @onchange="OnSortModeChanged" aria-label="Сортировка">
             <option value="name">По названию</option>
             <option value="today">Сегодня</option><option value="24h">24 ч.</option><option value="1w">1 нед.</option>
@@ -56,7 +57,7 @@
 
     @if (_loading)
     {
-        <div class="portfolio-state">Загрузка отслеживаемых акций…</div>
+        <div class="portfolio-state">@L.T("stocks.loading")</div>
     }
     else if (!string.IsNullOrWhiteSpace(_error))
     {
@@ -255,7 +256,10 @@
     {
         ReadQueryState();
         Navigation.LocationChanged += HandleLocationChanged;
+        L.Changed += OnLanguageChanged;
     }
+
+    private void OnLanguageChanged() => InvokeAsync(StateHasChanged);
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -898,6 +902,7 @@
     public async ValueTask DisposeAsync()
     {
         Navigation.LocationChanged -= HandleLocationChanged;
+        L.Changed -= OnLanguageChanged;
         await _autoRefreshCancellation.CancelAsync();
         if (_autoRefreshTask is not null)
         {

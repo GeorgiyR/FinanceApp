@@ -11,21 +11,22 @@
 @inject IHttpClientFactory HttpClientFactory
 @inject IJSRuntime JS
 @inject NavigationManager Navigation
+@inject UiLanguageService L
 
 <PageTitle>Stockpilot</PageTitle>
 
 <div class="tracked-stocks-page">
     <div class="tracked-stocks-heading">
-        <div><h1>Список акций</h1><p>Каталог всех акций в системе.</p></div>
+        <div><h1>@L.T("catalog.title")</h1><p>@L.T("catalog.subtitle")</p></div>
         <div class="catalog-heading-actions">
-            <button type="button" class="portfolio-primary-button" @onclick="OpenStockCreate">＋ Добавить акцию</button>
-            <button type="button" class="portfolio-refresh-button" @onclick="LoadCatalogAsync" disabled="@_loading">@(_loading ? "Загрузка…" : "Обновить список")</button>
+            <button type="button" class="portfolio-primary-button" @onclick="OpenStockCreate">＋ @L.T("stocks.add")</button>
+            <button type="button" class="portfolio-refresh-button" @onclick="LoadCatalogAsync" disabled="@_loading">@(_loading ? L.T("nav.loading") : L.T("catalog.refresh"))</button>
         </div>
     </div>
 
     <div class="tracked-stocks-toolbar">
         <div class="search-field">
-            <input type="search" placeholder="Поиск: тикер, название, биржа, индекс" aria-label="Поиск акций" value="@_search" @oninput="OnSearchChanged" />
+            <input type="search" placeholder="@L.T("catalog.search")" aria-label="@L.T("catalog.title")" value="@_search" @oninput="OnSearchChanged" />
             @if (!string.IsNullOrEmpty(_search)) { <SearchClearButton OnClick="ClearSearch" /> }
         </div>
         <div class="tracked-stocks-filter-controls">
@@ -288,7 +289,10 @@
     {
         ReadQueryState();
         Navigation.LocationChanged += HandleLocationChanged;
+        L.Changed += OnLanguageChanged;
     }
+
+    private void OnLanguageChanged() => InvokeAsync(StateHasChanged);
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -766,6 +770,7 @@
     public ValueTask DisposeAsync()
     {
         Navigation.LocationChanged -= HandleLocationChanged;
+        L.Changed -= OnLanguageChanged;
         _performanceRequestId++;
         return ValueTask.CompletedTask;
     }

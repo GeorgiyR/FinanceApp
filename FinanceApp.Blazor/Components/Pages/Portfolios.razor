@@ -5,21 +5,23 @@
 @using System.Text.Json
 @inject IJSRuntime JS
 @inject IHttpClientFactory HttpClientFactory
+@inject UiLanguageService L
+@implements IDisposable
 
 <PageTitle>Stockpilot</PageTitle>
 
 <div class="portfolio-page">
     <div class="portfolio-page-heading">
         <div>
-            <h1>Портфели</h1>
-            <p class="portfolio-page-description">Ваши инвестиционные портфели</p>
+            <h1>@L.T("portfolios.title")</h1>
+            <p class="portfolio-page-description">@L.T("portfolios.subtitle")</p>
         </div>
         <div class="portfolio-heading-actions">
             <button class="portfolio-primary-button" @onclick="OpenCreateDialog" disabled="@_busy">
-                Добавить портфель
+                @L.T("portfolios.add")
             </button>
             <button class="portfolio-refresh-button" @onclick="LoadPortfoliosAsync" disabled="@_loading">
-                Обновить
+                @L.T("common.refresh")
             </button>
         </div>
     </div>
@@ -31,7 +33,7 @@
 
     @if (_loading)
     {
-        <div class="portfolio-state">Загрузка портфелей…</div>
+        <div class="portfolio-state">@L.T("portfolios.loading")</div>
     }
     else if (!string.IsNullOrWhiteSpace(_error))
     {
@@ -39,14 +41,14 @@
             <p>@_error</p>
             @if (_requiresLogin)
             {
-                <a class="portfolio-login-link" href="/stockpilot/login">Войти</a>
+                <a class="portfolio-login-link" href="/stockpilot/login">@L.T("nav.login")</a>
             }
-            <button class="portfolio-refresh-button" @onclick="LoadPortfoliosAsync">Повторить</button>
+            <button class="portfolio-refresh-button" @onclick="LoadPortfoliosAsync">@L.T("common.retry")</button>
         </div>
     }
     else if (_portfolios.Count == 0)
     {
-        <div class="portfolio-state">У вас пока нет портфелей.</div>
+        <div class="portfolio-state">@L.T("portfolios.empty")</div>
     }
     else
     {
@@ -61,17 +63,17 @@
                             <span class="portfolio-card-arrow" aria-hidden="true">→</span>
                         </div>
                         <div class="portfolio-card-meta">
-                            <span>Позиции: @(portfolio.Items?.Count ?? 0)</span>
-                            <span>Ордера: @(portfolio.Orders?.Count ?? 0)</span>
+                            <span>@L.T("portfolios.positions"): @(portfolio.Items?.Count ?? 0)</span>
+                            <span>@L.T("portfolios.orders"): @(portfolio.Orders?.Count ?? 0)</span>
                         </div>
                     </a>
                     <div class="portfolio-card-actions">
-                        <button type="button" class="action-icon-button" title="Редактировать портфель" aria-label="Редактировать портфель" disabled="@_busy" @onclick="() => OpenEditDialog(portfolio)">
+                        <button type="button" class="action-icon-button" title="@L.T("portfolios.edit")" aria-label="@L.T("portfolios.edit")" disabled="@_busy" @onclick="() => OpenEditDialog(portfolio)">
                             <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m3 14.8-.8 3 3-.8L16.8 5.4a1.8 1.8 0 0 0-2.6-2.6L3 14.8Zm9.9-9.9 2.6 2.6" /></svg>
                         </button>
                         <button type="button" class="action-icon-button action-delete-button portfolio-card-delete"
-                            title="@(canDelete ? "Удалить портфель" : "Нельзя удалить портфель с позициями")"
-                            aria-label="Удалить портфель"
+                            title="@(canDelete ? L.T("portfolios.delete") : L.T("portfolios.cannotDelete"))"
+                            aria-label="@L.T("portfolios.delete")"
                             disabled="@(!canDelete || _busy)"
                             @onclick="() => DeletePortfolioAsync(portfolio)">
                         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14m-9 0V3h4v2m3 0-.8 12H5.8L5 5m3 3v6m4-6v6" /></svg>
@@ -87,7 +89,7 @@
 {
     <div class="dialog-backdrop" role="presentation" @onclick="CloseCreateDialog">
         <section class="action-dialog" role="dialog" aria-modal="true" aria-labelledby="create-portfolio-title" @onclick:stopPropagation>
-            <h2 id="create-portfolio-title">Новый портфель</h2>
+            <h2 id="create-portfolio-title">@L.T("portfolios.createTitle")</h2>
             @if (!string.IsNullOrWhiteSpace(_createError))
             {
                 <div class="login-error" role="alert">@_createError</div>
@@ -96,16 +98,16 @@
                 <DataAnnotationsValidator />
                 <ValidationSummary />
                 <div class="login-field">
-                    <label for="portfolio-name">Название</label>
+                    <label for="portfolio-name">@L.T("common.name")</label>
                     <input id="portfolio-name" type="text" @bind="_createForm.Name" @bind:event="oninput" disabled="@_busy" />
                 </div>
                 <label class="portfolio-demo-checkbox">
                     <input type="checkbox" @bind="_createForm.IsDemo" disabled="@_busy" />
-                    Демо-портфель
+                    @L.T("common.demo")
                 </label>
                 <div class="dialog-actions">
-                    <button type="button" class="portfolio-refresh-button" @onclick="CloseCreateDialog" disabled="@_busy">Отмена</button>
-                    <button type="submit" class="login-submit" disabled="@_busy">@(_busy ? "Сохранение…" : "Создать")</button>
+                    <button type="button" class="portfolio-refresh-button" @onclick="CloseCreateDialog" disabled="@_busy">@L.T("common.cancel")</button>
+                    <button type="submit" class="login-submit" disabled="@_busy">@(_busy ? L.T("common.saving") : L.T("common.create"))</button>
                 </div>
             </EditForm>
         </section>
@@ -116,7 +118,7 @@
 {
     <div class="dialog-backdrop" role="presentation" @onclick="CloseEditDialog">
         <section class="action-dialog" role="dialog" aria-modal="true" aria-labelledby="edit-portfolio-title" @onclick:stopPropagation>
-            <h2 id="edit-portfolio-title">Редактировать портфель</h2>
+            <h2 id="edit-portfolio-title">@L.T("portfolios.editTitle")</h2>
             @if (!string.IsNullOrWhiteSpace(_editError))
             {
                 <div class="login-error" role="alert">@_editError</div>
@@ -125,16 +127,16 @@
                 <DataAnnotationsValidator />
                 <ValidationSummary />
                 <div class="login-field">
-                    <label for="edit-portfolio-name">Название</label>
+                    <label for="edit-portfolio-name">@L.T("common.name")</label>
                     <input id="edit-portfolio-name" type="text" @bind="_editForm.Name" @bind:event="oninput" disabled="@_busy" />
                 </div>
                 <label class="portfolio-demo-checkbox">
                     <input type="checkbox" @bind="_editForm.IsDemo" disabled="@_busy" />
-                    Демо-портфель
+                    @L.T("common.demo")
                 </label>
                 <div class="dialog-actions">
-                    <button type="button" class="portfolio-refresh-button" @onclick="CloseEditDialog" disabled="@_busy">Отмена</button>
-                    <button type="submit" class="login-submit" disabled="@_busy">@(_busy ? "Сохранение…" : "Сохранить")</button>
+                    <button type="button" class="portfolio-refresh-button" @onclick="CloseEditDialog" disabled="@_busy">@L.T("common.cancel")</button>
+                    <button type="submit" class="login-submit" disabled="@_busy">@(_busy ? L.T("common.saving") : L.T("common.save"))</button>
                 </div>
             </EditForm>
         </section>
@@ -157,6 +159,13 @@
     private PortfolioSummary? _editingPortfolio;
     private readonly PortfolioEditForm _editForm = new();
     private IJSObjectReference? _apiModule;
+
+    protected override void OnInitialized()
+    {
+        L.Changed += OnLanguageChanged;
+    }
+
+    private void OnLanguageChanged() => InvokeAsync(StateHasChanged);
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -392,6 +401,11 @@
         [StringLength(100, ErrorMessage = "Название не должно превышать 100 символов.")]
         public string Name { get; set; } = string.Empty;
         public bool IsDemo { get; set; }
+    }
+
+    public void Dispose()
+    {
+        L.Changed -= OnLanguageChanged;
     }
 }
 

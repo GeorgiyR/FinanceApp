@@ -1,5 +1,7 @@
 @using System.Globalization
 @using FinanceApp.Blazor.Components.Models
+@inject UiLanguageService L
+@implements IDisposable
 
 <div class="tracked-stocks-table-list">
     @foreach (var group in GetGroups())
@@ -8,7 +10,7 @@
             <div class="tracked-stock-group-heading"><strong>@group.Title</strong><span>@group.Items.Count</span></div>
             <div class="tracked-stocks-table-wrap">
                 <table class="tracked-stocks-table">
-                    <thead><tr><th class="tracked-ticker-col">Тикер</th><th>Название</th>@if (SortMode != "name") { <th class="numeric">Рост за период</th> }<th class="numeric tracked-price-col">Текущая<br />цена</th><th class="numeric tracked-change-col">Изм. (€)</th><th class="numeric tracked-percent-col">(%)</th><th class="numeric">Цена API</th><th>Время</th><th>Действия</th></tr></thead>
+                    <thead><tr><th class="tracked-ticker-col">@L.T("table.ticker")</th><th>@L.T("table.name")</th>@if (SortMode != "name") { <th class="numeric">@L.T("table.growth")</th> }<th class="numeric tracked-price-col">@L.T("table.price")</th><th class="numeric tracked-change-col">@L.T("table.changeShort")</th><th class="numeric tracked-percent-col">@L.T("table.percent")</th><th class="numeric">@L.T("table.apiPrice")</th><th>@L.T("table.time")</th><th>@L.T("table.actions")</th></tr></thead>
                     <tbody>
                         @foreach (var stock in group.Items)
                         {
@@ -87,6 +89,13 @@
     private int? _refreshingStockId;
     private int? _untrackingStockId;
     private int? _prioritySavingStockId;
+
+    protected override void OnInitialized()
+    {
+        L.Changed += OnLanguageChanged;
+    }
+
+    private void OnLanguageChanged() => InvokeAsync(StateHasChanged);
 
     [Parameter, EditorRequired] public IReadOnlyList<TrackedStockViewModel> Items { get; set; } = [];
     [Parameter] public IReadOnlySet<int> PortfolioStockIds { get; set; } = new HashSet<int>();
@@ -172,5 +181,10 @@
     {
         var currency = quote.Currency ?? quote.NormalizedQuoteCurrency;
         return currency is null ? "—" : $"{quote.RawCurrentPrice.ToString("N2", RussianCulture)} {currency}";
+    }
+
+    public void Dispose()
+    {
+        L.Changed -= OnLanguageChanged;
     }
 }

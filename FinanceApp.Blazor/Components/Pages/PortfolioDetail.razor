@@ -9,6 +9,8 @@
 @inject IHttpClientFactory HttpClientFactory
 @inject IJSRuntime JS
 @inject NavigationManager Navigation
+@inject UiLanguageService L
+@implements IDisposable
 
 <PageTitle>Stockpilot</PageTitle>
 
@@ -36,8 +38,8 @@
     @if (SelectedSection == "positions")
     {
         <div class="index-tabs positions-tabs" role="tablist" aria-label="Позиции и ордера">
-            <button type="button" role="tab" class="@(_positionTab == "positions" ? "active" : "")" aria-selected="@(_positionTab == "positions")" @onclick="() => SelectPositionTab(PositionTabPositions)">Позиции</button>
-            <button type="button" role="tab" class="@(_positionTab == "orders" ? "active" : "")" aria-selected="@(_positionTab == "orders")" @onclick="() => SelectPositionTab(PositionTabOrders)">Ордера</button>
+            <button type="button" role="tab" class="@(_positionTab == "positions" ? "active" : "")" aria-selected="@(_positionTab == "positions")" @onclick="() => SelectPositionTab(PositionTabPositions)">@L.T("detail.positions")</button>
+            <button type="button" role="tab" class="@(_positionTab == "orders" ? "active" : "")" aria-selected="@(_positionTab == "orders")" @onclick="() => SelectPositionTab(PositionTabOrders)">@L.T("detail.orders")</button>
         </div>
     }
 
@@ -397,6 +399,13 @@
             return previousValue == 0m ? null : change.Value / previousValue * 100m;
         }
     }
+
+    protected override void OnInitialized()
+    {
+        L.Changed += OnLanguageChanged;
+    }
+
+    private void OnLanguageChanged() => InvokeAsync(StateHasChanged);
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -1240,6 +1249,11 @@ private static string FormatFinancial(decimal? value, string? currency = null)
         public decimal? RevenueEstimate { get; set; }
         public decimal? RevenueReported { get; set; }
         public string? FiscalPeriod { get; set; }
+    }
+
+    public void Dispose()
+    {
+        L.Changed -= OnLanguageChanged;
     }
 }
 
