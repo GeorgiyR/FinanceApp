@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using FinanceApp.API.Controllers;
 using FinanceApp.API.Models;
 using FinanceApp.API.Services;
@@ -3411,6 +3412,7 @@ public class StocksControllerTests
 
     private static StocksController CreateController(AppDbContext context, IStockHistoryService? stockHistoryService = null)
     {
+        SeedTrackedMemberships(context);
         return new StocksController(
             context,
             stockHistoryService ?? new StubStockHistoryService(),
@@ -3423,9 +3425,29 @@ public class StocksControllerTests
         {
             ControllerContext = new ControllerContext
             {
-                HttpContext = new DefaultHttpContext()
+                HttpContext = new DefaultHttpContext
+                {
+                    User = new ClaimsPrincipal(new ClaimsIdentity(
+                        [new Claim(ClaimTypes.NameIdentifier, "1")], "TestAuth"))
+                }
             }
         };
+    }
+
+    private static void SeedTrackedMemberships(AppDbContext context)
+    {
+        if (!context.Users.Any(x => x.Id == 1))
+        {
+            context.Users.Add(new User { Id = 1, Username = "test", NormalizedUsername = "TEST", Email = "test@example.com", NormalizedEmail = "TEST@EXAMPLE.COM", CreatedAt = DateTime.UtcNow });
+            context.SaveChanges();
+        }
+
+        foreach (var stock in context.Stocks.Where(x => x.TrackingStatus == StockTrackingStatus.Tracked).ToList())
+        {
+            if (context.UserTrackedStocks.Any(x => x.UserId == 1 && x.StockId == stock.Id)) continue;
+            context.UserTrackedStocks.Add(new UserTrackedStock { UserId = 1, StockId = stock.Id, CreatedAtUtc = DateTime.UtcNow });
+        }
+        context.SaveChanges();
     }
 
     private static string GetStocksControllerPath()

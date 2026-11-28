@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using FinanceApp.API.Controllers;
 using FinanceApp.API.Models;
 using FinanceApp.API.Services;
@@ -942,6 +943,7 @@ public class StockTrackingStatusTests
 
     private static StocksController CreateController(AppDbContext context)
     {
+        SeedTrackedMemberships(context);
         return new StocksController(
             context,
             new NullStockHistoryService(),
@@ -952,9 +954,34 @@ public class StockTrackingStatusTests
                 NullLogger<StockQuoteSnapshotPersistenceService>.Instance),
             NullLogger<StocksController>.Instance)
         {
-            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext
+                {
+                    User = TestUser(),
+                }
+            }
         };
     }
+
+    private static void SeedTrackedMemberships(AppDbContext context)
+    {
+        if (!context.Users.Any(x => x.Id == 1))
+        {
+            context.Users.Add(new User { Id = 1, Username = "test", NormalizedUsername = "TEST", Email = "test@example.com", NormalizedEmail = "TEST@EXAMPLE.COM", CreatedAt = DateTime.UtcNow });
+            context.SaveChanges();
+        }
+
+        foreach (var stock in context.Stocks.Where(x => x.TrackingStatus == StockTrackingStatus.Tracked).ToList())
+        {
+            if (context.UserTrackedStocks.Any(x => x.UserId == 1 && x.StockId == stock.Id)) continue;
+            context.UserTrackedStocks.Add(new UserTrackedStock { UserId = 1, StockId = stock.Id, CreatedAtUtc = DateTime.UtcNow });
+        }
+        context.SaveChanges();
+    }
+
+    private static ClaimsPrincipal TestUser(int userId = 1) =>
+        new(new ClaimsIdentity([new Claim(ClaimTypes.NameIdentifier, userId.ToString())], "TestAuth"));
 
     private static MarketIndicesController CreateMarketIndicesController(
         AppDbContext context,
@@ -970,7 +997,10 @@ public class StockTrackingStatusTests
             new NullIndexConstituentsBatchQuoteRefreshJobService(),
             NullLogger<MarketIndicesController>.Instance)
         {
-            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext { User = TestUser() }
+            }
         };
     }
 

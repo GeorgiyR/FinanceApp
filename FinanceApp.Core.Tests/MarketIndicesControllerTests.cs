@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using System.Collections.Concurrent;
 using FinanceApp.API.Controllers;
 using FinanceApp.API.Models;
@@ -2289,7 +2290,11 @@ public class MarketIndicesControllerTests
         {
             ControllerContext = new ControllerContext
             {
-                HttpContext = new DefaultHttpContext()
+                HttpContext = new DefaultHttpContext
+                {
+                    User = new ClaimsPrincipal(new ClaimsIdentity(
+                        [new Claim(ClaimTypes.NameIdentifier, "1")], "TestAuth"))
+                }
             }
         };
     }
