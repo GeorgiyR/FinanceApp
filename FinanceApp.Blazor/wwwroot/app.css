@@ -40,6 +40,14 @@ a { color: inherit; text-decoration: none; }
 .nav-children .nav-link, .nav-group-nested > summary { padding: 8px 10px; font-size: 14px; }
 .nav-group-nested > summary { color: #c1cfdd; }
 .sidebar-bottom { flex: 0 0 auto; margin-top: 0; padding-top: 16px; border-top: 1px solid #294158; }
+.sidebar-language-switch { align-self: center; display: inline-flex; gap: 4px; margin-top: 10px; }
+.sidebar-language-switch button {
+    min-width: 34px; height: 26px; padding: 0 6px;
+    border: 1px solid #46617f; border-radius: 6px;
+    background: transparent; color: #c1cfdd; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.sidebar-language-switch button:hover { border-color: #91caff; color: #fff; }
+.sidebar-language-switch button.active { border-color: #91caff; background: #244a70; color: #fff; }
 .sidebar-collapse-button {
     display: inline-flex; align-items: center; justify-content: center; align-self: flex-end;
     width: 32px; height: 32px; margin-top: 10px; padding: 0; flex-shrink: 0;
