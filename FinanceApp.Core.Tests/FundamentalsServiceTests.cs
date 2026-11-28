@@ -128,6 +128,50 @@ public class FundamentalsServiceTests
         Assert.Equal(100m, result.Snapshot!.MarketCap);
     }
 
+    [Fact]
+    public async Task RefreshFundamentalsAsync_PreservesKnownReportDateWhenProviderDropsIt()
+    {
+        await using var context = CreateContext();
+        context.Stocks.Add(new Stock { Id = 1, Ticker = "AAPL", Exchange = StockExchanges.Nyse, Name = "Apple", CommonName = "Apple" });
+
+        var existing = CreateSnapshotEntity("AAPL", FixedNow.AddDays(-2).UtcDateTime, 100m, stockId: 1);
+        existing.EarningsEvents.Clear();
+        existing.EarningsEvents.Add(new EarningsEvent
+        {
+            FiscalPeriodEnd = new DateTime(2026, 10, 31),
+            FiscalPeriod = "2026-10-31",
+            ReportDate = new DateTime(2026, 11, 18),
+            DateStatus = EarningsDateStatus.Confirmed,
+            Source = "Yahoo Finance",
+            FetchedAtUtc = FixedNow.AddDays(-2).UtcDateTime,
+        });
+        context.FundamentalsSnapshots.Add(existing);
+        await context.SaveChangesAsync();
+
+        var providerSnapshot = CreateSnapshotEntity("AAPL", FixedNow.UtcDateTime, 222m, stockId: 1);
+        providerSnapshot.EarningsEvents.Clear();
+        providerSnapshot.EarningsEvents.Add(new EarningsEvent
+        {
+            FiscalPeriodEnd = new DateTime(2026, 10, 31),
+            FiscalPeriod = "2026-10-31",
+            DateStatus = EarningsDateStatus.Confirmed,
+            Source = "Yahoo Finance",
+            FetchedAtUtc = FixedNow.UtcDateTime,
+        });
+
+        var provider = new StubYahooFundamentalsService(_ => YahooFundamentalsResult.Success(providerSnapshot));
+        var service = CreateService(context, provider);
+
+        await service.RefreshFundamentalsAsync(1);
+
+        var persisted = await context.FundamentalsSnapshots
+            .Include(x => x.EarningsEvents)
+            .SingleAsync(x => x.StockId == 1);
+        var earningsEvent = Assert.Single(persisted.EarningsEvents);
+        Assert.Equal(new DateTime(2026, 11, 18), earningsEvent.ReportDate);
+        Assert.Equal(new DateTime(2026, 10, 31), earningsEvent.FiscalPeriodEnd);
+    }
+
     private static AppDbContext CreateContext()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
