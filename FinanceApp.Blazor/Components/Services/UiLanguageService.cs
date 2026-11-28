@@ -233,7 +233,7 @@ public sealed class UiLanguageService
         ["table.quantity"] = "Menge",
         ["table.buyPrice"] = "Kaufpreis",
         ["table.currentPriceShort"] = "Akt. Kurs",
-        ["table.dayChange"] = "Tagesänderung",
+        ["table.dayChange"] = "Tagesänd.",
         ["table.perShare"] = "je Aktie",
         ["table.perSharePercent"] = "% je Aktie",
         ["table.position"] = "Position",
