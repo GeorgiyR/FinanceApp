@@ -68,6 +68,10 @@ public class Stock
     /// </summary>
     public StockTrackingStatus TrackingStatus { get; set; } = StockTrackingStatus.Tracked;
 
+    /// <summary>Set by API responses to indicate tracking for the current user. Not persisted.</summary>
+    [NotMapped]
+    public bool? IsTrackedByUser { get; set; }
+
     /// <summary>
     /// Automatic history-refresh cadence used by background jobs.
     /// Tracked stocks default to Daily; catalog-only stocks default to Weekly.
