@@ -127,6 +127,7 @@ export const deleteOrder = (portfolioId: number, orderId: number) =>
 // Stocks
 export const getStocks = () => api.get<Stock[]>('/Stocks');
 export const getTrackedStocks = () => api.get<Stock[]>('/Stocks/tracked');
+export const getTrackedStockIds = () => api.get<number[]>('/Stocks/tracked-ids');
 export const getStockCatalog = () => api.get<Stock[]>('/Stocks/catalog');
 export const getStockCatalogPerformance = (range: StockHistoryRange, signal?: AbortSignal) =>
   api.get<StockCatalogPerformanceResponse>('/Stocks/catalog/performance', { params: { range }, signal });

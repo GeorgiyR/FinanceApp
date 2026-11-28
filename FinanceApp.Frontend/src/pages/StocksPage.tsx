@@ -335,8 +335,8 @@ const ELLIPSIS_STYLE: React.CSSProperties = { overflow: 'hidden', textOverflow: 
 const CELL_BASE_STYLE: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 };
 const CELL_NOWRAP_STYLE: React.CSSProperties = { ...CELL_BASE_STYLE, whiteSpace: 'nowrap' };
 const FLEX_MIN_WIDTH_STYLE: React.CSSProperties = { minWidth: 0, flex: 1 };
-const TRACKING_STATUS_CATALOG_ONLY: StockTrackingStatus = 0;
 const PURCHASE_CANDIDATE_PRIORITY_NONE: StockPurchaseCandidatePriority = StockPurchaseCandidatePriority.None;
+const TRACKING_STATUS_CATALOG_ONLY: StockTrackingStatus = 0;
 const PURCHASE_CANDIDATE_PRIORITY_CANDIDATE: StockPurchaseCandidatePriority = StockPurchaseCandidatePriority.Candidate;
 const PURCHASE_CANDIDATE_PRIORITY_HIGH: StockPurchaseCandidatePriority = StockPurchaseCandidatePriority.HighPriority;
 
@@ -1151,7 +1151,7 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
         if (!isCatalogMode) {
           return true;
         }
-        return s.trackingStatus !== TRACKING_STATUS_CATALOG_ONLY;
+        return s.isTrackedByUser ?? s.trackingStatus !== TRACKING_STATUS_CATALOG_ONLY;
       });
 
       setLivePrices((prev) => {
@@ -1764,7 +1764,7 @@ const StocksPage: React.FC<StocksPageProps> = ({ mode = 'tracked' }) => {
         const stock = record as Stock;
         const live = livePrices[stock.id];
         const isProtectedStock = portfolioStockIds.has(stock.id);
-        const isTracked = stock.trackingStatus !== TRACKING_STATUS_CATALOG_ONLY;
+        const isTracked = stock.isTrackedByUser ?? stock.trackingStatus !== TRACKING_STATUS_CATALOG_ONLY;
         const trackingLoading = trackingLoadingByStock[stock.id] === true;
         const purchaseCandidatePriority = normalizePurchaseCandidatePriority(stock.purchaseCandidatePriority);
         const purchaseCandidatePriorityLoading = purchaseCandidatePriorityLoadingByStock[stock.id] === true;

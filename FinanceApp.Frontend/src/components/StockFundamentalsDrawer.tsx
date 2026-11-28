@@ -150,17 +150,24 @@ const FINANCIAL_COLUMNS = [
 
 const EARNINGS_COLUMNS = [
   {
-    title: 'Дата',
+    title: 'Дата отчёта',
     key: 'date',
     render: (_: unknown, record: EarningsEventDto) => {
-      if (!record.reportDate) {
+      const date = record.reportDate ?? record.fiscalPeriodEnd;
+      if (!date) {
         return FUNDAMENTALS_EMPTY_TEXT;
       }
 
-      const start = dayjs.utc(record.reportDate).local().format('DD.MM.YYYY');
+      const start = dayjs.utc(date).local().format('DD.MM.YYYY');
       const end = record.reportDateEnd ? dayjs.utc(record.reportDateEnd).local().format('DD.MM.YYYY') : null;
       return end && end !== start ? `${start} – ${end}` : start;
     },
+  },
+  {
+    title: 'Конец периода',
+    key: 'fiscalPeriodEnd',
+    render: (_: unknown, record: EarningsEventDto) =>
+      record.fiscalPeriodEnd ? dayjs.utc(record.fiscalPeriodEnd).local().format('DD.MM.YYYY') : FUNDAMENTALS_EMPTY_TEXT,
   },
   {
     title: 'Статус',

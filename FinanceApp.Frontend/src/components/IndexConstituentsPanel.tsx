@@ -848,7 +848,7 @@ const IndexConstituentsPanel: React.FC<IndexConstituentsPanelProps> = ({
       void messageApi.success(`«${constituent.name}» добавлена в отслеживаемые акции`);
       setConstituents((prev) =>
         prev.map((c) =>
-          c.stockId === constituent.stockId ? { ...c, trackingStatus: 'Tracked' } : c,
+          c.stockId === constituent.stockId ? { ...c, trackingStatus: 'Tracked', isTrackedByUser: true } : c,
         ),
       );
     } catch (err) {
@@ -1358,7 +1358,10 @@ const IndexConstituentsPanel: React.FC<IndexConstituentsPanelProps> = ({
       render: (_, record) => {
         if (isChartRow(record)) return { children: null, props: { colSpan: 0 } };
         const trackingLoading = trackingId === record.stockId;
-        const trackButtonState = getTrackButtonState(record.trackingStatus, trackingLoading);
+        const trackButtonState = getTrackButtonState(
+          record.isTrackedByUser || record.trackingStatus === 'Tracked' ? 'Tracked' : 'CatalogOnly',
+          trackingLoading,
+        );
 
         const addButton = (
           <Button

@@ -106,6 +106,8 @@ export interface Stock {
   marketIndexIds?: number[];
   /** Tracking status. 0 = CatalogOnly, 1 = Tracked. Tracked stocks appear in the main table and participate in price updates. */
   trackingStatus?: StockTrackingStatus;
+  /** True when the current user tracks this stock. Set by API responses only. */
+  isTrackedByUser?: boolean | null;
   /** Three-state purchase-candidate marker for tracked non-portfolio stocks. */
   purchaseCandidatePriority?: StockPurchaseCandidatePriority;
   /** Symbol as provided by the data provider used to import this stock. */
@@ -351,6 +353,7 @@ export interface FinancialPeriodDto {
 export interface EarningsEventDto {
   id: number;
   reportDate: string | null;
+  fiscalPeriodEnd: string | null;
   reportDateEnd: string | null;
   dateStatus: EarningsDateStatus;
   epsEstimate: number | null;
@@ -693,6 +696,7 @@ export interface IndexConstituentDto {
   currentPriceDelayWarning?: string | null;
   /** "CatalogOnly" or "Tracked" */
   trackingStatus: string;
+  isTrackedByUser?: boolean;
   source?: string | null;
   providerConstituentKey?: string | null;
   effectiveFrom?: string | null;
