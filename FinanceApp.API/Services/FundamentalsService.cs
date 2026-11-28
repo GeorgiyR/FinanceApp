@@ -249,6 +249,21 @@ public sealed class FundamentalsService : IFundamentalsService
         existing.AsOfDate = providerSnapshot.AsOfDate;
         existing.FetchedAtUtc = providerSnapshot.FetchedAtUtc;
 
+        var oldEarningsEvents = existing.EarningsEvents
+            .Select(x => new EarningsDateHint(
+                x.FiscalPeriodEnd,
+                x.FiscalPeriod,
+                x.ReportDate,
+                x.ReportDateEnd,
+                x.DateStatus,
+                x.EpsEstimate,
+                x.EpsReported,
+                x.RevenueEstimate,
+                x.RevenueReported,
+                x.Source,
+                x.FetchedAtUtc))
+            .ToList();
+
         _dbContext.FinancialPeriods.RemoveRange(existing.Periods);
         _dbContext.EarningsEvents.RemoveRange(existing.EarningsEvents);
         existing.Periods.Clear();
@@ -261,12 +276,69 @@ public sealed class FundamentalsService : IFundamentalsService
 
         foreach (var earningsEvent in providerSnapshot.EarningsEvents)
         {
+            if (earningsEvent.ReportDate is null && earningsEvent.FiscalPeriodEnd is DateTime periodEnd)
+            {
+                var hint = oldEarningsEvents.FirstOrDefault(x =>
+                    x.FiscalPeriodEnd == periodEnd && x.FiscalPeriod == earningsEvent.FiscalPeriod);
+                if (hint is not null)
+                {
+                    earningsEvent.ReportDate = hint.ReportDate;
+                    earningsEvent.ReportDateEnd ??= hint.ReportDateEnd;
+                }
+            }
+
             existing.EarningsEvents.Add(earningsEvent);
+        }
+
+        // Yahoo drops past report dates from calendarEvents once a report is published.
+        // Keep calendar-only events whose actual date was learned in an earlier snapshot.
+        var knownDates = existing.EarningsEvents
+            .Where(x => x.ReportDate.HasValue)
+            .Select(x => x.ReportDate!.Value)
+            .ToHashSet();
+        var knownPeriodEnds = existing.EarningsEvents
+            .Where(x => x.FiscalPeriodEnd.HasValue)
+            .Select(x => x.FiscalPeriodEnd!.Value)
+            .ToHashSet();
+
+        foreach (var hint in oldEarningsEvents.Where(x => x.ReportDate.HasValue))
+        {
+            var date = hint.ReportDate!.Value;
+            if (knownDates.Contains(date) || knownPeriodEnds.Contains(date)) continue;
+
+            existing.EarningsEvents.Add(new EarningsEvent
+            {
+                FiscalPeriodEnd = hint.FiscalPeriodEnd,
+                FiscalPeriod = hint.FiscalPeriod,
+                ReportDate = hint.ReportDate,
+                ReportDateEnd = hint.ReportDateEnd,
+                DateStatus = hint.DateStatus,
+                EpsEstimate = hint.EpsEstimate,
+                EpsReported = hint.EpsReported,
+                RevenueEstimate = hint.RevenueEstimate,
+                RevenueReported = hint.RevenueReported,
+                Source = hint.Source,
+                FetchedAtUtc = hint.FetchedAtUtc,
+            });
+            knownDates.Add(date);
         }
 
         await _dbContext.SaveChangesAsync(ct);
         return existing;
     }
+
+    private sealed record EarningsDateHint(
+        DateTime? FiscalPeriodEnd,
+        string? FiscalPeriod,
+        DateTime? ReportDate,
+        DateTime? ReportDateEnd,
+        EarningsDateStatus DateStatus,
+        decimal? EpsEstimate,
+        decimal? EpsReported,
+        decimal? RevenueEstimate,
+        decimal? RevenueReported,
+        string Source,
+        DateTime FetchedAtUtc);
 
     private sealed class RefreshLockEntry
     {
