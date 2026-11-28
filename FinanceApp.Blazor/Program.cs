@@ -10,6 +10,7 @@ builder.Services.AddHttpClient("FinanceApi", client =>
 });
 
 builder.Services.AddScoped<FinanceApp.Blazor.Components.Services.MarketIndexNavigationService>();
+builder.Services.AddScoped<FinanceApp.Blazor.Components.Services.UiLanguageService>();
 
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents(options =>
