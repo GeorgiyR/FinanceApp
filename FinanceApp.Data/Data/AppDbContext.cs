@@ -447,6 +447,7 @@ public class AppDbContext : DbContext
 
     public DbSet<User> Users { get; set; } = null!;
     public DbSet<Stock> Stocks { get; set; } = null!;
+    public DbSet<UserTrackedStock> UserTrackedStocks { get; set; } = null!;
     public DbSet<Portfolio> Portfolios { get; set; } = null!;
     public DbSet<PortfolioItem> PortfolioItems { get; set; } = null!;
     public DbSet<Order> Orders { get; set; } = null!;
@@ -648,6 +649,22 @@ public class AppDbContext : DbContext
             // Historical rows are distinguished by EffectiveFrom / EffectiveTo.
             entity.HasIndex(x => new { x.StockId, x.MarketIndexId })
                 .HasDatabaseName("IX_StockMarketIndices_StockId_MarketIndexId");
+        });
+
+        modelBuilder.Entity<UserTrackedStock>(entity =>
+        {
+            entity.HasKey(x => new { x.UserId, x.StockId });
+            entity.HasOne(x => x.User)
+                .WithMany()
+                .HasForeignKey(x => x.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(x => x.Stock)
+                .WithMany()
+                .HasForeignKey(x => x.StockId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.Property(x => x.CreatedAtUtc)
+                .HasDefaultValueSql("CURRENT_TIMESTAMP(6)");
+            entity.HasIndex(x => x.StockId);
         });
 
         modelBuilder.Entity<CatalogStockRefreshRun>(entity =>

@@ -2087,6 +2087,26 @@ namespace FinanceApp.Data.Migrations
                     b.ToTable("Users");
                 });
 
+            modelBuilder.Entity("FinanceApp.Core.Models.UserTrackedStock", b =>
+                {
+                    b.Property<int>("UserId")
+                        .HasColumnType("int");
+
+                    b.Property<int>("StockId")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime(6)")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP(6)");
+
+                    b.HasKey("UserId", "StockId");
+
+                    b.HasIndex("StockId");
+
+                    b.ToTable("UserTrackedStocks");
+                });
+
             modelBuilder.Entity("FinanceApp.Core.Models.CompanyFundamentalsSnapshot", b =>
                 {
                     b.HasOne("FinanceApp.Core.Models.Stock", "Stock")
@@ -2295,6 +2315,25 @@ namespace FinanceApp.Data.Migrations
                     b.Navigation("Portfolio");
 
                     b.Navigation("Stock");
+                });
+
+            modelBuilder.Entity("FinanceApp.Core.Models.UserTrackedStock", b =>
+                {
+                    b.HasOne("FinanceApp.Core.Models.Stock", "Stock")
+                        .WithMany()
+                        .HasForeignKey("StockId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("FinanceApp.Core.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Stock");
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("FinanceApp.Core.Models.CompanyFundamentalsSnapshot", b =>
