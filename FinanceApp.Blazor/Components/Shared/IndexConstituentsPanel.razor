@@ -7,6 +7,9 @@
 @inject IHttpClientFactory HttpClientFactory
 @inject IJSRuntime JS
 
+@inject UiLanguageService L
+@implements IDisposable
+
 <div class="index-constituents-panel">
     @if (!string.IsNullOrWhiteSpace(_infoNotice))
     {
@@ -87,15 +90,15 @@
             <table class="positions-table index-constituents-table">
                 <thead>
                     <tr>
-                        <th>Тикер</th>
-                        <th>Название</th>
-                        <th class="numeric">Текущая цена</th>
-                        <th class="numeric">Изменение (€)</th>
-                        <th class="numeric">(%)</th>
-                        <th class="numeric">Рост за период</th>
-                        <th>Цена API</th>
-                        <th>Время</th>
-                        <th class="actions-heading">Действия</th>
+                        <th>@L.T("table.ticker")</th>
+                        <th>@L.T("table.name")</th>
+                        <th class="numeric">@L.T("table.price")</th>
+                        <th class="numeric">@L.T("table.change")</th>
+                        <th class="numeric">@L.T("table.percent")</th>
+                        <th class="numeric">@L.T("table.growth")</th>
+                        <th>@L.T("table.apiPrice")</th>
+                        <th>@L.T("table.time")</th>
+                        <th class="actions-heading">@L.T("table.actions")</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -342,6 +345,13 @@
 
     private List<IndexConstituentDto> PagedConstituents => FilteredConstituents.Skip((_page - 1) * 20).Take(20).ToList();
     private int PageCount => Math.Max(1, (int)Math.Ceiling(FilteredConstituents.Count / 20.0));
+
+    protected override void OnInitialized()
+    {
+        L.Changed += OnLanguageChanged;
+    }
+
+    private void OnLanguageChanged() => InvokeAsync(StateHasChanged);
 
     protected override async Task OnParametersSetAsync()
     {
@@ -1106,5 +1116,10 @@
         public int PersistFailed { get; set; }
         public int RateLimited { get; set; }
         public string? Error { get; set; }
+    }
+
+    public void Dispose()
+    {
+        L.Changed -= OnLanguageChanged;
     }
 }

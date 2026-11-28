@@ -65,7 +65,7 @@
         @if (!string.IsNullOrWhiteSpace(_performanceError)) { <div class="tracked-stocks-performance-error">@_performanceError</div> }
         <div class="positions-table-wrap catalog-table-wrap">
             <table class="positions-table catalog-stocks-table">
-                <thead><tr><th class="catalog-ticker-col">Тикер</th><th>Название</th><th>Индексы</th>@if (_sortMode != "name") { <th class="numeric">Рост за период</th> }<th class="numeric catalog-price-col">Текущая<br />цена</th><th class="numeric catalog-change-col">Изм. (€)</th><th class="numeric catalog-percent-col">(%)</th><th class="numeric">Цена API</th><th>Время</th><th class="actions-heading">Действия</th></tr></thead>
+                <thead><tr><th class="catalog-ticker-col">@L.T("table.ticker")</th><th>@L.T("table.name")</th><th>@L.T("table.indices")</th>@if (_sortMode != "name") { <th class="numeric">@L.T("table.growth")</th> }<th class="numeric catalog-price-col">@L.T("table.price")</th><th class="numeric catalog-change-col">@L.T("table.changeShort")</th><th class="numeric catalog-percent-col">@L.T("table.percent")</th><th class="numeric">@L.T("table.apiPrice")</th><th>@L.T("table.time")</th><th class="actions-heading">@L.T("table.actions")</th></tr></thead>
                 <tbody>
                     @foreach (var stock in PagedStocks)
                     {

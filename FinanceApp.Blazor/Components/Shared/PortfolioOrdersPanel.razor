@@ -7,6 +7,7 @@
 @using FinanceApp.Blazor.Components.Models
 @inject IHttpClientFactory HttpClientFactory
 @inject IJSRuntime JS
+@inject UiLanguageService L
 @implements IDisposable
 
 <section class="orders-panel">
@@ -78,14 +79,14 @@
                     <table class="orders-table">
                         <thead>
                             <tr>
-                                <th>Инструмент</th>
-                                <th>Сторона</th>
-                                <th>Тип</th>
-                                <th>Количество</th>
-                                <th>Условие</th>
-                                <th>Статус</th>
-                                <th>Создан</th>
-                                <th class="actions-heading">Действия</th>
+                                <th>@L.T("table.instrument")</th>
+                                <th>@L.T("table.side")</th>
+                                <th>@L.T("table.type")</th>
+                                <th>@L.T("table.quantity")</th>
+                                <th>@L.T("table.condition")</th>
+                                <th>@L.T("table.status")</th>
+                                <th>@L.T("table.created")</th>
+                                <th class="actions-heading">@L.T("table.actions")</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -156,15 +157,15 @@
                     <table class="orders-table">
                         <thead>
                             <tr>
-                                <th>Инструмент</th>
-                                <th>Сторона</th>
-                                <th>Тип</th>
-                                <th>Количество</th>
-                                <th>Цена исполнения</th>
-                                <th>Статус</th>
-                                <th>Исполнен</th>
-                                <th>Источник</th>
-                                <th class="actions-heading">Действия</th>
+                                <th>@L.T("table.instrument")</th>
+                                <th>@L.T("table.side")</th>
+                                <th>@L.T("table.type")</th>
+                                <th>@L.T("table.quantity")</th>
+                                <th>@L.T("table.fillPrice")</th>
+                                <th>@L.T("table.status")</th>
+                                <th>@L.T("table.executed")</th>
+                                <th>@L.T("table.source")</th>
+                                <th class="actions-heading">@L.T("table.actions")</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -504,6 +505,13 @@
         .Skip((_historyPage - 1) * _pageSize)
         .Take(_pageSize)
         .ToList();
+
+    protected override void OnInitialized()
+    {
+        L.Changed += OnLanguageChanged;
+    }
+
+    private void OnLanguageChanged() => InvokeAsync(StateHasChanged);
 
     protected override async Task OnParametersSetAsync()
     {
@@ -1110,6 +1118,7 @@
         _pollTimer?.Dispose();
         _stockSearchCancellation?.Cancel();
         _stockSearchCancellation?.Dispose();
+        L.Changed -= OnLanguageChanged;
     }
 
     private sealed class OrderListItem

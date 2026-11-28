@@ -1,5 +1,7 @@
 @using System.Globalization
 @using FinanceApp.Blazor.Components.Models
+@inject UiLanguageService L
+@implements IDisposable
 
 <section class="transactions-page">
     @if (!Loading && string.IsNullOrWhiteSpace(Error))
@@ -57,7 +59,7 @@
     {
         <div class="transactions-table-wrap">
             <table class="transactions-table">
-                <thead><tr><th>Тип</th><th>Дата</th><th class="numeric">Сумма</th><th>Акция</th><th>ISIN</th><th class="numeric">Цена за единицу (€)</th><th class="numeric">Количество</th><th class="actions-heading">Действия</th></tr></thead>
+                <thead><tr><th>@L.T("table.type")</th><th>@L.T("table.date")</th><th class="numeric">@L.T("table.amount")</th><th>@L.T("table.stock")</th><th>@L.T("table.isin")</th><th class="numeric">@L.T("table.unitPrice")</th><th class="numeric">@L.T("table.quantity")</th><th class="actions-heading">@L.T("table.actions")</th></tr></thead>
                 <tbody>
                     @foreach (var transaction in PagedTransactions)
                     {
@@ -182,6 +184,13 @@
         if (_page < 1) _page = 1;
     }
 
+    protected override void OnInitialized()
+    {
+        L.Changed += OnLanguageChanged;
+    }
+
+    private void OnLanguageChanged() => InvokeAsync(StateHasChanged);
+
     private void ToggleDescription(int id) => _expandedId = _expandedId == id ? null : id;
     private static string TypeLabel(string type) => type switch { "Deposit" => "Пополнение", "Withdrawal" => "Вывод", "Buy" => "Покупка", "Sell" => "Продажа", "Dividend" => "Дивиденды", _ => type };
     private static decimal EffectiveAmount(PortfolioTransactionViewModel transaction) => transaction.SignedAmount != 0m || transaction.Amount == 0m ? transaction.SignedAmount : transaction.Type is "Deposit" or "Sell" or "Dividend" ? transaction.Amount : -transaction.Amount;
@@ -196,4 +205,9 @@
     }
     private static string FormatMoney(decimal value) => $"{value.ToString("N2", RussianCulture)} €";
     private static string FormatSignedMoney(decimal value) => $"{(value >= 0m ? "+" : "−")}{FormatMoney(Math.Abs(value))}";
+
+    public void Dispose()
+    {
+        L.Changed -= OnLanguageChanged;
+    }
 }

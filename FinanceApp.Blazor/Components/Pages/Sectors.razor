@@ -6,6 +6,8 @@
 @using System.Text.Json
 @inject IHttpClientFactory HttpClientFactory
 @inject IJSRuntime JS
+@inject UiLanguageService L
+@implements IDisposable
 
 <PageTitle>Stockpilot</PageTitle>
 
@@ -44,7 +46,7 @@
     {
         <div class="positions-table-wrap directories-table-wrap">
             <table class="positions-table directories-table">
-                <thead><tr><th>Сектор</th><th class="numeric">Отраслей</th><th class="numeric">Акций</th><th class="actions-heading">Действия</th></tr></thead>
+                <thead><tr><th>@L.T("table.sector")</th><th class="numeric">@L.T("table.industries")</th><th class="numeric">@L.T("table.stocks")</th><th class="actions-heading">@L.T("table.actions")</th></tr></thead>
                 <tbody>
                     @foreach (var entry in FilteredSectors)
                     {
@@ -97,7 +99,7 @@
                                     else
                                     {
                                         <table class="positions-table directory-industries-table">
-                                            <thead><tr><th>Отрасль</th><th class="numeric">Акций</th><th class="actions-heading">Действия</th></tr></thead>
+                                            <thead><tr><th>@L.T("table.industry")</th><th class="numeric">@L.T("table.stocks")</th><th class="actions-heading">@L.T("table.actions")</th></tr></thead>
                                             <tbody>
                                                 @foreach (var industry in entry.Industries)
                                                 {
@@ -258,6 +260,13 @@
         .Where(sector => !sector.IsArchived && sector.Id != _movingIndustry?.SectorId)
         .OrderBy(sector => sector.SortOrder)
         .ThenBy(sector => sector.Name, StringComparer.CurrentCultureIgnoreCase);
+
+    protected override void OnInitialized()
+    {
+        L.Changed += OnLanguageChanged;
+    }
+
+    private void OnLanguageChanged() => InvokeAsync(StateHasChanged);
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -618,5 +627,10 @@
     {
         [Required(ErrorMessage = "Выберите сектор")]
         public int? TargetSectorId { get; set; }
+    }
+
+    public void Dispose()
+    {
+        L.Changed -= OnLanguageChanged;
     }
 }

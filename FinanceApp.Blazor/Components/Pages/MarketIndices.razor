@@ -8,6 +8,8 @@
 @inject IHttpClientFactory HttpClientFactory
 @inject IJSRuntime JS
 @inject NavigationManager Navigation
+@inject UiLanguageService L
+@implements IDisposable
 @inject FinanceApp.Blazor.Components.Services.MarketIndexNavigationService MarketIndexNavigation
 
 <PageTitle>Stockpilot</PageTitle>
@@ -102,11 +104,11 @@
                 <table class="positions-table indices-table">
                     <thead>
                         <tr>
-                            <th>Код</th>
-                            <th>Название</th>
-                            <th>Страна / регион</th>
-                            <th>Описание</th>
-                            <th class="actions-heading">Действия</th>
+                            <th>@L.T("table.code")</th>
+                            <th>@L.T("table.name")</th>
+                            <th>@L.T("table.country")</th>
+                            <th>@L.T("table.description")</th>
+                            <th class="actions-heading">@L.T("table.actions")</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -217,6 +219,13 @@
 
 @code {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
+    protected override void OnInitialized()
+    {
+        L.Changed += OnLanguageChanged;
+    }
+
+    private void OnLanguageChanged() => InvokeAsync(StateHasChanged);
 
     [Parameter] public int? Id { get; set; }
 
@@ -585,5 +594,10 @@
         public string Description { get; set; } = string.Empty;
         public int SortOrder { get; set; }
         public bool ShowInNavigation { get; set; } = true;
+    }
+
+    public void Dispose()
+    {
+        L.Changed -= OnLanguageChanged;
     }
 }

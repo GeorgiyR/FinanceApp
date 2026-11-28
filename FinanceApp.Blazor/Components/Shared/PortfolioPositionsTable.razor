@@ -1,13 +1,15 @@
 @using System.Globalization
 @using FinanceApp.Blazor.Components.Models
+@inject UiLanguageService L
+@implements IDisposable
 
 <div class="positions-table-wrap">
     <table class="positions-table portfolio-positions-table">
         <thead>
             <tr>
-                <th>Тикер</th><th>Название</th><th class="numeric">Кол-во</th><th class="numeric">Цена покупки</th><th class="numeric">Тек. цена</th>
-                <th class="numeric daily-change-heading">Изм. за день<br />/ акция</th><th class="numeric daily-change-heading daily-change-percent-heading">Изм. за день<br />% / акция</th>
-                <th class="numeric daily-change-heading">Изм. за день<br />позиции</th><th class="numeric">Тек. стоимость</th><th class="numeric">P&amp;L (€)</th><th class="numeric">P&amp;L (%)</th><th class="actions-heading">Действия</th>
+                <th>@L.T("table.ticker")</th><th>@L.T("table.name")</th><th class="numeric">@L.T("table.quantity")</th><th class="numeric">@L.T("table.buyPrice")</th><th class="numeric">@L.T("table.currentPriceShort")</th>
+                <th class="numeric daily-change-heading">@L.T("table.dayChange")<br />@L.T("table.perShare")</th><th class="numeric daily-change-heading daily-change-percent-heading">@L.T("table.dayChange")<br />@L.T("table.perSharePercent")</th>
+                <th class="numeric daily-change-heading">@L.T("table.dayChange")<br />@L.T("table.position")</th><th class="numeric">@L.T("table.currentValue")</th><th class="numeric">@L.T("table.pnlEur")</th><th class="numeric">@L.T("table.pnlPercent")</th><th class="actions-heading">@L.T("table.actions")</th>
             </tr>
         </thead>
         <tbody>
@@ -70,10 +72,23 @@
     [Parameter] public EventCallback<PortfolioPositionViewModel> OnEdit { get; set; }
     [Parameter] public EventCallback<PortfolioPositionViewModel> OnDelete { get; set; }
     private int? _expandedPositionId;
+
+    protected override void OnInitialized()
+    {
+        L.Changed += OnLanguageChanged;
+    }
+
+    private void OnLanguageChanged() => InvokeAsync(StateHasChanged);
+
     private void ToggleChart(int id) => _expandedPositionId = _expandedPositionId == id ? null : id;
     private static string GetExchangeAbbreviation(string exchange) => exchange.Trim().ToUpperInvariant() switch { "FRANKFURT" => "F", "NASDAQ" or "NYSE" => "N", _ => exchange.Trim() };
     private static string FormatMoney(decimal value) => $"{value.ToString("N2", RussianCulture)} €";
     private static string FormatSignedMoney(decimal value) => $"{(value >= 0m ? "+" : "")}{FormatMoney(value)}";
     private static string FormatSignedPercent(decimal value) => $"{(value >= 0m ? "+" : "")}{value.ToString("N2", RussianCulture)}%";
     private static string ProfitClass(decimal value) => value > 0m ? "positive" : value < 0m ? "negative" : string.Empty;
+
+    public void Dispose()
+    {
+        L.Changed -= OnLanguageChanged;
+    }
 }
