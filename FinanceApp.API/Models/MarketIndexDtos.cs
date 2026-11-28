@@ -66,6 +66,7 @@ public sealed class MarketIndexRefreshResponse
 public sealed class IndexConstituentDto
 {
     public int StockId { get; init; }
+    public bool IsTrackedByUser { get; init; }
     public string Ticker { get; init; } = string.Empty;
     public string? ProviderSymbol { get; init; }
     public string Name { get; init; } = string.Empty;

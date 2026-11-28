@@ -107,6 +107,11 @@ public class StocksController : ControllerBase
         return null;
     }
 
+    private int CurrentUserId => int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+
+    private IQueryable<int> UserTrackedStockIds(int userId)
+        => _context.UserTrackedStocks.Where(x => x.UserId == userId).Select(x => x.StockId);
+
     [HttpGet("earnings-calendar")]
     public async Task<ActionResult<IReadOnlyList<EarningsCalendarItemDto>>> GetEarningsCalendar(
         [FromQuery] int upcomingDays = 30,
@@ -117,13 +122,13 @@ public class StocksController : ControllerBase
         pastDays = Math.Clamp(pastDays, 0, 365);
 
         var userId = int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-        var trackedIds = _context.Stocks
-            .Where(s => s.TrackingStatus == StockTrackingStatus.Tracked)
-            .Select(s => s.Id);
+        var trackedIds = UserTrackedStockIds(userId);
         var portfolioStockIds = _context.PortfolioItems
             .Where(i => i.Portfolio.UserId == userId)
             .Select(i => i.StockId);
         var stockIds = await trackedIds.Union(portfolioStockIds).ToListAsync(cancellationToken);
+
+        var userTrackedIds = await UserTrackedStockIds(userId).ToListAsync(cancellationToken);
 
         var today = DateTime.UtcNow.Date;
         var rangeStart = today.AddDays(-pastDays);
@@ -158,7 +163,7 @@ public class StocksController : ControllerBase
             StockId = row.Id,
             Ticker = row.Ticker,
             Name = row.Name,
-            IsTracked = row.TrackingStatus == StockTrackingStatus.Tracked,
+            IsTracked = userTrackedIds.Contains(row.Id),
             ReportDate = row.ReportDate,
             FiscalPeriodEnd = row.FiscalPeriodEnd,
             DateStatus = row.DateStatus.ToString(),
@@ -190,7 +195,7 @@ public class StocksController : ControllerBase
         var results = await _context.Stocks
             .AsNoTracking()
             .Where(stock =>
-                stock.TrackingStatus == StockTrackingStatus.Tracked &&
+                UserTrackedStockIds(CurrentUserId).Contains(stock.Id) &&
                 (stock.Ticker.Contains(term) ||
                  stock.Name.Contains(term) ||
                  stock.CommonName.Contains(term)))
@@ -222,15 +227,27 @@ public class StocksController : ControllerBase
 
         if (!includeCatalog)
         {
-            query = query.Where(s => s.TrackingStatus == StockTrackingStatus.Tracked);
+            var trackedIds = UserTrackedStockIds(CurrentUserId);
+            query = query.Where(s => trackedIds.Contains(s.Id));
         }
 
-        return PrepareStocksForResponse(await query.ToListAsync());
+        var stocks = PrepareStocksForResponse(await query.ToListAsync());
+        var userTrackedIds = (await UserTrackedStockIds(CurrentUserId).ToListAsync()).ToHashSet();
+        foreach (var stock in stocks)
+        {
+            stock.IsTrackedByUser = userTrackedIds.Contains(stock.Id);
+        }
+
+        return stocks;
     }
 
     [HttpGet("tracked")]
     public Task<ActionResult<IEnumerable<Stock>>> GetTracked()
         => GetAll(includeCatalog: false);
+
+    [HttpGet("tracked-ids")]
+    public async Task<ActionResult<IReadOnlyList<int>>> GetTrackedIds(CancellationToken cancellationToken = default)
+        => Ok(await UserTrackedStockIds(CurrentUserId).ToListAsync(cancellationToken));
 
     [HttpGet("catalog")]
     public Task<ActionResult<IEnumerable<Stock>>> GetCatalog()
@@ -545,6 +562,14 @@ public class StocksController : ControllerBase
             return BadRequest(BuildCreateDuplicateMessage(stock.Wkn, stock.ProviderSymbol, stock.Ticker, stock.Exchange));
         }
 
+        _context.UserTrackedStocks.Add(new UserTrackedStock
+        {
+            UserId = CurrentUserId,
+            StockId = stock.Id,
+            CreatedAtUtc = DateTime.UtcNow,
+        });
+        await _context.SaveChangesAsync();
+
         if (_stockMetadataEnrichmentService is not null)
         {
             try
@@ -568,6 +593,7 @@ public class StocksController : ControllerBase
         }
 
         var createdStock = await LoadStockWithClassificationAsync(stock.Id);
+        if (createdStock is not null) createdStock.IsTrackedByUser = true;
         return CreatedAtAction(nameof(GetById), new { id = stock.Id }, createdStock);
     }
 
@@ -1466,12 +1492,33 @@ public class StocksController : ControllerBase
 
         if (stock == null) return NotFound();
 
-        if (stock.TrackingStatus != StockTrackingStatus.Tracked)
+        var userId = CurrentUserId;
+        var alreadyTracked = await _context.UserTrackedStocks
+            .AnyAsync(x => x.UserId == userId && x.StockId == id, cancellationToken);
+        if (!alreadyTracked)
+        {
+            _context.UserTrackedStocks.Add(new UserTrackedStock
+            {
+                UserId = userId,
+                StockId = id,
+                CreatedAtUtc = DateTime.UtcNow,
+            });
+        }
+
+        var promoteGlobally = stock.TrackingStatus != StockTrackingStatus.Tracked;
+        if (promoteGlobally)
         {
             stock.TrackingStatus = StockTrackingStatus.Tracked;
             stock.UpdatedAt = DateTime.UtcNow;
-            await _context.SaveChangesAsync();
+        }
 
+        if (!alreadyTracked || promoteGlobally)
+        {
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+
+        if (promoteGlobally)
+        {
             try
             {
                 await _stockHistoryService.SyncHistoricalDataForStockAsync(stock, cancellationToken);
@@ -1482,6 +1529,7 @@ public class StocksController : ControllerBase
             }
         }
 
+        stock.IsTrackedByUser = true;
         return PrepareStockForResponse(stock);
     }
 
@@ -1502,13 +1550,30 @@ public class StocksController : ControllerBase
 
         if (stock == null) return NotFound();
 
-        if (stock.TrackingStatus != StockTrackingStatus.CatalogOnly)
+        var membership = await _context.UserTrackedStocks
+            .FirstOrDefaultAsync(x => x.UserId == CurrentUserId && x.StockId == id, cancellationToken);
+        if (membership is not null)
+        {
+            _context.UserTrackedStocks.Remove(membership);
+        }
+
+        var memberships = await _context.UserTrackedStocks
+            .Where(x => x.StockId == id)
+            .ToListAsync(cancellationToken);
+        var hasOtherTrackers = memberships.Any(x => !ReferenceEquals(x, membership));
+
+        if (!hasOtherTrackers && stock.TrackingStatus != StockTrackingStatus.CatalogOnly)
         {
             stock.TrackingStatus = StockTrackingStatus.CatalogOnly;
             stock.UpdatedAt = DateTime.UtcNow;
+        }
+
+        if (membership is not null || stock.TrackingStatus == StockTrackingStatus.CatalogOnly)
+        {
             await _context.SaveChangesAsync(cancellationToken);
         }
 
+        stock.IsTrackedByUser = false;
         return PrepareStockForResponse(stock);
     }
 

@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using System.Collections.Concurrent;
 using FinanceApp.API.Models;
 using FinanceApp.API.Services;
@@ -352,6 +353,11 @@ public class MarketIndicesController : ControllerBase
             .OrderBy(x => x.Stock.Name)
             .ToListAsync(cancellationToken);
 
+        var trackedIds = (await _context.UserTrackedStocks
+            .Where(x => x.UserId == int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!))
+            .Select(x => x.StockId)
+            .ToListAsync(cancellationToken)).ToHashSet();
+
         var dtos = memberships.Select(x => new IndexConstituentDto
         {
             StockId = x.StockId,
@@ -374,6 +380,7 @@ public class MarketIndicesController : ControllerBase
             CurrentPriceIsDelayed = x.Stock.CurrentPriceIsDelayed,
             CurrentPriceDelayWarning = x.Stock.CurrentPriceDelayWarning,
             TrackingStatus = x.Stock.TrackingStatus.ToString(),
+            IsTrackedByUser = trackedIds.Contains(x.StockId),
             Source = x.Source,
             ProviderConstituentKey = x.ProviderConstituentKey,
             EffectiveFrom = x.EffectiveFrom,

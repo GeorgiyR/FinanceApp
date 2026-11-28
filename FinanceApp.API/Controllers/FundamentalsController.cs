@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using FinanceApp.API.Models;
 using FinanceApp.API.Services;
 using FinanceApp.Core.Models;
@@ -43,7 +44,12 @@ public class FundamentalsController : ControllerBase
         var stock = await _context.Stocks.FindAsync([stockId], ct);
         if (stock is null) return NotFound();
 
-        if (stock.TrackingStatus == StockTrackingStatus.CatalogOnly)
+        var userId = int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        var allowed = await _context.UserTrackedStocks
+                          .AnyAsync(x => x.UserId == userId && x.StockId == stockId, ct)
+                      || await _context.PortfolioItems
+                          .AnyAsync(x => x.StockId == stockId && x.Portfolio.UserId == userId, ct);
+        if (!allowed)
         {
             return StatusCode(StatusCodes.Status409Conflict,
                 "Обновление фундаментальных данных недоступно для каталожных акций. Добавьте акцию в отслеживаемые.");
